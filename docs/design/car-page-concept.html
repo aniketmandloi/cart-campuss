@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Example GT coupe — planning concept</title>
+<style>
+  :root { --radius: 12px; --ink: #1b1714; --graphite: #3a342e; --muted: #4a453e; --verm: #9a3412; --line: #e3d7c6; --ivory: #f3eee4; --card: #faf6ef; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { font-family: ui-sans-serif, system-ui, sans-serif; font-size: 15px; line-height: 1.5; color: var(--ink); }
+  :focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .screen { color-scheme: light; max-width: 100%; padding: 16px 16px 20px; border: 1px solid var(--line); border-radius: var(--radius, 12px); background: radial-gradient(120% 70% at 100% 0%, rgba(154, 52, 18, .05), transparent 46%), var(--ivory); overflow-wrap: break-word; }
+  .banner { margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line); color: var(--graphite); font-size: 14px; }
+  .nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+  .mark { color: var(--ink); font-family: Georgia, "Iowan Old Style", Palatino, serif; font-style: italic; font-size: 1.35rem; text-decoration: none; }
+  .search { margin: 0; min-width: 0; flex: 1 1 10rem; max-width: 16rem; padding: 8px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 253, 248, .75); color: var(--muted); font-size: 14px; }
+  .k { display: inline; margin-right: 6px; color: var(--verm); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; }
+  h1, h2 { margin: 0; font-family: Georgia, "Iowan Old Style", "Palatino Linotype", Palatino, serif; font-weight: normal; letter-spacing: -.03em; }
+  h1 { font-size: clamp(1.8rem, 5vw, 2.55rem); line-height: 1.05; }
+  h1 em { font-style: italic; color: var(--verm); }
+  h2 { font-size: 1.45rem; line-height: 1.15; }
+  .hero { margin-top: 16px; }
+  .hero .k { display: block; margin: 0 0 6px; }
+  .context { margin: 8px 0 0; color: var(--graphite); font-size: 14px; }
+  .hero svg { display: block; width: 100%; height: auto; margin-top: 8px; }
+  .card { min-width: 0; margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: var(--radius, 12px); background: var(--card); }
+  .facts { list-style: none; display: grid; gap: 12px; margin: 16px 0 0; }
+  .facts .k { display: block; margin: 0 0 2px; }
+  .split { display: grid; gap: 16px; align-items: start; margin-top: 16px; }
+  .split > .card { margin-top: 0; }
+  .tabs { display: flex; margin: 0 0 12px; border-bottom: 1px solid var(--line); }
+  .tabs button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 8px 4px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--verm); }
+  .panel p { margin: 0 0 8px; }
+  .spec { display: grid; gap: 8px; margin: 0; }
+  .spec div { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 8px; align-items: baseline; }
+  .spec dt { color: var(--muted); }
+  .spec dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums lining-nums; }
+  .exact { margin: 10px 0 0; }
+  .lede { margin: 6px 0 10px; color: var(--graphite); }
+  .states { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  .states li { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, .9fr); gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .states li:first-child { padding-top: 0; border-top: 0; }
+  .states b { font-weight: 600; text-align: right; }
+  a { color: var(--verm); text-underline-offset: 2px; }
+  a.dir { display: flex; flex-direction: column; justify-content: center; gap: 2px; margin-top: 14px; padding: 16px; min-height: 44px; border: 1px solid var(--verm); border-radius: var(--radius, 12px); background: #fffdf8; color: var(--ink); text-decoration: none; }
+  a.dir .k { display: block; margin: 0; }
+  a.dir:hover, .mark:hover { text-decoration: underline; }
+  .fine { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+  .loan .k { display: block; margin: 0 0 4px; }
+  #loan-note { margin: 8px 0 12px; color: var(--graphite); }
+  .fields { display: grid; gap: 10px; }
+  .fields div { display: grid; gap: 4px; min-width: 0; }
+  .fields label { color: var(--graphite); font-size: 12px; }
+  input { width: 100%; max-width: 100%; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid #cfc3b2; border-radius: 8px; background: #fffdf8; color: var(--ink); font: inherit; font-variant-numeric: tabular-nums lining-nums; }
+  .pay { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line); font-family: Georgia, "Iowan Old Style", Palatino, serif; font-size: 1.35rem; font-variant-numeric: tabular-nums lining-nums; }
+  @media (min-width: 640px) {
+    .hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 8px 20px; align-items: end; }
+    .hero svg { margin-top: 0; }
+    .facts { grid-template-columns: 1.05fr .85fr 1.2fr; }
+    .split { grid-template-columns: minmax(0, 1.2fr) minmax(0, .86fr); }
+    .fields { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr); }
+  }
+</style>
+</head>
+<body>
+<article class="screen">
+  <p class="banner">Planning concept · illustrative data · not a live listing or quote</p>
+  <header class="nav">
+    <a class="mark" href="https://github.com/aniketmandloi/cart-campuss/issues/1">Car research</a>
+    <p class="search"><span class="k">Search</span>Brand or model<span class="sr">Representation only. Not an active search.</span></p>
+  </header>
+  <header class="hero">
+    <div>
+      <p class="k">Fictional model</p>
+      <h1>Example <em>GT</em> coupe</h1>
+      <p class="context">Example · Illustrative market · model year 2024 · GT Coupe variant</p>
+    </div>
+    <svg viewBox="0 0 360 120" aria-hidden="true" focusable="false">
+      <path d="M24 112h312" fill="none" stroke="#e4d5c4" stroke-width="1"/>
+      <path fill="#1b1714" d="M42 90c14 0 22-10 36-17l26-10c20-13 36-21 58-22 16-1 28 3 38 11l22 16c26 12 68 18 114 19v3H42z"/>
+      <path d="M138 64l20-16h28l20 16" fill="none" stroke="#f3eee4" stroke-width="1.6" stroke-linejoin="round"/>
+      <path d="M90 74c50-8 90-6 140 8" fill="none" stroke="#9a3412" stroke-width="1.5" stroke-linecap="round"/>
+      <path d="M314 82h12" fill="none" stroke="#9a3412" stroke-width="1.6" stroke-linecap="round"/>
+      <g fill="#f3eee4">
+        <circle cx="96" cy="90" r="17"/>
+        <circle cx="292" cy="90" r="17"/>
+      </g>
+      <g fill="none" stroke="#1b1714" stroke-width="2.4">
+        <circle cx="96" cy="90" r="14"/>
+        <circle cx="292" cy="90" r="14"/>
+      </g>
+      <g fill="none" stroke="#9a3412" stroke-width="1.4">
+        <circle cx="96" cy="90" r="4.5"/>
+        <circle cx="292" cy="90" r="4.5"/>
+      </g>
+    </svg>
+  </header>
+  <ul class="facts card">
+    <li><span class="k">Powertrain</span>Petrol, illustrative</li>
+    <li><span class="k">Power</span>— not documented</li>
+    <li><span class="k">History</span>Production count: not documented</li>
+  </ul>
+  <div class="split">
+    <section class="card">
+      <div class="tabs" role="tablist" aria-label="Car page sections">
+        <button type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected="true">Overview</button>
+        <button type="button" role="tab" id="tab-specs" aria-controls="panel-specs" aria-selected="false" tabindex="-1">Specs</button>
+        <button type="button" role="tab" id="tab-cost" aria-controls="panel-cost" aria-selected="false" tabindex="-1">India cost</button>
+      </div>
+      <div class="panel" role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">
+        <p>A Model reference for a fictional coupe, not a Listing. The market, model year, and variant above are selected on purpose. A contextless link stays an overview.</p>
+        <p>Names and states here show how illustrative, missing, and withheld facts should read.</p>
+      </div>
+      <div class="panel" role="tabpanel" id="panel-specs" aria-labelledby="tab-specs" hidden>
+        <dl class="spec">
+          <div><dt>Body</dt><dd>Coupe, illustrative</dd></div>
+          <div><dt>Powertrain</dt><dd>Petrol, illustrative</dd></div>
+          <div><dt>Drivetrain</dt><dd>Rear-wheel, illustrative</dd></div>
+          <div><dt>Power</dt><dd>— not documented</dd></div>
+        </dl>
+        <p class="exact">Production count: not documented</p>
+      </div>
+      <div class="panel" role="tabpanel" id="panel-cost" aria-labelledby="tab-cost" hidden>
+        <p>Registration jurisdiction: Maharashtra, illustrative. Sales market and registration place stay separate. Route example: domestic-new.</p>
+        <p>Insurance and road tax are missing, so this page shows no known subtotal and no estimated total cash purchase cost.</p>
+        <p><a href="https://github.com/aniketmandloi/cart-campuss/issues/5">India cost decision</a> · <a href="https://github.com/aniketmandloi/cart-campuss/issues/7">Car-page decision</a></p>
+      </div>
+    </section>
+    <aside class="card">
+      <p class="k">Evidence</p>
+      <h2>India cost</h2>
+      <p class="lede">Incomplete. These lines are not a quote.</p>
+      <ul class="states">
+        <li><span>Ex-showroom reference</span><b>Not documented</b></li>
+        <li><span>Insurance</span><b>Missing</b></li>
+        <li><span>Road tax</span><b>Missing</b></li>
+        <li><span>Import eligibility</span><b>Not applicable to this route</b></li>
+        <li><span>Estimated total</span><b>Withheld</b></li>
+      </ul>
+      <a class="dir" href="https://github.com/aniketmandloi/cart-campuss/issues/4"><span class="k">Source directory · planned</span>View source-discovery plan</a>
+      <p class="fine">Not stock. No inventory count and no live listing. <a href="https://github.com/aniketmandloi/cart-campuss/issues/2">Sources decision</a></p>
+    </aside>
+  </div>
+  <section class="card loan" aria-labelledby="loan-title">
+    <p class="k">Synthetic loan</p>
+    <h2 id="loan-title">Finance example</h2>
+    <p id="loan-note">Separate from India tax estimates. Not a lender offer. Synthetic example ₹600000 / 9% / 60 giving ₹12455.01.</p>
+    <form id="loan" aria-describedby="loan-note" autocomplete="off">
+      <div class="fields">
+        <div><label for="principal">Principal (₹)</label><input id="principal" name="principal" type="number" inputmode="decimal" min="0" step="1" value="600000"></div>
+        <div><label for="rate">Nominal rate (% / year)</label><input id="rate" name="rate" type="number" inputmode="decimal" min="0" max="36" step="0.01" value="9"></div>
+        <div><label for="months">Term (whole months)</label><input id="months" name="months" type="number" inputmode="numeric" min="1" max="120" step="1" value="60"></div>
+      </div>
+    </form>
+    <p class="pay" id="emi" aria-live="polite">Monthly payment ₹12,455.01.</p>
+  </section>
+</article>
+<script>
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+  var panels = document.querySelectorAll('[role="tabpanel"]');
+  function select(tab) {
+    tabs.forEach(function (item) {
+      var on = item === tab;
+      item.setAttribute('aria-selected', on ? 'true' : 'false');
+      item.tabIndex = on ? 0 : -1;
+    });
+    panels.forEach(function (panel) {
+      panel.hidden = panel.id !== tab.getAttribute('aria-controls');
+    });
+  }
+  tabs.forEach(function (tab) { tab.addEventListener('click', function () { select(tab); }); });
+  document.querySelector('[role="tablist"]').addEventListener('keydown', function (event) {
+    var index = tabs.indexOf(document.activeElement);
+    if (index < 0) return;
+    var next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    select(tabs[next]);
+    tabs[next].focus();
+  });
+  var form = document.getElementById('loan');
+  var out = document.getElementById('emi');
+  var money = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  function read(id) {
+    var raw = document.getElementById(id).value.trim();
+    if (raw === '') return null;
+    var value = Number(raw);
+    return Number.isFinite(value) ? value : null;
+  }
+  function update() {
+    var principal = read('principal');
+    var rate = read('rate');
+    var months = read('months');
+    var ok = principal !== null && principal >= 0 && rate !== null && rate >= 0 && rate <= 36 && months !== null && Number.isInteger(months) && months >= 1 && months <= 120;
+    if (!ok) {
+      out.textContent = 'Enter a principal of 0 or more, a nominal rate from 0 to 36, and whole months from 1 to 120.';
+      return;
+    }
+    var emi = 0;
+    if (principal > 0) {
+      var monthly = rate / 1200;
+      if (monthly === 0) emi = principal / months;
+      else {
+        var growth = Math.pow(1 + monthly, months);
+        emi = principal * monthly * growth / (growth - 1);
+      }
+    }
+    out.textContent = 'Monthly payment ' + money.format(emi) + '.';
+  }
+  form.addEventListener('submit', function (event) { event.preventDefault(); });
+  form.addEventListener('input', update);
+})();
+</script>
+</body>
+</html>
