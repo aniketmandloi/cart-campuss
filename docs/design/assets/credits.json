@@ -1,0 +1,37 @@
+[
+  {
+    "file": "porsche-911-gt3-rs-jpg.jpg",
+    "media": "image",
+    "ref": "commons:130630378",
+    "title": "Porsche 911 GT3 RS (2022) 1X7A7164",
+    "creator": "Alexander-93",
+    "creatorUrl": null,
+    "date": "2023-04-08",
+    "license": "CC BY-SA 4.0",
+    "licenseCode": "by-sa",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "creditRequired": true,
+    "page": "https://commons.wikimedia.org/wiki/File:Porsche_911_GT3_RS_(2022)_1X7A7164.jpg",
+    "via": "Wikimedia Commons",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d3/Porsche_911_GT3_RS_%282022%29_1X7A7164.jpg/1280px-Porsche_911_GT3_RS_%282022%29_1X7A7164.jpg",
+    "width": 1280,
+    "height": 621,
+    "bytes": 224791,
+    "credit": "\"Porsche 911 GT3 RS (2022) 1X7A7164\" by Alexander-93, CC BY-SA 4.0, via Wikimedia Commons",
+    "notes": [
+      "Share-alike: an altered version (recoloured, combined with other pictures) must be shared under the same licence."
+    ],
+    "saved": "2026-10-22T14:36:42.658Z",
+    "changes": "Resized from the Commons original; no additional crop or recoloring."
+  },
+  {
+    "file": "Inter-variable-latin.woff2",
+    "title": "Inter variable Latin subset",
+    "creator": "The Inter Project Authors",
+    "license": "SIL Open Font License 1.1",
+    "licenseFile": "Inter-OFL.txt",
+    "source": "https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2",
+    "project": "https://github.com/rsms/inter",
+    "licenseSource": "https://raw.githubusercontent.com/google/fonts/main/ofl/inter/OFL.txt"
+  }
+]
