@@ -1,0 +1,211 @@
+# Which sources can support a trustworthy worldwide car catalogue and market listings?
+
+Observed 22 October 2026. This note answers the research ticket of the same name. It is a sourcing recommendation from publisher pages and a few unauthenticated NHTSA reads. It is not a legal opinion, a signed contract, or a claim that any quotation of facts would be permitted in a dispute.
+
+Terms below use **Model** and **Listing** as defined in `GLOSSARY.md`: a Model is a named family of cars, and a Listing is an offer for an individual vehicle or a specified new-car offer.
+
+## Recommendation
+
+Ship a small editorial Model catalogue. Write the entries in this product's own words, using brand and model names only to identify the car. Do not ingest a vehicle, listing, image, or volume feed from any source reviewed here.
+
+Live Listings and auction results stay off the site. Where a publisher expressly allows a link, link to that page and stop. Where it does not, name the destination in original prose and do not copy its prices, photos, or spec tables. Empty states are part of the product: a missing photo, spec table, volume, or Listing is shown as missing.
+
+No reviewed source is a worldwide catalogue with a license to store identity, specifications, images, production totals, and Listings together. The gaps below are the evidence for that limit. They are not a prompt to keep searching for one provider that covers India and the rest of the world.
+
+Do not subscribe to CarAPI or MarketCheck for this release. Their public prices are real, and their public terms still forbid the stored catalogue this product would be. Revisit either only under a written permission that names a public catalogue, states retention, states image rights, and states whether India is included. No such permission was obtained. No account was opened.
+
+## What was checked, and what was not
+
+Read on 22 October 2026: NHTSA vPIC's API index, FAQ, About page, and site terms; unauthenticated vPIC responses for Maruti, Tata, Mahindra, Hyundai, and one Canadian specification call; CarAPI's 7 August 2026 terms, pricing page, and FAQ; MarketCheck's 6 May 2026 terms, developer-platform terms, API introduction, quota page, pricing page, data-feed introduction, cached-image docs, and Auction Search docs; Bring a Trailer terms, buying-and-selling policies, and the public results index; RM Sotheby's site terms, media-pass terms, buyer FAQ, and 2026 bidder-info pages for Miami, Hershey, and Paris; Collecting Cars terms and FAQ; Maruti Suzuki India's terms; Toyota USA Newsroom terms; SIAM's industry-trends page and its older statistics narrative; OICA's FAQ and the existence of its separate production and sales pages; the Vahan analytics hub and the older Vahan4 dashboard notice; CarDekho, CarWale, Cars24, and Spinny/Valuedrive terms.
+
+Not done: no accounts, API keys, paid plans, data-feed samples, or signed contracts; no scrape of dealer, marketplace, or auction inventories; no review of every regional terms variant, every RM sale's conditions, CarAPI's separate CSV-feed page, or OICA's definitions PDF (the PDF did not yield readable text). Third-party scrapers that wrap these sites were ignored. A public page is not a license to aggregate it.
+
+## NHTSA vPIC
+
+vPIC is a US regulatory catalogue of how manufacturers assign VINs, built from 49 CFR Part 565 submissions and related manufacturer reports. NHTSA's About page says the data may be freely used by the public, and its API page encourages developers to use the API inside applications and databases. The NHTSA site terms say information on the site is public information and may be distributed or copied. The same terms disclaim accuracy, completeness, and non-infringement of third-party rights, and they say a commercial name on the site is not an endorsement.
+
+That copying permission is the strongest reuse statement found in this review. It still does not make vPIC the Model catalogue.
+
+Coverage, from NHTSA's own pages and from reads on 22 October 2026:
+
+- Foreign vehicles are included only when the manufacturer registered them for importation, use, or sale in the United States through the Part 565 process. Cars that were not registered that way are absent.
+- `GetModelsForMake/maruti` returned 0 models. `GetModelsForMake/tata` returned 0. `GetManufacturerDetails/MARUTI` returned 0.
+- `GetModelsForMake/mahindra` returned four names: Mahindra TR40, Mahindra TR20, Mahindra MPV, and Mahindra Trailer RBT 2000.
+- `GetModelsForMake/hyundai` returned 40 names. Creta, Verna, Alcazar, and Exter were absent. Venue was present. The list also contains names that are not passenger-car Models, including Hyundai Steel Industries, Inc. and Hyundai Translead Trailers.
+- The API index documents Canadian vehicle specifications as Transport Canada collision-reconstruction dimensions (overall length, width, height, wheelbase, curb weight, and similar), for year 1971 and later. A call for a 2019 Honda Civic returned 6 rows. Those are not brochure specifications and not an India dataset.
+- Decode confidence on the FAQ is NHTSA's own estimate: about 99 percent for most major brands from model year 1995 forward, about 60–65 percent for 1980–1994, and no data before the 1980 VIN standard. The About page describes the decoder as intended for model years 1981 forward. `GetModelsForMakeYear` is documented for model years greater than 1995.
+- The FAQ says there is no application registration and no daily query cap, asks large batches to run at night US Eastern time or on weekends, and describes capacity of about 1,000–2,000 transactions per minute. The API index also says an automated rate control applies, and the batch flat decode is documented at a maximum of 50 VINs. The About page says the API has quotas and rate limits, and that the downloadable standalone databases avoid those limits while covering VIN decoding only. Those statements were left side by side. No single numeric cap was treated as the rule.
+- The FAQ offers downloadable body-class images. The files were not opened. They are body-class images, not Model photography.
+
+vPIC has no Listings, no auction results, no production totals, and no marketing photos. A later US VIN decode, labeled as NHTSA data and stored with the retrieval date, can rely on the public-information terms. vPIC make and model lists are a poor backbone for a worldwide or India catalogue.
+
+Sources: [API index](https://vpic.nhtsa.dot.gov/api/Home/Index), [FAQ](https://vpic.nhtsa.dot.gov/api/Home/Index/FAQ), [About](https://vpic.nhtsa.dot.gov/About), [NHTSA terms](https://www.nhtsa.gov/about-nhtsa/terms-use).
+
+## Manufacturer pages
+
+Manufacturer sites publish current specifications and photographs. The pages read here reserve those materials.
+
+Maruti Suzuki India's terms say copyright in the pages, screens, information, and arrangement belongs to Maruti Suzuki India Limited unless otherwise indicated. Content including graphics, logos, images, and data compilations is its intellectual property or a content provider's. The terms say the reader agrees not to extract or re-utilise the whole or any part of the content without express written consent of Maruti Suzuki India, Suzuki Motor Corporation, or their affiliates. The same terms say accessories and features in images are illustrative, may differ by variant, and that the reader should refer to the model's brochure for equipment. Booking through Arena or NEXA is a booking flow that leads to contact from an assigned dealer. It is not a public inventory API. No dealer-stock feed was found on the pages read.
+
+Toyota's US newsroom terms, effective date stated as 4 May 2011 and still posted on the page, say the materials are for editorial use only and may not be copied for commercial use or distribution or modified. Downloads are licensed for editorial use only, and the license text says the downloader may not reproduce, post, distribute, or make the downloads available. Vehicles described there have US specifications and are offered for sale only in the continental United States. The same terms say site information is not an offer to sell, that listed MSRPs exclude tax, title, license, and registration, and that the actual dealer price may vary. External-site guidelines say third-party sites need prior written approval before using Toyota text, trademarks, graphics, or photographs. Brand or model names may be used in text only as far as necessary to identify Toyota products. Logos are not allowed. Linking must not imply sponsorship, and the newsroom may not be framed.
+
+Those two publishers are enough to set the rule for first-party media. An OEM consumer page or press room is a place an editor can look. It is not a grant to copy spec tables, prices, or images into this product. US press-kit specifications are US specifications. India specifications have to come from the India manufacturer's own pages, and Maruti's terms withhold extraction even of those.
+
+Sources: [Maruti Suzuki terms](https://www.marutisuzuki.com/terms-of-use.aspx), [Toyota USA Newsroom terms](https://pressroom.toyota.com/terms-agreements/).
+
+## CarAPI
+
+CarAPI's terms were last updated 7 August 2026. They grant a limited, non-exclusive, non-transferable, revocable license to access the service and display content in the customer's own end-user products. They withhold bulk redistribution of the content as a standalone dataset. They forbid using data from the API or the data feed to create, populate, supplement, or materially contribute to a collection, compilation, database, or product that competes with or is substantially similar to CarAPI, without prior written consent. Acceptable-use rules forbid resale or sublicensing, and they forbid redistributing the data feed, in original or incorporated form, without written authorization. After cancellation, already-fetched content may still be displayed inside the customer's own apps, and further fetching stops. That retention remains subject to the competing-use restriction. The terms disclaim accuracy and completeness. Governing law is stated as Virginia. The terms say they are the entire agreement and supersede prior agreements.
+
+The pricing page and FAQ describe the vehicle API as cars sold in the United States. Year, make, and model are described as 1900–2027. Trims and specifications are described as 1990–2027. The FAQ says there is no car-image API yet. Updates are described as daily when available. Caching is encouraged on the pricing FAQ. That caching sentence conflicts with the 7 August 2026 competing-database clause. The terms, not the FAQ, are the agreement CarAPI says governs.
+
+The pricing page also disagrees with itself. The plan cards list VIN decode, OBD codes, submodels, and trims on Base ($199/year, 1,500 calls/day), Plus ($249/year, 3,000 calls/day), and Premium ($299, with a stated equivalent of $24.92/month, 6,000 calls/day). The comparison table restricts submodels to Plus and Premium, and restricts trims, body, mileage, engine, colors, VIN decode, and OBD codes to Premium. Soft overage is listed at $0.001 per call. The Premium card's extracted text did not repeat the word "year" that appears on Base and Plus. A separate license-plate product lists other countries. That product is plate-to-VIN lookup, not this catalogue.
+
+A public Model catalogue populated from CarAPI is the use the competing-database clause describes. CarAPI does not cover India, images, Listings, auctions, or production totals. It was not subscribed.
+
+Sources: [terms](https://carapi.app/terms-of-use/), [pricing](https://carapi.app/pricing/), [FAQ](https://carapi.app/features/faq/).
+
+## MarketCheck
+
+MarketCheck publishes listing, VIN, incentive, and image APIs, plus sales-gated data feeds. Two public contracts both claim to govern API use, and they do not match.
+
+The marketing terms, last updated 6 May 2026, are with MarketCheck Cars Inc. and choose New York law. They allow applications that query data in real time and display results inside the customer's application. They say the data is licensed, not sold, and may not be used to create an independent or persistent dataset. They forbid caching or persisting substantial portions outside normal application use, systematic extraction, competing products, AI training, and using the data to find scrape targets. Commercial or high-volume use may require a separate enterprise agreement, which MarketCheck decides. On termination the customer must cease all use of MarketCheck data. Some usage is described as free within defined limits. Prices may change. The terms disclaim accuracy.
+
+The developer-platform terms are version 2, last updated 14 August 2026, effective 14 September 2026, so on the observation date they are the version that page says is in force. They are with Market Check Cars, Inc., a Nevada corporation, and choose Delaware law. They call themselves the entire agreement for the developer platform and say they supersede prior communications about that service. They allow display to the customer's own end users during an active subscription. They forbid resale, syndication, and building a competing product, and the examples include a vehicle marketplace data product and a listing-syndication product. Caching is limited to the memory needed to render a single end-user request, described as typically seconds, and must not be shared across users or kept across restarts. On termination the customer must purge remaining MarketCheck data, aside from a narrow billing and audit exception. Enterprise customers may negotiate caching or bulk terms in a separate written agreement. Attribution, if MarketCheck asks, is "Data powered by MarketCheck." Accuracy is disclaimed. Version 1, archived at `/terms/v1` on that site, was not read.
+
+The cached-image documentation conflicts with the developer terms. Cached images are used cars only. The docs say a private cache of up to 4 hours is allowed on individual machines, public CDN caching is not allowed, and `Cache-Control` is private with `max-age=14400`. Dealer-hosted URLs and MarketCheck-cached URLs are separate fields. Neither document grants a stock-photo library. Listing photos remain third-party images inside MarketCheck's licensed data.
+
+Geography on the pages read:
+
+- API introduction: United States, Canada, and the United Kingdom. US sources are described as 45,000+ dealer, auction, private-seller, and OEM sources. Canada: cars, 8,200+ dealer sites and private sellers. UK: cars, 10,000+ dealer sites and private sellers. India is absent.
+- Data-feed introduction: same three countries, with the US source count stated as 80,000+. Those two counts were not reconciled. Feeds require a sales agreement and have different terms from the API. There is no self-serve signup. US car feeds include new, used, auctions, and private party. The UK car table lists used dealer cars and private party, with historical feed and attribution marked available. It does not list a UK auction segment. NeoVIN historical feeds are US and Canada cars and light trucks. Incentives are US cars. India is absent.
+- Auction Search docs: active US auction listings only, refreshed daily by 11:00 UTC. `seller_type` is always `auction`. The price filters are advertised price and buy-now price in USD. The page claims about 1.2 million auction listings and about 498,000 unique vehicles. That claim was not independently counted. This endpoint is an active-listing search with an advertised price. It is not a hammer-price archive of RM Sotheby's, Collecting Cars, or Bring a Trailer.
+
+The pricing page on the observation date lists Cars API plans of Free $0 (500 calls/month, 5 requests/second, 100-mile radius), Basic $299/month plus data fees (5,000 calls, 5/second, 100-mile radius, 1,500-row pagination), Standard $749/month plus data fees (unlimited calls, 40/second, 500-mile radius, 1,500-row pagination), and Enterprise as inquire, with no radius restriction and full bulk feed delivery. Endpoint examples include inventory search at $0.002 per call and cached images at $0.001 per call. The quota doc matches the monthly call caps and per-second rates. Data feeds are priced separately with sales. A 100-mile or 500-mile radius does not serve a nationwide catalogue, and the retention clauses forbid storing the responses that would be needed to assemble one anyway.
+
+MarketCheck also publishes inferred sales from dealer-inventory changes over 90 days, and a MarketCheck Price prediction. Those are MarketCheck's market statistics for the markets it covers. They are not factory production and not India registration counts.
+
+No MarketCheck plan was purchased, so the clickwrap actually presented at signup was not observed. Whichever of the two public contracts applies, a persisted worldwide catalogue and a public image cache are outside it.
+
+Sources: [marketing terms](https://www.marketcheck.com/terms_of_service/), [developer terms](https://developers.marketcheck.com/terms), [API introduction](https://docs.marketcheck.com/docs/get-started/api/introduction), [quotas](https://docs.marketcheck.com/docs/get-started/api/quota-and-rate-limits), [pricing](https://www.marketcheck.com/pricing), [data feeds](https://docs.marketcheck.com/docs/get-started/data-feeds/introduction), [cached image](https://docs.marketcheck.com/docs/api/cars/vehicle-listing/cached-image), [Auction Search](https://docs.marketcheck.com/docs/api/cars/inventory/auction-search).
+
+## Auction publishers
+
+These three houses publish live auctions and completed results on their own sites. None of the pages read offers a public data API or a license to store lots, prices, or photographs. Each house uses a different price basis. A single "sold price" field would erase that difference.
+
+### Bring a Trailer
+
+Bring a Trailer Media's terms say it is not a dealer or traditional auctioneer and does not sell the vehicle. The policies page says a bid does not create a binding contract. After a successful bid, BaT introduces the buyer and seller, who negotiate their own contract. The same policies page says the vehicle buyer commission is the greater of USD $250 or 5 percent of the purchase price, capped at USD $7,500, payable to BaT on top of the amount the buyer pays the seller. The commission is charged even if the buyer and seller never form a contract, according to that page. Other BaT pages describe different percentages for some non-car categories; the vehicle rule above is the one verified in the policies text. It should not be stored as a universal BaT fee.
+
+The results index, read the same day, uses both "Sold for" and "Bid to", with a currency and a date. Examples on that page included "Sold for USD $451,000 on 10/17/2026" and "Bid to EUR €107,551 on 10/20/2026". A results-page number is not, by itself, a completed sale or an all-in buyer cost.
+
+The terms reserve copyright in BaT content. They prohibit copying, reproducing, archiving, or displaying that content in an application unless BaT permits it in writing. They prohibit frames and in-line links. They prohibit robots, spiders, crawlers, and manual extraction tools, and they prohibit using the content to train or ground AI models. A plain homepage hyperlink is not expressly granted and is not the same act as an in-line embed. It is not a data license. First release does not show BaT bids, photos, or results.
+
+Sources: [terms](https://bringatrailer.com/terms-of-use/), [policies](https://bringatrailer.com/policies/), [results index](https://bringatrailer.com/auctions/results/).
+
+### RM Sotheby's
+
+The site terms grant a limited license for personal use. They exclude resale or commercial use of the site or its contents. They prohibit robots, spiders, automatic devices, and manual processes that monitor or copy pages, unless RM has given prior written permission. They prohibit framing. They say much of the information is proprietary or licensed to RM by users or third parties, and they prohibit copying, reproducing, or publicly displaying site content without prior written permission. The linking right they actually state is a limited, revocable, non-exclusive right to hyperlink to the RM homepage, without using an RM logo, and without portraying RM in a false or offensive way.
+
+The media-pass page says downloaded images are for active members of the media who completed RM's registration, for non-commercial editorial use about RM Sotheby's or RM events, with credit and a link, and with a copy of the article sent to the press office. Advertising, marketing, merchandising, and other commercial use are prohibited without express written consent. Further distribution is prohibited. That is not a catalogue photo license.
+
+Buyer-facing pages define the buyer's premium as a percentage added to the hammer price, stated per lot under Additional Information. The premium schedule is per sale. Miami 2026 and Hershey 2026 bidder info state, for cars, 12 percent up to a $250,000 hammer and 10 percent on the balance, and 20 percent for motorcycles and automobilia. Paris 2026 states, for cars, 15 percent plus 20 percent VAT up to €200,000 and 12.5 percent plus 20 percent VAT on the balance. A 2023 Las Vegas conditions PDF adds an overhead premium on top of hammer and buyer's premium for that sale. No RM results page was found that states whether the number printed in the public archive already includes the premium. The Sotheby's general art glossary, which says published results customarily include hammer plus buyer's premium and any overhead premium, was not treated as RM's results legend.
+
+The homepage link is the outbound fallback RM's terms grant. Lot pages, result figures, and photographs stay on RM's site.
+
+Sources: [privacy and terms](https://rmsothebys.com/privacy-terms/), [media pass](https://rmsothebys.com/media-center/media-center-media-pass/), [questions](https://rmsothebys.com/questions-about/), [Miami 2026 bidder info](https://rmsothebys.com/auctions/mi26/bidder-info/), [Hershey 2026 bidder info](https://rmsothebys.com/auctions/hf26/bidder-info/), [Paris 2026 bidder info](https://rmsothebys.com/auctions/pa26/bidder-info/).
+
+### Collecting Cars
+
+The terms page read is the version for the UK, Channel Islands, Isle of Man, and the rest of the world excluding Australia, the UAE, the EU, and the USA/Canada. The page says separate versions exist for the EU and for the USA/Canada. Those variants were not compared line by line. Section 16 reserves intellectual property in the site and its content. Section 16.4 prohibits data scraping, data mining, robots, spiders, and crawlers, and equivalent collection of information from the site, without prior written consent.
+
+The FAQ describes 7-day live auctions for cars and bikes. If the highest bid is above reserve, the FAQ says the bidder has won and has entered an agreement to purchase the car. The buyer's premium is charged by Collecting Cars on top of the hammer. The seller is described as receiving the hammer price, with no seller commission on that auction type. The FAQ states the premium as 6 percent plus VAT or sales tax in certain regions, and gives totals of 6.6 percent in Australia, 7.14 percent for EU bidders buying from Germany, and 7.2 percent in the UK, with minimums and maximums that depend on buyer location and currency. The hammer is paid by the buyer to the seller, typically by bank transfer. The FAQ also describes Buy Now, Make an Offer, and sealed bids. The premium paragraph above is tied to 7-day live auctions. It was not assumed to apply to every format.
+
+Collecting Cars results are not stored. The terms do not grant a data license. A plain link to the public site, with no copied lot, price, or photo, is a pointer, not a permission.
+
+Sources: [terms](https://collectingcars.com/terms-conditions), [FAQ](https://collectingcars.com/faqs).
+
+## India marketplaces and authorized dealers
+
+No public self-serve inventory or catalogue API was found for CarDekho, CarWale, Cars24, or Spinny. Each terms page read prohibits the extraction a Listing feed would require.
+
+CarDekho's terms say website text, graphics, and other works are copyrighted by Girnar or its licensors, content is for personal use only, and use of the material for a commercial purpose violates that copyright. They prohibit accessing or copying content by automated or manual means, and the list includes page scraping, data mining, indexing, bots, crawlers, and deep links.
+
+CarWale's visitor agreement prohibits using a car listing on CarWale, by any type of user, for data gathering, data mining, or relisting on another site.
+
+Cars24's terms say information on the website, including vehicle valuations, estimated prices, and promotional offers, is an invitation to offer and not a binding offer. For a transaction with Cars24, no contract arises until Cars24 issues a separate signed document. The terms prohibit automated access, including bots and scrapers, without prior written permission, and they prohibit scraping or data-mining content for any commercial purpose.
+
+The Spinny URL read serves Valuedrive terms. Those terms prohibit deep links, robots, spiders, automatic devices, and equivalent manual processes to access, acquire, copy, or monitor any portion of the platform or its content. This was not confirmed to be the only Spinny terms document.
+
+Maruti's booking path, above, assigns a dealer after a booking. It does not publish a third-party stock feed. No authorized-dealer inventory API was found on the manufacturer pages read.
+
+An India Listing in this product would require a contract these public terms do not offer. Until that contract exists, the Model page does not embed Indian marketplace or dealer stock, prices, or photos.
+
+Sources: [CarDekho terms](https://www.cardekho.com/info/terms_and_condition), [CarWale visitor agreement](https://www.carwale.com/visitor-agreement/), [Cars24 terms](https://www.cars24.com/terms-and-conditions/), [Spinny/Valuedrive terms](https://www.spinny.com/terms-and-conditions/value-drive/), [Maruti Suzuki terms](https://www.marutisuzuki.com/terms-of-use.aspx).
+
+## Production, sales, and registrations
+
+These are different counts. None of the public series read here is a per-Model production total, and the commercial product does not have a license to republish the aggregate tables.
+
+SIAM's industry-trends page presents three annual series side by side: production, domestic sales, and exports. Categories are passenger vehicles, commercial vehicles, three-wheelers, two-wheelers, and quadricycles, with fiscal-year columns through 2025–26. Cell values are not copied into this note. The retrieved table contained inconsistent punctuation in at least two cells, so the figures were not reliable enough to transcribe. The series are category totals, not Model totals. A separate SIAM statistics page still displayed an April–March 2014 narrative on the observation date, so the public SIAM site is not one maintained feed. An October 2024 SIAM press note said production figures in that note were unavailable for BMW, Mercedes, JLR, Tata Motors, and Volvo Auto, and said domestic-sales treatment of Tata Motors differed. That is evidence that a SIAM month can omit members. It was not treated as a permanent rule for every cell on the trends page.
+
+OICA publishes production statistics and, on a separate page, sales statistics. The FAQ says statistics are free for non-commercial use and for members, and asks commercial users to contact OICA. It says figures are published quarterly and annually, and that definitions should be read. The definitions PDF did not yield readable text in this session, so the definition of production versus sales was not verified from that file. Country totals on the sales page were not copied, because they were not quality-checked. This product is a public commercial site, so the FAQ's commercial-use line means OICA tables are not cleared for republication.
+
+The National Transport Intelligence Hub at `analytics.parivahan.gov.in/analytics` presents Vahan as India's vehicle-registration registry. On 22 October 2026 the hub showed "TOTAL ACTIVE VEHICLE REGISTERED 24.94 Cr" and "Active Vehicles Registered Till Date", plus application and revenue figures, with a footnote that the statistics are based on RTOs running on Vahan 4.0, Sarathi, and e-Challan. That is a stock of registered vehicles across classes, not an annual sales flow and not a Model's factory output. The hub page itself did not state a reuse license. A different Parivahan page, the driving-licence status tool, says its content may not be used commercially or for derivative works. That sentence was not on the analytics hub and is not applied to it. The older Vahan4 dashboard was still serving on the observation date and still displayed a notice that it would be discontinued after 15 August 2026, with a link to the analytics hub. The notice date had passed and the old UI was still up.
+
+MarketCheck inferred sales, described above, are a fourth measure and cover MarketCheck's markets, not India factory output.
+
+A Model page does not show a production, sales, export, or registration number. If a later page explains these words, it explains them without attaching a figure to a Model.
+
+Sources: [SIAM industry trends](http://www.siam.in/knowledge/industry-data/industry-trends), [SIAM statistics narrative](https://www.siam.in/statistics.aspx?mpgid=8&pgidtrail=9), [October 2024 SIAM note](https://www.siam.in/pressrelease-details.aspx?mpgid=48&pgidtrail=50&pid=574), [OICA production](https://oica.net/production-statistics/), [OICA sales](https://oica.net/sales-statistics/), [OICA FAQ](https://oica.net/faq/), [Vahan analytics hub](https://analytics.parivahan.gov.in/analytics), [Vahan4 dashboard](https://vahan.parivahan.gov.in/vahan4dashboard/vahan/view/reportview.xhtml).
+
+## First-release shape and fallback states
+
+The catalogue is a short list of Models the team can maintain. Each entry can carry the brand and model name, the market the entry is about, and original prose. It does not carry a copied spec table, a manufacturer logo, a photograph, a volume, or a live Listing.
+
+Fallback states:
+
+1. **Photo.** No image is shown. The page does not hotlink an OEM, dealer, marketplace, or auction photograph. NHTSA body-class images are not a substitute. A later photograph needs a recorded permission, credit, and scope stored with the file.
+2. **Specifications.** No OEM or marketplace spec table is republished. Editors may consult the manufacturer's page for the relevant market. The public page can say, in original words, that the manufacturer publishes specifications for that market. A numeric spec is shown only when the project has a right to state it. The NHTSA public-information terms can support a labeled US VIN-decode attribute. They do not support an India brochure spec. Maruti's terms withhold extraction. Toyota's newsroom terms withhold commercial copying and require written approval before third parties use Toyota text or photographs.
+3. **Volume.** The page does not show a number. It does not substitute a SIAM or OICA category total, a Vahan registration stock, or a MarketCheck inferred-sales figure. Those counts are different populations. An empty volume is "not published here," which is different from zero.
+4. **Listings.** The page says this product does not carry live stock. It does not embed prices. Cars24's own terms call website prices an invitation to offer, not a binding offer. Toyota's newsroom says its information is not an offer to sell and that MSRP is not the dealer price. An India ex-showroom figure on a manufacturer site is a manufacturer price presentation, not a Listing, and Maruti's terms withhold copying it.
+5. **Outbound links.** RM Sotheby's homepage is the link their terms grant, under the conditions on that page. Bring a Trailer content is not embedded, framed, or in-line linked. CarDekho and Spinny/Valuedrive prohibit deep links as a means of copying or monitoring. CarWale prohibits relisting. For those destinations the Model page uses original prose and does not deep-link a listing or variant page. A homepage URL is a pointer, not a grant to reuse the destination's content.
+6. **Auctions.** No lot, bid, or result is stored. If a later written permission allows a quotation, the stored price keeps the publisher's own basis: Bring a Trailer high bid versus "Bid to" versus "Sold for", plus the separate BaT commission and the fact the bid is not a binding sale; Collecting Cars hammer versus buyer's premium, for a named auction format; RM hammer versus the sale-specific buyer's premium, and VAT where that sale states it. Currency, date, and lot identity stay attached. Those bases are not normalized into one price. MarketCheck Auction Search prices, if ever licensed, are advertised or buy-now prices for active US auction listings, refreshed daily, and are a different basis again.
+7. **Stale source.** A field the team has not re-checked shows "not checked," with the last date when one exists. A blank is not used to mean zero, unavailable, or unsold.
+8. **Feeds later.** A CarAPI or MarketCheck contract, or an India marketplace or dealer contract, is a new decision. The public documents read here do not supply it. Data-feed coverage that was actually described stops at the United States, Canada, and the United Kingdom, and the feed terms are whatever the sales agreement says, which was not read because no agreement was requested.
+
+## Access and rights limitations
+
+| Source | Access actually available without a contract | Rights limit for this product | Main gap |
+| --- | --- | --- | --- |
+| NHTSA vPIC | Public API, no key. Standalone download is VIN decode only. Rate statements conflict, as noted above. | Site terms allow copying public information and disclaim accuracy and third-party rights. | US regulatory VIN data. India passenger Models checked were absent. No photos, Listings, or production totals. |
+| Maruti Suzuki India | Public consumer and booking pages. No stock API found. | No extraction or re-use of any content without written consent. Images are illustrative. | Cannot copy India specs, prices, or photos. Booking is a lead, not a Listing feed. |
+| Toyota USA Newsroom | Public press materials, editorial click-through. | Editorial use only. Commercial copying prohibited. Written approval before third parties use text or images. US specs only. | Not an India source and not a commercial media library. |
+| CarAPI | Self-serve paid API. Published list prices above. No account opened. | 7 August 2026 terms forbid a substantially similar vehicle database and bulk redistribution. FAQ caching language conflicts with those terms. No accuracy warranty. | United States only. No image API. No Listings. |
+| MarketCheck API | Self-serve plans with published call caps, radius limits, and per-call fees. No account opened. Two public contracts conflict. | No persistent dataset. Developer terms limit cache to a single request and require purge on termination. Image docs allow a 4-hour private cache and forbid public CDNs. | US, Canada, UK. Auction endpoint is US active listings with an advertised price. No India. |
+| MarketCheck data feeds | Sales contact only. Sample feed is offered by request. Terms differ from the API and were not the API terms. | Not observed. Enterprise caching would be whatever the signed agreement says. | India not in the published coverage tables. |
+| Bring a Trailer | Public site. No official API. | No copy into an application. No frames or in-line links. No scraping. Bid is not a binding sale. Commission is extra. | Results use "Sold for" and "Bid to". |
+| RM Sotheby's | Public site. Homepage link is granted. Media downloads require registration. | No commercial copy. No robots. Images are non-commercial editorial about RM, for registered media. | Premium is sale-specific. Printed-result semantics were not verified. |
+| Collecting Cars | Public site. Regional terms differ. No official API found. | No scraping. IP reserved. | Hammer and buyer's premium are separate. Format-specific rules. |
+| CarDekho, CarWale, Cars24, Spinny | Public websites. No self-serve API found. | Personal-use or no-extraction terms. Cars24 prices are an invitation to offer. Deep links prohibited on CarDekho and Spinny/Valuedrive. CarWale prohibits relisting. | No India Listing integration on public terms. |
+| SIAM | Public category tables. Not a per-Model feed. Older page still shows FY2014 narrative. | No commercial-republication grant was found. Cell values were too messy to copy. | Category production, domestic sales, and exports are separate, and a given month can omit members. |
+| OICA | Public production and sales pages. Quarterly and annual. | FAQ: free for non-commercial use and members; commercial use requires contact. | Not cleared for this commercial site. Not per-Model. Definitions PDF unread. |
+| Vahan analytics | Public registration hub. | No reuse license on the hub page. Older dashboard's discontinuation notice is stale relative to its own date. | Registration stock, all classes, RTOs on Vahan 4.0. Not sales and not production. |
+
+## Uncertainties
+
+- Which MarketCheck contract a signup actually accepts. Both public versions were online on 22 October 2026, they name different legal entities and different governing law, and the developer terms say they are the entire agreement for the developer platform. The clickwrap was not seen.
+- Whether MarketCheck's cached-image 4-hour header survives the developer terms' single-request cache rule. Neither reading permits a public image cache.
+- CarAPI's Premium billing period, because the extracted card showed $299 and "$24.92/month" without repeating "/year", and the plan cards disagree with the comparison table about which tier includes trims and VIN decode.
+- The exact number printed on an RM results page, and the buyer's premium for any RM sale other than the 2026 pages and the 2023 Las Vegas PDF that were read.
+- Bring a Trailer fees for non-car categories, beyond the vehicle rule verified in the policies text.
+- Collecting Cars terms variants for the EU and for the USA/Canada, and premiums for formats other than the 7-day live auctions described in the FAQ.
+- Whether a SIAM trends-table cell currently omits the members named in the October 2024 press note.
+- OICA's written definitions. The commercial-use answer on the FAQ was read. The definitions file was not.
+- A reuse license for the Vahan analytics hub. Absence of a sentence on that page is not a grant.
+- Any India dealer or marketplace contract that is offered only after a sales conversation. None was requested, and none is assumed.
+- Current applicability after 22 October 2026. Several of these terms say the publisher can change them, and MarketCheck's developer terms say continued use is acceptance.
+
+## Bottom line
+
+The first release can be a small catalogue of Models, identified in this product's own words, with honest empty states for photographs, specifications, volumes, Listings, and auctions. NHTSA vPIC is a usable US VIN reference under its public-information terms, and it is not an India or worldwide Model list. OEM pages, CarAPI, MarketCheck, the three auction houses, SIAM, OICA, Vahan, and the Indian marketplaces can inform an editor or receive a visitor. On the documents read, they cannot be copied into the product's database, image store, or live Listing index.
