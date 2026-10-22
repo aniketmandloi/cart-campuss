@@ -1,0 +1,3 @@
+{
+  "extends": "@cart-campuss/config/tsconfig.base.json"
+}

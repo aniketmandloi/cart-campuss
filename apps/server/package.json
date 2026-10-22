@@ -1,0 +1,30 @@
+{
+  "name": "server",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "build": "tsdown",
+    "check-types": "tsc --noEmit",
+    "compile": "bun build --compile --no-compile-autoload-dotenv --minify --sourcemap --bytecode ./src/index.ts --outfile server",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.mjs",
+    "env:generate": "varlock codegen"
+  },
+  "dependencies": {
+    "@cart-campuss/api": "workspace:*",
+    "@cart-campuss/db": "workspace:*",
+    "@hono/node-server": "^2.1.1",
+    "@hono/trpc-server": "^0.4.2",
+    "@trpc/server": "catalog:",
+    "hono": "^4.13.7",
+    "varlock": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@cart-campuss/config": "workspace:*",
+    "@types/node": "catalog:",
+    "tsdown": "^0.23.0",
+    "tsx": "catalog:",
+    "typescript": "^6.0.3"
+  }
+}
