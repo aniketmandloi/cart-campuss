@@ -18,7 +18,7 @@ Use the root [glossary](../GLOSSARY.md) for domain terminology.
 
 ## Planning asset
 
-[Car-page concept](design/car-page-concept.html) is a self-contained design study with fictional vehicle content and a synthetic finance example. It is not an implemented website, a live listing, or a verified purchase quotation. The UX resolution defines what the eventual application must do; an illustrative screen cannot override that contract.
+[Car-page concept](design/car-page-concept.html) is a self-contained design study with credited reference car imagery and explicitly illustrative specification, purchase-cost, and finance data. It is not an implemented website, a live listing, or a verified purchase quotation. The UX resolution defines what the eventual application must do; an illustrative screen cannot override its data and calculation contracts. The user-requested visual revision is documented in the [Taste v2 review](design/taste-review.md), including its direction, asset credits, and verification limits.
 
 ## Research evidence
 
@@ -35,7 +35,7 @@ Source permissions and real catalogue content are public-launch execution gates.
 
 The user starts development servers and performs website visual checks. Automated implementation checks and the exact screen checks are specified in the delivery and UX decisions; they have not passed merely because the plan exists.
 
-## Planning verification performed
+## Initial planning verification performed
 
 - Confirmed seven native GitHub sub-issues in map order, with assignments and only wayfinder labels, and confirmed both research commits are accessible remotely.
 - Previewed the concept at 728 and 360 CSS pixels: no horizontal overflow or console errors; keyboard tabs and the cost panel worked. The synthetic loan example produced the expected 9% and zero-interest payments.
