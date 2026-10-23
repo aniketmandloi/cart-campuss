@@ -626,6 +626,9 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     const cases: Array<(input: ReviewedImport) => void> = [
       (input) => { input.records[0]!.document.media[0]!.altText = "Ask the private seller on 98765 43210"; },
       (input) => { input.records[0]!.document.media[0]!.altText = "Call 98765 43210"; },
+      (input) => { input.records[0]!.document.media[0]!.credit = "Call 020 7946 0958"; },
+      (input) => { input.records[0]!.document.media[0]!.credit = "Private seller at 09876543210"; },
+      (input) => { input.records[0]!.document.media[0]!.sourceUrl = "https://example.test/?phone=98765+43210"; },
       (input) => { input.sourcePolicy.attribution = "Seller phone: 09876543210"; },
       (input) => { input.records[0]!.document.facts[0]!.standard = "Contact 9876543210"; },
       (input) => { input.records[0]!.document.facts[0]!.sourceUrl = "https://example.test/?phone=%39%38%37%36%35%34%33%32%31%30"; },
@@ -648,6 +651,7 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     valid.records[0]!.document.facts.push(fact(valid, "price", "9876543210"), fact(valid, "productionYear", "2026"));
     valid.records[0]!.document.facts[1]!.unit = "INR";
     valid.records[0]!.document.media[0]!.altText = "100 PS, INR 98,765,432.10, model years 2025 2026, WLTP Class 3";
+    valid.records[0]!.document.media[0]!.credit = "Seller price INR 9876543210; power 100 PS; model year 2026";
     assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(valid)).status, "published");
     assert.equal((await caller(null).publishing.detail({ subjectId: valid.records[0]!.document.canonicalSubjectId }))?.facts.length, 3);
   });

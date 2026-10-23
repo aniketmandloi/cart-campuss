@@ -1141,7 +1141,7 @@ function textLeaksIdentifier(values: string[]): boolean {
   return values.some((value) => {
     if (containsForbiddenIdentifier(value)) return true;
     try {
-      return containsForbiddenIdentifier(decodeURIComponent(value));
+      return containsForbiddenIdentifier(decodeURIComponent(value.replaceAll("+", " ")));
     } catch {
       return false;
     }
@@ -1160,7 +1160,7 @@ const EMAIL_ADDRESS = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
 const INTERNATIONAL_PHONE = /(?:^|[^a-z0-9])\+\d(?:[\s().-]*\d){9,14}(?=$|[^0-9])/i;
 // Grouping or contact context distinguishes domestic contacts from numeric specifications.
 const DOMESTIC_PHONE = /(?:^|[^a-z0-9])(?:0[ .-]?)?[6-9]\d{4}[ .-]\d{5}(?=$|[^a-z0-9])/i;
-const CONTACT_PHONE = /(?:call|phone|mobile|telephone|contact|whatsapp|seller)(?:[^0-9]{0,40})\b0?\d(?:[\s().-]*\d){6,14}(?=$|[^0-9])/i;
+const CONTACT_PHONE = /(?:^|[^a-z0-9])(?:call|phone|mobile|telephone|contact|whatsapp|seller\s+(?:on|at))\b(?:[^0-9]{0,40})\b0?\d(?:[\s().-]*\d){6,14}(?=$|[^0-9])/i;
 const TEL_URI = /(?:^|[^a-z0-9])tel:\+?\d{8,15}/i;
 const WHATSAPP_URI = /(?:^|[^a-z0-9])wa\.me\/\d{8,15}/i;
 const VIN_TOKEN = /(?:^|[^a-z0-9])[a-hj-npr-z0-9]{17}(?=$|[^a-z0-9])/i;
