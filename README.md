@@ -27,16 +27,14 @@ pnpm install
 
 ## Database Setup
 
-This project uses PostgreSQL with Drizzle ORM.
-
-1. Make sure you have a PostgreSQL database set up.
-2. Update your `apps/server/.env` file with your PostgreSQL connection details.
-
-3. Apply the schema to your database:
+Catalogue records live in PostgreSQL. Apply the reviewed migration, then optionally load the labelled synthetic fixture for a private preview. Public pages exclude that fixture unless `CATALOGUE_ALLOW_FIXTURES=true`.
 
 ```bash
-pnpm run db:push
+pnpm install --frozen-lockfile
+pnpm db:migrate
 ```
+
+Put `DATABASE_URL` in `apps/server/.env`. The web app has its own server-only `DATABASE_URL` and renders an unconfigured catalogue when it is empty. Exact migration, seed, test, and browser checks are in [docs/catalogue-search.md](docs/catalogue-search.md).
 
 Then, run the development server:
 
@@ -124,10 +122,15 @@ cart-campuss/
 - `pnpm run dev:web`: Start only the web application
 - `pnpm run dev:server`: Start only the server
 - `pnpm run check-types`: Check TypeScript types across all apps
+- `pnpm run static-analysis`: Run those TypeScript checks and print their scope. Not a linter
+- `pnpm run format:check`: Check tracked text for LF, a final newline, and no trailing whitespace
+- `pnpm run test`: Run catalogue journey tests. Money grouping is one of those tests, not code formatting
 - `pnpm run dev:native`: Start the React Native/Expo development server
-- `pnpm run db:push`: Push schema changes to database
-- `pnpm run db:generate`: Generate database client/types
-- `pnpm run db:migrate`: Run database migrations
+- `pnpm run db:push`: Push schema changes without a migration file
+- `pnpm run db:generate`: Generate a Drizzle migration from the schema
+- `pnpm run db:migrate`: Apply the reviewed catalogue migration
+- `pnpm run db:seed-fixture`: Insert the synthetic preview fixture through `psql`
+- `pnpm run db:diagnose-search`: Explain the catalogue name index in a throwaway schema. Not part of `pnpm test`
 - `pnpm run db:studio`: Open database studio UI
 - `pnpm run deploy:setup`: Link this repo to a Vercel project (first-time setup)
 - `pnpm run dev:vercel`: Run the Vercel Services dev environment locally

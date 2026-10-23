@@ -1,0 +1,1701 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "6c94419b-0acf-4ff3-ab1b-d39aa87e133e",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "ddl": [
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_alias",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_applicability",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_brand",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_generation",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_market_variant",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_model",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_model_year",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_price_reference",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_sales_market",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_source_policy",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "catalogue_sourced_fact",
+      "entityType": "tables",
+      "schema": "public"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_alias"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "applicability_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_alias"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "kind",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_alias"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "normalized_name",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_alias"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_variant_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "model_year_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "sales_market_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_policy_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "publication_status",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "synthetic",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_brand"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_brand"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "slug",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_brand"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_generation"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "model_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_generation"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_generation"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "slug",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_generation"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_market_variant"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "generation_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_market_variant"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "sales_market_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_market_variant"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_market_variant"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_model"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "brand_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_model"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_model"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "slug",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_model"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_model_year"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "label",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_model_year"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "convention",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_model_year"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "applicability_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_policy_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "sales_market_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "amount_minor",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "currency",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "minor_unit_exponent",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "basis",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tax_inclusivity",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "observed_on",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "review_status",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "publication_status",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sales_market"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sales_market"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "country_code",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sales_market"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "permits_public_catalogue",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "rights_review",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "attribution",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "internal_note",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "applicability_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_policy_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "property",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "state",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "raw_value",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "normalized_value",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "unit",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "measurement_standard",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_title",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_url",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "observed_on",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "retrieved_on",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reviewed_on",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "review_status",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "publication_status",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "curated",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "curated_reason",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "unknown_reason",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "conflicts_with_fact_id",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "sort_order",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "applicability_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "kind",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "normalized_name",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "catalogue_alias_identity_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "catalogue_alias"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "normalized_name",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": {
+            "name": "text_pattern_ops",
+            "default": false
+          }
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "catalogue_alias_name_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "catalogue_alias"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "market_variant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "catalogue_applicability_variant_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "model_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "slug",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "catalogue_generation_model_slug_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "catalogue_generation"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "slug",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "catalogue_generation_slug_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "catalogue_generation"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "generation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "catalogue_market_variant_generation_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "catalogue_market_variant"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "brand_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "catalogue_model_brand_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "catalogue_model"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "applicability_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "catalogue_price_reference_applicability_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "applicability_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "catalogue_sourced_fact_applicability_idx",
+      "entityType": "indexes",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "applicability_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_applicability",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_alias_67qTjsGmFsAI_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_alias"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "market_variant_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_market_variant",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_applicability_t8ue74PiRpq3_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "model_year_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_model_year",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_applicability_YDsieEZGf1JP_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "sales_market_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_sales_market",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_applicability_Tp0DzTHdxdxn_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "source_policy_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_source_policy",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_applicability_9eNTNCrMZ9vh_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "model_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_model",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_generation_model_id_catalogue_model_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_generation"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "generation_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_generation",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_market_variant_cZ3pSQaAjwQ4_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_market_variant"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "sales_market_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_sales_market",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_market_variant_5xXhAcP4KtQ6_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_market_variant"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "brand_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_brand",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_model_brand_id_catalogue_brand_id_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_model"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "applicability_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_applicability",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_price_reference_spBvabsqDjyT_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "source_policy_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_source_policy",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_price_reference_2Uq54VqtJHdX_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "sales_market_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_sales_market",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_price_reference_Bhy9opql6sdN_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "applicability_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_applicability",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_sourced_fact_9vyiBFfAWN1m_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "source_policy_id"
+      ],
+      "schemaTo": "public",
+      "tableTo": "catalogue_source_policy",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "NO ACTION",
+      "name": "catalogue_sourced_fact_OhBjIE16QMwe_fkey",
+      "entityType": "fks",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_alias_pkey",
+      "schema": "public",
+      "table": "catalogue_alias",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_applicability_pkey",
+      "schema": "public",
+      "table": "catalogue_applicability",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_brand_pkey",
+      "schema": "public",
+      "table": "catalogue_brand",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_generation_pkey",
+      "schema": "public",
+      "table": "catalogue_generation",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_market_variant_pkey",
+      "schema": "public",
+      "table": "catalogue_market_variant",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_model_pkey",
+      "schema": "public",
+      "table": "catalogue_model",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_model_year_pkey",
+      "schema": "public",
+      "table": "catalogue_model_year",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_price_reference_pkey",
+      "schema": "public",
+      "table": "catalogue_price_reference",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_sales_market_pkey",
+      "schema": "public",
+      "table": "catalogue_sales_market",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_source_policy_pkey",
+      "schema": "public",
+      "table": "catalogue_source_policy",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "catalogue_sourced_fact_pkey",
+      "schema": "public",
+      "table": "catalogue_sourced_fact",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "slug"
+      ],
+      "nullsNotDistinct": false,
+      "name": "catalogue_brand_slug_key",
+      "schema": "public",
+      "table": "catalogue_brand",
+      "entityType": "uniques"
+    },
+    {
+      "nameExplicit": false,
+      "columns": [
+        "slug"
+      ],
+      "nullsNotDistinct": false,
+      "name": "catalogue_model_slug_key",
+      "schema": "public",
+      "table": "catalogue_model",
+      "entityType": "uniques"
+    },
+    {
+      "value": "\"kind\" in ('brand', 'model', 'generation', 'alias')",
+      "name": "catalogue_alias_kind",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_alias"
+    },
+    {
+      "value": "\"publication_status\" in ('published', 'fixture', 'withheld')",
+      "name": "catalogue_applicability_publication",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "value": "(\"publication_status\" = 'fixture' and \"synthetic\" = true) or (\"publication_status\" = 'published' and \"synthetic\" = false) or \"publication_status\" = 'withheld'",
+      "name": "catalogue_applicability_fixture_is_synthetic",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_applicability"
+    },
+    {
+      "value": "\"tax_inclusivity\" in ('unspecified', 'tax-inclusive', 'tax-exclusive')",
+      "name": "catalogue_price_reference_kind",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "value": "\"review_status\" in ('reviewed', 'unreviewed')",
+      "name": "catalogue_price_reference_review",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "value": "\"publication_status\" in ('published', 'fixture', 'withheld')",
+      "name": "catalogue_price_reference_publication",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "value": "\"minor_unit_exponent\" >= 0 and \"minor_unit_exponent\" <= 6",
+      "name": "catalogue_price_reference_exponent",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "value": "\"amount_minor\" between -9007199254740991 and 9007199254740991",
+      "name": "catalogue_price_reference_safe_integer",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_price_reference"
+    },
+    {
+      "value": "\"audience\" in ('public', 'private-preview')",
+      "name": "catalogue_source_policy_audience",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "value": "\"rights_review\" in ('reviewed', 'unreviewed')",
+      "name": "catalogue_source_policy_rights_review",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "value": "(\"permits_public_catalogue\" = true and \"audience\" = 'public') or (\"permits_public_catalogue\" = false and \"audience\" = 'private-preview')",
+      "name": "catalogue_source_policy_public_is_not_preview",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_source_policy"
+    },
+    {
+      "value": "\"state\" in ('known', 'unknown')",
+      "name": "catalogue_sourced_fact_state",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "value": "\"review_status\" in ('reviewed', 'unreviewed')",
+      "name": "catalogue_sourced_fact_review",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "value": "\"publication_status\" in ('published', 'fixture', 'withheld')",
+      "name": "catalogue_sourced_fact_publication",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    },
+    {
+      "value": "(\"state\" = 'unknown' and \"raw_value\" is null and \"normalized_value\" is null) or (\"state\" = 'known' and \"raw_value\" is not null)",
+      "name": "catalogue_sourced_fact_unknown_has_no_value",
+      "entityType": "checks",
+      "schema": "public",
+      "table": "catalogue_sourced_fact"
+    }
+  ],
+  "renames": []
+}

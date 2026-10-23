@@ -1,47 +1,32 @@
-"use client";
-import { useQuery } from "@tanstack/react-query";
+import type { Metadata } from "next";
 
-import { trpc } from "@/utils/trpc";
+import { catalogueAllowsFixtures, loadCatalogueSearch } from "@/catalogue/load";
+import { CatalogueSearchView } from "@/catalogue/views";
 
-const TITLE_TEXT = `
- ██████╗ ███████╗████████╗████████╗███████╗██████╗
- ██╔══██╗██╔════╝╚══██╔══╝╚══██╔══╝██╔════╝██╔══██╗
- ██████╔╝█████╗     ██║      ██║   █████╗  ██████╔╝
- ██╔══██╗██╔══╝     ██║      ██║   ██╔══╝  ██╔══██╗
- ██████╔╝███████╗   ██║      ██║   ███████╗██║  ██║
- ╚═════╝ ╚══════╝   ╚═╝      ╚═╝   ╚══════╝╚═╝  ╚═╝
+export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
- ████████╗    ███████╗████████╗ █████╗  ██████╗██╗  ██╗
- ╚══██╔══╝    ██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝
-    ██║       ███████╗   ██║   ███████║██║     █████╔╝
-    ██║       ╚════██║   ██║   ██╔══██║██║     ██╔═██╗
-    ██║       ███████║   ██║   ██║  ██║╚██████╗██║  ██╗
-    ╚═╝       ╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝
- `;
+export async function generateMetadata(): Promise<Metadata> {
+  const preview = catalogueAllowsFixtures();
+  return {
+    title: "Search the catalogue",
+    description: "Find a car and read its sourced details.",
+    robots: preview ? { index: false, follow: false } : { index: true, follow: true },
+  };
+}
 
-export default function Home() {
-  const healthCheck = useQuery(trpc.healthCheck.queryOptions());
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string | string[] }>;
+}) {
+  const params = await searchParams;
+  const query = first(params.q);
+  const state = await loadCatalogueSearch(query);
+  return <CatalogueSearchView state={state} />;
+}
 
-  return (
-    <div className="container mx-auto max-w-3xl px-4 py-2">
-      <pre className="overflow-x-auto font-mono text-sm">{TITLE_TEXT}</pre>
-      <div className="grid gap-6">
-        <section className="rounded-lg border p-4">
-          <h2 className="mb-2 font-medium">API Status</h2>
-          <div className="flex items-center gap-2">
-            <div
-              className={`h-2 w-2 rounded-full ${healthCheck.data ? "bg-green-500" : "bg-red-500"}`}
-            />
-            <span className="text-sm text-muted-foreground">
-              {healthCheck.isLoading
-                ? "Checking..."
-                : healthCheck.data
-                  ? "Connected"
-                  : "Disconnected"}
-            </span>
-          </div>
-        </section>
-      </div>
-    </div>
-  );
+function first(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value[0] ?? "";
+  return value ?? "";
 }

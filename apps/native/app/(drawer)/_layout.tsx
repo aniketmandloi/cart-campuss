@@ -58,16 +58,6 @@ const DrawerLayout = () => {
           ),
         }}
       />
-      <Drawer.Screen
-        name="todos"
-        options={{
-          headerTitle: "Todos",
-          drawerLabel: "Todos",
-          drawerIcon: ({ size, color }) => (
-            <Ionicons name="checkbox-outline" size={size} style={{ color: color ?? theme.text }} />
-          ),
-        }}
-      />
     </Drawer>
   );
 };
