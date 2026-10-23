@@ -10,6 +10,8 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "check-types": "turbo run check-types",
+    "format:check": "tsx scripts/check-tracked-text.ts",
+    "static-analysis": "tsx scripts/static-analysis.ts",
     "dev:native": "turbo run dev -F native --",
     "dev:web": "turbo run dev -F web --",
     "dev:server": "turbo run dev -F server --",

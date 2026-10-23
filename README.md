@@ -122,7 +122,9 @@ cart-campuss/
 - `pnpm run dev:web`: Start only the web application
 - `pnpm run dev:server`: Start only the server
 - `pnpm run check-types`: Check TypeScript types across all apps
-- `pnpm run test`: Run catalogue formatting checks and, when `CATALOGUE_TEST_DATABASE_URL` and `PSQL` are set, the search journey
+- `pnpm run static-analysis`: Run those TypeScript checks and print their scope. Not a linter
+- `pnpm run format:check`: Check tracked text for LF, a final newline, and no trailing whitespace
+- `pnpm run test`: Run catalogue journey tests. Money grouping is one of those tests, not code formatting
 - `pnpm run dev:native`: Start the React Native/Expo development server
 - `pnpm run db:push`: Push schema changes without a migration file
 - `pnpm run db:generate`: Generate a Drizzle migration from the schema

@@ -47,15 +47,20 @@ To read the fixture, set `CATALOGUE_ALLOW_FIXTURES=true` for the web process and
 ## Checks
 
 ```bash
-pnpm check-types
+pnpm format:check
+pnpm static-analysis
 CATALOGUE_TEST_DATABASE_URL='postgres://127.0.0.1:5432/catalogue' PSQL="$(command -v psql)" pnpm test
 NEXT_PUBLIC_SERVER_URL='http://127.0.0.1:3000' pnpm --filter web build
 pnpm --filter server build
 ```
 
+`pnpm format:check` reads tracked text and fails on a CR byte, a missing final newline, or trailing whitespace. It skips symlinks, empty files, and files that contain a NUL byte. It does not rewrite files, wrap lines, or format money. `pnpm test` still checks Indian digit grouping; that is a catalogue result, not this check.
+
+`pnpm static-analysis` runs the existing workspace TypeScript checks (`tsc --noEmit` through `pnpm check-types`). The scope is every package that defines `check-types`, including the native workspace as types only. It does not run ESLint or another linter, format files, execute the journey, open a browser, or build a simulator.
+
 `NEXT_PUBLIC_SERVER_URL` is the starter's public API origin. It is not a secret. The web build reads it through Varlock and fails closed when it is empty.
 
-`CATALOGUE_TEST_DATABASE_URL` must be `localhost` or `127.0.0.1`. Without it, `pnpm test` still checks money formatting and the empty states, and skips the database journey with that reason. The database journey creates a unique schema, applies the reviewed migrations there, and drops only that schema. A `public` qualifier in migration SQL is rewritten in that test process and is not written back to the migration files. The journey does not drop or rewrite the `public` schema.
+`CATALOGUE_TEST_DATABASE_URL` must be `localhost` or `127.0.0.1`. Without it, `pnpm test` still checks money grouping and the empty states, and skips the database journey with that reason. The database journey creates a unique schema, applies the reviewed migrations there, and drops only that schema. A `public` qualifier in migration SQL is rewritten in that test process and is not written back to the migration files. The journey does not drop or rewrite the `public` schema.
 
 The native workspace is part of `pnpm check-types`. This slice does not add a native catalogue screen.
 
