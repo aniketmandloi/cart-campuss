@@ -280,8 +280,8 @@ insert into catalogue_market_variant (id, generation_id, sales_market_id, name) 
 insert into catalogue_applicability (
   id, market_variant_id, model_year_id, sales_market_id, source_policy_id, publication_status, synthetic
 ) values
-  ('app_f_order', 'var_rank_f', 'year_probe_2024', 'mkt_probe', 'policy_public_probe', 'published', false),
-  ('app_é_order', 'var_rank_e', 'year_probe_2024', 'mkt_probe', 'policy_public_probe', 'published', false);
+  ('app_f_order', 'var_rank_f', 'year_probe_2024', 'mkt_probe', 'policy_publishing_probe', 'published', false),
+  ('app_é_order', 'var_rank_e', 'year_probe_2024', 'mkt_probe', 'policy_publishing_probe', 'published', false);
 insert into catalogue_alias (id, applicability_id, kind, normalized_name) values
   ('alias_rank_f_b', 'app_f_order', 'alias', 'rank probe ff'),
   ('alias_rank_f_a', 'app_f_order', 'alias', 'rank probe f'),
@@ -293,14 +293,14 @@ insert into publishing_published_assertion (
 ) values
   (
     'assertion_rank_f', 'generation_probe', 'probe', 'rank-f', 'app_f_order',
-    'Rank F', '[]'::jsonb, 'IN', '2024',
+    'Rank F', '["rank probe f","rank probe ff"]'::jsonb, 'IN', '2024',
     '[{"property":"Rank","rawValue":"f","normalizedValue":"f","state":"known","unknownReason":null,"unit":null,"standard":null,"sourceUrl":null,"sourceTitle":"Rank probe note","providerKey":"probe","observedAt":null,"retrievedAt":"2026-10-23T00:00:00.000Z","sourcePolicyId":"policy_publishing_probe","factualReviewerRef":"fact-reviewer","rightsReviewerRef":"rights-reviewer"}]'::jsonb,
     '[]'::jsonb, 'Reviewed public probe attribution.', 'policy_publishing_probe',
     'fact-reviewer', 'rights-reviewer', '2026-10-23T00:00:00.000Z', null, '2026-10-23T00:00:00.000Z', null
   ),
   (
     'assertion_rank_e', 'generation_probe', 'probe', 'rank-e', 'app_é_order',
-    'Rank E', '[]'::jsonb, 'IN', '2024',
+    'Rank E', '["rank probe e"]'::jsonb, 'IN', '2024',
     '[{"property":"Rank","rawValue":"e","normalizedValue":"e","state":"known","unknownReason":null,"unit":null,"standard":null,"sourceUrl":null,"sourceTitle":"Rank probe note","providerKey":"probe","observedAt":null,"retrievedAt":"2026-10-23T00:00:00.000Z","sourcePolicyId":"policy_publishing_probe","factualReviewerRef":"fact-reviewer","rightsReviewerRef":"rights-reviewer"}]'::jsonb,
     '[]'::jsonb, 'Reviewed public probe attribution.', 'policy_publishing_probe',
     'fact-reviewer', 'rights-reviewer', '2026-10-23T00:00:00.000Z', null, '2026-10-23T00:00:00.000Z', null
@@ -309,7 +309,7 @@ insert into publishing_published_assertion (
 
 const publishedProbeSql = `
 insert into catalogue_source_policy (id, name, audience, permits_public_catalogue, rights_review, attribution, internal_note)
-values ('policy_public_probe', 'Reviewed public policy', 'public', true, 'reviewed', 'Reviewed public probe attribution.', '${probeSentinel}');
+values ('policy_publishing_probe', 'Reviewed public policy', 'public', true, 'reviewed', 'Reviewed public probe attribution.', '${probeSentinel}');
 insert into catalogue_sales_market (id, name, country_code) values ('mkt_probe', 'Probe market', 'IN');
 insert into catalogue_brand (id, name, slug) values ('brand_harbor_probe', 'Harbor Probe', 'harbor-probe');
 insert into catalogue_model (id, brand_id, name, slug) values ('model_plain_sedan', 'brand_harbor_probe', 'Plain Sedan', 'plain-sedan');
@@ -317,7 +317,7 @@ insert into catalogue_generation (id, model_id, name, slug) values ('gen_mark_on
 insert into catalogue_model_year (id, label, convention) values ('year_probe_2024', '2024', 'Manufacturer model-year label. Not the calendar build year.');
 insert into catalogue_market_variant (id, generation_id, sales_market_id, name) values ('var_probe_base', 'gen_mark_one', 'mkt_probe', 'Base');
 insert into catalogue_applicability (id, market_variant_id, model_year_id, sales_market_id, source_policy_id, publication_status, synthetic)
-values ('app_harbor_probe', 'var_probe_base', 'year_probe_2024', 'mkt_probe', 'policy_public_probe', 'published', false);
+values ('app_harbor_probe', 'var_probe_base', 'year_probe_2024', 'mkt_probe', 'policy_publishing_probe', 'published', false);
 insert into catalogue_alias (id, applicability_id, kind, normalized_name) values ('alias_harbor_probe', 'app_harbor_probe', 'brand', 'harbor probe');
 insert into catalogue_brand (id, name, slug) values ('brand_bypass', 'Bypass Probe', 'bypass-probe');
 insert into catalogue_model (id, brand_id, name, slug) values ('model_bypass', 'brand_bypass', 'Unreviewed Sedan', 'unreviewed-sedan');
@@ -326,7 +326,7 @@ insert into catalogue_market_variant (id, generation_id, sales_market_id, name) 
 insert into catalogue_applicability (
   id, market_variant_id, model_year_id, sales_market_id, source_policy_id, publication_status, synthetic
 ) values (
-  'app_bypass_probe', 'var_bypass', 'year_probe_2024', 'mkt_probe', 'policy_public_probe', 'published', false
+  'app_bypass_probe', 'var_bypass', 'year_probe_2024', 'mkt_probe', 'policy_publishing_probe', 'published', false
 );
 insert into catalogue_alias (id, applicability_id, kind, normalized_name) values ('alias_bypass_probe', 'app_bypass_probe', 'brand', 'bypass probe');
 insert into catalogue_sourced_fact (
@@ -334,7 +334,7 @@ insert into catalogue_sourced_fact (
   source_title, source_url, observed_on, retrieved_on, reviewed_on, review_status, publication_status, curated,
   curated_reason, unknown_reason, conflicts_with_fact_id, sort_order
 ) values (
-  'fact_bypass', 'app_bypass_probe', 'policy_public_probe', 'Body', 'known', 'secret bypass fact', 'secret bypass fact', null, null,
+  'fact_bypass', 'app_bypass_probe', 'policy_publishing_probe', 'Body', 'known', 'secret bypass fact', 'secret bypass fact', null, null,
   'Bypass dossier', null, '2026-10-22', '2026-10-23', '2026-10-23', 'reviewed', 'published', true,
   null, null, null, 1
 );
@@ -343,7 +343,7 @@ insert into catalogue_sourced_fact (
   source_title, source_url, observed_on, retrieved_on, reviewed_on, review_status, publication_status, curated,
   curated_reason, unknown_reason, conflicts_with_fact_id, sort_order
 ) values (
-  'fact_harbor_body', 'app_harbor_probe', 'policy_public_probe', 'Body', 'known', 'sedan', 'sedan', null, 'probe-body',
+  'fact_harbor_body', 'app_harbor_probe', 'policy_publishing_probe', 'Body', 'known', 'sedan', 'sedan', null, 'probe-body',
   'Reviewed public probe dossier', null, '2026-10-22', '2026-10-23', '2026-10-23', 'reviewed', 'published', true,
   null, null, null, 1
 );
@@ -352,7 +352,7 @@ insert into catalogue_price_reference (
   tax_inclusivity, observed_on, review_status, publication_status, source_title, source_url, source_identifier,
   retrieved_on, reviewed_on
 ) values (
-  'price_harbor_probe', 'app_harbor_probe', 'policy_public_probe', 'mkt_probe', 100000, 'INR', 2, 'official price reference',
+  'price_harbor_probe', 'app_harbor_probe', 'policy_publishing_probe', 'mkt_probe', 100000, 'INR', 2, 'official price reference',
   'unspecified', '2026-10-22', 'reviewed', 'published', 'Reviewed public probe price sheet',
   'https://example.invalid/harbor-probe-price', null, '2026-10-23', '2026-10-23'
 );
@@ -363,7 +363,7 @@ insert into publishing_source_policy (
   contract_text, suspended, reviewer_ref, reviewed_at, created_at
 ) values (
   'policy_publishing_probe', 'probe', 'permitted', 'denied',
-  '["displayName","alias","salesMarket","modelYearLabel","Body","Rank"]'::jsonb,
+  '["displayName","alias","salesMarket","modelYearLabel","Body","Rank","priceReference","brand","model","generation","marketVariant"]'::jsonb,
   '["IN"]'::jsonb,
   'Reviewed public probe attribution.',
   315360000, 'no derivatives', 'no aggregation', 86400,

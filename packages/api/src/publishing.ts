@@ -31,7 +31,20 @@ const IDENTITY_FACT_PROPERTIES = new Set([
   "name",
   "salesMarket",
   "modelYearLabel",
+  "brand",
+  "brandName",
+  "model",
+  "modelName",
+  "generation",
+  "generationName",
+  "marketVariant",
+  "variantName",
+  "salesMarketName",
+  "modelYear",
+  "modelYearConvention",
 ]);
+
+export const CATALOGUE_IDENTITY_FIELDS = ["brand", "model", "generation", "marketVariant", "salesMarket", "modelYearLabel"];
 
 const FORBIDDEN_IDENTIFIER_MESSAGE =
   "A full VIN, registration number, or private seller contact is not publishable.";
@@ -149,6 +162,8 @@ export type PublicDetail = PublicSearchHit & {
   rightsReviewerRef: string;
   reviewedAt: string;
   policyReviewerRef: string | null;
+  policyName: string | null;
+  permittedFields: string[];
   facts: PublicFact[];
   media: PublicMedia[];
   priceReference: PublishingPriceReference | null;
@@ -378,10 +393,10 @@ export async function searchPublishedCatalogue(
   const pattern = likePattern(term);
   const match = sql`(
     ${publishingPublishedAssertion.displayName} ilike ${pattern} escape '\\'
-    or exists (
+    or (${publishingSourcePolicy.permittedFields} @> '["alias"]'::jsonb and exists (
       select 1 from jsonb_array_elements_text(${publishingPublishedAssertion.aliases}) as alias(value)
       where alias.value ilike ${pattern} escape '\\'
-    )
+    ))
   )`;
   const rows = await db
     .select({
@@ -395,6 +410,8 @@ export async function searchPublishedCatalogue(
       providerKey: publishingPublishedAssertion.providerKey,
       factualReviewerRef: publishingPublishedAssertion.factualReviewerRef,
       rightsReviewerRef: publishingPublishedAssertion.rightsReviewerRef,
+      permittedFields: publishingSourcePolicy.permittedFields,
+      policyName: catalogueSourcePolicy.name,
       policyReviewerRef: publishingSourcePolicy.reviewerRef,
       publishedAt: publishingProjectionGeneration.publishedAt,
     })
@@ -414,6 +431,7 @@ export async function searchPublishedCatalogue(
       publishingProjectionGeneration,
       eq(publishingProjectionGeneration.id, publishingProjectionPointer.generationId),
     )
+    .leftJoin(catalogueSourcePolicy, eq(catalogueSourcePolicy.id, publishingPublishedAssertion.sourcePolicyId))
     .where(
       and(
         publicPolicyAllows(assertionCapturedAt(), now()),
@@ -426,7 +444,7 @@ export async function searchPublishedCatalogue(
     canonicalSubjectId: row.canonicalSubjectId,
     displayName: row.displayName,
     salesMarket: row.salesMarket,
-    modelYearLabel: row.modelYearLabel,
+    modelYearLabel: row.permittedFields.includes("modelYearLabel") ? row.modelYearLabel : null,
     publishedAt: toIso(row.publishedAt),
   }));
 }
@@ -453,7 +471,9 @@ export async function readPublishedCatalogueDetail(
       reviewedAt: publishingPublishedAssertion.reviewedAt,
       publishedAt: publishingProjectionGeneration.publishedAt,
       priceReference: publishingPublishedAssertion.priceReference,
+      imagePermission: publishingSourcePolicy.imagePermission,
       permittedFields: publishingSourcePolicy.permittedFields,
+      policyName: catalogueSourcePolicy.name,
       policyReviewerRef: publishingSourcePolicy.reviewerRef,
     })
     .from(publishingPublishedAssertion)
@@ -472,6 +492,7 @@ export async function readPublishedCatalogueDetail(
       publishingProjectionGeneration,
       eq(publishingProjectionGeneration.id, publishingProjectionPointer.generationId),
     )
+    .leftJoin(catalogueSourcePolicy, eq(catalogueSourcePolicy.id, publishingPublishedAssertion.sourcePolicyId))
     .where(
       and(
         eq(publishingProjectionPointer.id, 1),
@@ -485,9 +506,9 @@ export async function readPublishedCatalogueDetail(
   return {
     canonicalSubjectId: row.canonicalSubjectId,
     displayName: row.displayName,
-    aliases: asStringArray(row.aliases),
+    aliases: row.permittedFields.includes("alias") ? asStringArray(row.aliases) : [],
     salesMarket: row.salesMarket,
-    modelYearLabel: row.modelYearLabel,
+    modelYearLabel: row.permittedFields.includes("modelYearLabel") ? row.modelYearLabel : null,
     publishedAt: toIso(row.publishedAt),
     attribution: row.attribution,
     sourcePolicyId: row.sourcePolicyId,
@@ -495,8 +516,10 @@ export async function readPublishedCatalogueDetail(
     rightsReviewerRef: row.rightsReviewerRef,
     reviewedAt: toIso(row.reviewedAt),
     policyReviewerRef: row.policyReviewerRef,
-    facts: asPublicFacts(row.facts),
-    media: asPublicMedia(row.media),
+    policyName: row.policyName,
+    permittedFields: row.permittedFields,
+    facts: permittedPublicFacts(row.facts, row.permittedFields),
+    media: row.imagePermission === "permitted" ? asPublicMedia(row.media) : [],
     priceReference: row.permittedFields.includes("priceReference") ? asPublicPrice(row.priceReference) : null,
   };
 }
@@ -619,6 +642,8 @@ export async function applyOperatorImport(
       statements.push(...catalogueIdentityStatements(deps.db, parsed, record, policyId));
       if (!record.catalogue && context) {
         statements.push(...cataloguePolicyStatements(deps.db, parsed.sourcePolicy, policyId));
+        statements.push(...catalogueAliasStatements(deps.db, subjectId, parsed.sourcePolicy.permittedFields.includes("alias")
+          ? record.document.aliases.map((name) => ({ kind: "alias", name })) : []));
         statements.push(deps.db.update(catalogueApplicability).set({ sourcePolicyId: policyId })
           .where(eq(catalogueApplicability.id, subjectId)));
       }
@@ -768,6 +793,8 @@ function sourceCopyDue(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
 function publicPolicyAllows(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
   return sql`(
     ${publishingSourcePolicy.factPermission} = 'permitted'
+    and ${publishingSourcePolicy.permittedFields} @> '["displayName", "salesMarket"]'::jsonb
+    and ${publishingSourcePolicy.permittedGeographies} @> jsonb_build_array(${publishingPublishedAssertion.salesMarket})
     and ${publishingSourcePolicy.reviewerRef} is not null
     and ${publishingSourcePolicy.reviewedAt} is not null
     and not coalesce(${sourceCopyDue(capturedAt, now)}, false)
@@ -786,6 +813,7 @@ export function currentProjectionCovers(subjectId: SQLWrapper, now: Date): SQL {
       on ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
     where ${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}
       and ${publicPolicyAllows(assertionCapturedAt(), now)}
+      and ${publishingSourcePolicy.permittedFields} @> cast(${JSON.stringify(CATALOGUE_IDENTITY_FIELDS)} as jsonb)
   )`;
 }
 
@@ -988,8 +1016,8 @@ function evaluateRecord(
   if (!policy.permittedFields.includes("salesMarket")) {
     return { externalId, code: "rights", message: "The sales market is not a permitted field." };
   }
-  if (record.catalogue && !policy.permittedFields.includes("modelYearLabel")) {
-    return { externalId, code: "rights", message: "The model year is not a permitted field." };
+  if (record.catalogue && CATALOGUE_IDENTITY_FIELDS.some((field) => !policy.permittedFields.includes(field))) {
+    return { externalId, code: "rights", message: "A catalogue identity component is not a permitted field." };
   }
   if (publicationLeaksIdentifier(record, policy)) {
     return { externalId, code: "rights", message: FORBIDDEN_IDENTIFIER_MESSAGE };
@@ -1302,7 +1330,9 @@ function publicAssertion(
     externalId: record.externalId,
     canonicalSubjectId: record.document.canonicalSubjectId,
     displayName: record.document.displayName,
-    aliases: policy.permittedFields.includes("alias") ? record.document.aliases : [],
+    aliases: policy.permittedFields.includes("alias")
+      ? [...new Set([...record.document.aliases, ...(record.catalogue?.aliases.map((alias) => alias.name) ?? [])])]
+      : [],
     salesMarket: policy.permittedFields.includes("salesMarket") ? record.document.salesMarket : "",
     modelYearLabel: policy.permittedFields.includes("modelYearLabel") ? record.document.modelYearLabel : null,
     facts,
@@ -1489,14 +1519,20 @@ function catalogueIdentityStatements(
         .limit(1),
     ),
   ];
-  const seen = new Set<string>();
   const aliasRows = [
     { kind: "brand" as const, name: catalogue.brand.name },
     { kind: "model" as const, name: catalogue.model.name },
     { kind: "generation" as const, name: catalogue.generation.name },
-    ...(parsed.sourcePolicy.permittedFields.includes("alias") ? catalogue.aliases : []),
+    ...(parsed.sourcePolicy.permittedFields.includes("alias")
+      ? [...catalogue.aliases, ...record.document.aliases.map((name) => ({ kind: "alias", name }))] : []),
   ];
-  for (const alias of aliasRows) {
+  return [...statements, ...catalogueAliasStatements(db, subjectId, aliasRows)];
+}
+
+function catalogueAliasStatements(db: Database, subjectId: string, aliases: Array<{ kind: string; name: string }>): BatchItem<"pg">[] {
+  const seen = new Set<string>();
+  const statements: BatchItem<"pg">[] = [];
+  for (const alias of aliases) {
     const normalized = normalizeCatalogueQuery(alias.name);
     const key = `${alias.kind}\0${normalized}`;
     if (!normalized || seen.has(key)) continue;
@@ -1595,6 +1631,7 @@ function publicationLeaksIdentifier(record: ImportRecord, policy: SourcePolicyIn
     policy.displayName ?? "",
     policy.providerKey,
     policy.reviewerRef ?? "",
+    ...policy.permittedFields,
     record.factualReview.reviewerRef ?? "",
     record.rightsReview.reviewerRef ?? "",
     ...record.document.aliases,
@@ -1645,6 +1682,10 @@ function factLeaksIdentifier(fact: {
   standard?: string | null;
   sourceUrl?: string | null;
   sourceTitle?: string | null;
+  providerKey?: string;
+  sourcePolicyId?: string;
+  factualReviewerRef?: string;
+  rightsReviewerRef?: string;
 }): boolean {
   return (
     forbiddenProperty(fact.property) ||
@@ -1657,6 +1698,10 @@ function factLeaksIdentifier(fact: {
       fact.standard ?? "",
       fact.sourceUrl ?? "",
       fact.sourceTitle ?? "",
+      fact.providerKey ?? "",
+      fact.sourcePolicyId ?? "",
+      fact.factualReviewerRef ?? "",
+      fact.rightsReviewerRef ?? "",
     ])
   );
 }
@@ -1667,6 +1712,7 @@ export function publicMetadataEligible(values: string[]): boolean {
 
 function textLeaksIdentifier(values: string[]): boolean {
   return values.some((value) => {
+    if (z.uuid().safeParse(value).success) return false;
     if (containsForbiddenIdentifier(value) || containsForbiddenQuery(value)) return true;
     try {
       const decoded = decodeURIComponent(value.replaceAll("+", " "));
@@ -1801,12 +1847,16 @@ function asPublicFacts(value: unknown): PublicFact[] {
   });
 }
 
+function permittedPublicFacts(value: unknown, fields: string[]): PublicFact[] {
+  return asPublicFacts(value).filter((fact) => fields.includes(fact.property));
+}
+
 function publicRecordEligible(row: Pick<
   typeof publishingPublishedAssertion.$inferSelect,
   "canonicalSubjectId" | "displayName" | "aliases" | "salesMarket" | "modelYearLabel" |
   "attribution" | "providerKey" | "factualReviewerRef" | "rightsReviewerRef" | "facts"
-> & { policyReviewerRef: string | null }): boolean {
-  return asPublicFacts(row.facts).length > 0 && !textLeaksIdentifier([
+> & { policyReviewerRef: string | null; policyName: string | null; permittedFields: string[] }): boolean {
+  return permittedPublicFacts(row.facts, row.permittedFields).length > 0 && !textLeaksIdentifier([
     row.canonicalSubjectId,
     row.displayName,
     ...asStringArray(row.aliases),
@@ -1817,6 +1867,8 @@ function publicRecordEligible(row: Pick<
     row.factualReviewerRef,
     row.rightsReviewerRef,
     row.policyReviewerRef ?? "",
+    row.policyName ?? "",
+    ...row.permittedFields,
   ]);
 }
 
@@ -1824,7 +1876,7 @@ function asPublicMedia(value: unknown): PublicMedia[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const media = publicMediaSchema.safeParse(item);
-    return media.success && !textLeaksIdentifier([media.data.sourceUrl, media.data.altText, media.data.credit])
+    return media.success && !textLeaksIdentifier([media.data.sourceUrl, media.data.altText, media.data.credit, media.data.sourcePolicyId, media.data.rightsReviewerRef])
       ? [media.data] : [];
   });
 }

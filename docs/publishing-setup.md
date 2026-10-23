@@ -79,7 +79,7 @@ A SourcePolicy ID identifies an immutable reviewed revision. Exact content can b
 
 Both fact and media source URLs accept only HTTP/HTTPS. Public detail parsing also drops unsafe legacy fact/media URLs. Search and detail share the same eligibility check: when no safe non-identity sourced fact remains, both withhold the entire record. Private links in legacy public metadata also withhold the record. Private-contact screening covers common domestic phone formats, contact-labelled numbers, and decoded URL query keys normalized with the forbidden property keys; an unrelated malformed escape cannot disable query screening. Registration screening includes Indian patterns and the common current UK plate format, without joining separate specification units into a plate. These patterns do not establish worldwide plate/contact coverage, and rights reviewers must still withhold private identifiers.
 
-A catalogue record also needs `sourcePolicy.displayName`, `modelYearLabel` in `permittedFields`, and a `catalogue` object whose country and model-year label match the record. Every permitted fact that will be published needs `sourceTitle`. The optional price requires explicit `priceReference` permission for the entire dated amount, basis, and source metadata. Without it the public assertion omits the price while other cleared facts remain publishable. Save this labelled test shape locally and do not commit it. It is not a live catalogue record.
+A catalogue record also needs `sourcePolicy.displayName`, explicit `brand`, `model`, `generation`, `marketVariant`, `salesMarket`, and `modelYearLabel` in `permittedFields`, and a `catalogue` object whose country and model-year label match the record. Every permitted fact that will be published needs `sourceTitle`. The optional price requires explicit `priceReference` permission for the entire dated amount, basis, and source metadata. Without it the public assertion omits the price while other cleared facts remain publishable. Each identity permission covers that structured component's names, IDs, slugs, and context metadata (including model-year convention). Additional lookup names require `alias`; search checks them against the current assertion rather than historical index rows. A replacement without the catalogue block may withhold optional aliases/year in the publishing projection. The visitor catalogue withholds the whole applicability until all required identity context is currently permitted, rather than attaching facts to an incomplete identity. Save this labelled test shape locally and do not commit it. It is not a live catalogue record.
 
 ```json
 {
@@ -92,7 +92,7 @@ A catalogue record also needs `sourcePolicy.displayName`, `modelYearLabel` in `p
     "displayName": "Labeled test policy",
     "factPermission": "permitted",
     "imagePermission": "denied",
-    "permittedFields": ["displayName", "alias", "modelYearLabel", "power", "torque", "salesMarket", "priceReference"],
+    "permittedFields": ["displayName", "alias", "modelYearLabel", "power", "torque", "salesMarket", "priceReference", "brand", "model", "generation", "marketVariant"],
     "permittedGeographies": ["IN"],
     "attribution": "Reviewed sample attribution",
     "retentionSeconds": 86400,

@@ -1252,6 +1252,78 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(new Date(backfilledStage.updatedAt).toISOString(), "2026-10-22T12:05:00.000Z");
   });
 
+  it("keeps UUID provenance public when a UUID segment resembles a registration number", async () => {
+    const input = labelledCatalogueImport("UUID Provenance Dossier");
+    input.sourcePolicy.id = "ab1c1234-1234-4234-8234-123456789abc";
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const detail = await caller(null).publishing.detail({ subjectId: input.records[0]!.document.canonicalSubjectId });
+    assert.equal(detail?.facts[0]?.sourcePolicyId, input.sourcePolicy.id);
+    assert.equal(detail?.media.length, 1);
+  });
+
+  it("uses only currently approved aliases and identity fields after policy replacement", async () => {
+    const baseline = labelledCatalogueImport("Current Identity Dossier");
+    baseline.records[0]!.catalogue!.aliases = [{ kind: "alias", name: "Removed Lookup Dossier" }];
+    await caller(OPERATOR_TOKEN).publishing.submit(baseline);
+    assert.equal((await caller(null).catalogue.search({ q: "Removed Lookup Dossier" })).hits.length, 1);
+    const initial = (await caller(null).catalogue.search({ q: "Current Identity Dossier" })).hits[0];
+    assert.ok(initial);
+    const next = structuredClone(baseline);
+    next.idempotencyKey += "-no-alias";
+    next.sourcePolicy.id = crypto.randomUUID();
+    next.sourcePolicy.permittedFields = next.sourcePolicy.permittedFields.filter((field) => field !== "alias");
+    delete next.records[0]!.catalogue;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(next)).status, "published");
+    assert.equal((await caller(null).catalogue.search({ q: "Removed Lookup Dossier" })).hits.length, 0);
+    assert.equal((await caller(null).catalogue.search({ q: "Current Identity Dossier" })).hits.length, 1);
+    const projection = await caller(null).publishing.detail({ subjectId: initial.applicabilityId });
+    assert.deepEqual(projection?.aliases, []);
+    const withoutYear = structuredClone(next);
+    withoutYear.idempotencyKey += "-no-year";
+    withoutYear.sourcePolicy.id = crypto.randomUUID();
+    withoutYear.sourcePolicy.permittedFields = withoutYear.sourcePolicy.permittedFields.filter((field) => field !== "modelYearLabel");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(withoutYear)).status, "published");
+    assert.equal((await caller(null).publishing.detail({ subjectId: initial.applicabilityId }))?.modelYearLabel, null);
+    assert.equal((await caller(null).catalogue.search({ q: "Current Identity Dossier" })).hits.length, 0);
+    const page = await caller(null).catalogue.read(catalogueReadInput(initial.href));
+    assert.equal(page.availability, "not-in-public-catalogue");
+    const loaders = await importCatalogueLoaders();
+    const state = await loaders.loadCatalogueCarForContext(catalogueRuntime(), catalogueReadInput(initial.href));
+    const views = await importCatalogueViews();
+    const html = renderToStaticMarkup(createElement(views.CatalogueDetailView, { state }));
+    assert.doesNotMatch(html, /2026|Removed Lookup Dossier|100 PS/);
+  });
+
+  it("does not treat newly structured catalogue identity fields as sourced specifications", async () => {
+    for (const property of ["brand", "model", "generation", "marketVariant"]) {
+      const input = labelledCatalogueImport(`Names Only ${property} Dossier`);
+      input.records[0]!.document.facts = [fact(input, property, "Identity only")];
+      const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
+      assert.equal(result.status, "held");
+      assert.equal(result.rejection?.code, "names-only");
+    }
+  });
+
+  it("requires permission for each catalogue identity component and gates legacy reads by the current policy", async () => {
+    for (const field of ["brand", "model", "generation", "marketVariant", "salesMarket", "modelYearLabel"]) {
+      const input = labelledCatalogueImport(`Identity Rights ${field} Dossier`);
+      input.sourcePolicy.permittedFields = input.sourcePolicy.permittedFields.filter((value) => value !== field);
+      const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
+      assert.equal(result.status, "held", field);
+      assert.equal(result.rejection?.code, "rights", field);
+    }
+    const input = labelledCatalogueImport("Legacy Identity Rights Dossier");
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    const hit = (await caller(null).catalogue.search({ q: "Legacy Identity Rights Dossier" })).hits[0];
+    assert.ok(hit);
+    for (const field of ["brand", "model", "generation", "marketVariant", "salesMarket", "modelYearLabel"]) {
+      await db.update(publishingSourcePolicy).set({ permittedFields: input.sourcePolicy.permittedFields.filter((value) => value !== field) })
+        .where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id}`);
+      assert.equal((await caller(null).catalogue.search({ q: "Legacy Identity Rights Dossier" })).hits.length, 0, field);
+      assert.equal((await caller(null).catalogue.read(catalogueReadInput(hit.href))).availability, "not-in-public-catalogue", field);
+    }
+  });
+
   it("advances a canonical applicability to a new reviewed policy revision atomically", async () => {
     const baseline = labelledCatalogueImport("Policy Renewal Dossier");
     await caller(OPERATOR_TOKEN).publishing.submit(baseline);
@@ -1482,9 +1554,10 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
   it("holds private policy metadata and withholds unsafe legacy policy metadata", async () => {
     const privateValues = ["1HGCM82633A004352", "seller@example.test", "MH 12 AB 1234"];
     for (const [index, value] of privateValues.entries()) {
-      for (const field of ["reviewerRef", "displayName"] as const) {
+      for (const field of ["reviewerRef", "displayName", "permittedFields"] as const) {
         const input = labelledCatalogueImport(`Policy Metadata ${field} ${index}`);
-        input.sourcePolicy[field] = value;
+        if (field === "permittedFields") input.sourcePolicy.permittedFields.push(value);
+        else input.sourcePolicy[field] = value;
         const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
         assert.equal(result.status, "held");
         assert.equal(result.rejection?.code, "rights");
@@ -1892,7 +1965,7 @@ function labelledCatalogueImport(name: string): ReviewedImport {
   const slug = name.toLowerCase().replaceAll(" ", "-");
   input.sourcePolicy.id = crypto.randomUUID();
   input.sourcePolicy.displayName = "Labeled test policy";
-  input.sourcePolicy.permittedFields = ["displayName", "alias", "modelYearLabel", "power", "torque", "salesMarket", "priceReference"];
+  input.sourcePolicy.permittedFields = ["displayName", "alias", "modelYearLabel", "power", "torque", "salesMarket", "priceReference", "brand", "model", "generation", "marketVariant"];
   const record = input.records[0];
   assert.ok(record);
   record.document.displayName = `Unindexed ${name}`;

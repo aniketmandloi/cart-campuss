@@ -16,7 +16,7 @@ import { and, asc, eq, or, sql, type SQL } from "drizzle-orm";
 
 import { normalizeCatalogueQuery } from "./catalogue-name";
 import type { CatalogueAccess } from "./context";
-import { currentProjectionCovers, publicMetadataEligible, readPublishedCatalogueDetail, type PublicDetail } from "./publishing";
+import { CATALOGUE_IDENTITY_FIELDS, currentProjectionCovers, publicMetadataEligible, readPublishedCatalogueDetail, type PublicDetail } from "./publishing";
 
 export { normalizeCatalogueQuery } from "./catalogue-name";
 
@@ -245,7 +245,18 @@ export async function searchCatalogue(
   for (const row of rows) {
     if (seen.has(row.applicabilityId)) continue;
     if (!row.synthetic && !publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string"))) continue;
-    if (!row.synthetic && !(await readPublishedCatalogueDetail(db, row.applicabilityId, now))) continue;
+    if (!row.synthetic) {
+      const projection = await readPublishedCatalogueDetail(db, row.applicabilityId, now);
+      if (!projection || !projectionMatchesIdentity(row, projection)) continue;
+      const canonicalName = [
+        { kind: "brand", name: row.brandName },
+        { kind: "model", name: row.modelName },
+        { kind: "generation", name: row.generationName },
+      ].some((item) => item.kind === row.aliasKind && normalizeCatalogueQuery(item.name) === row.normalizedName);
+      const approvedAlias = projection.permittedFields.includes("alias") &&
+        projection.aliases.some((alias) => normalizeCatalogueQuery(alias) === row.normalizedName);
+      if (!canonicalName && !approvedAlias) continue;
+    }
     seen.add(row.applicabilityId);
     hits.push({
       applicabilityId: row.applicabilityId,
@@ -290,6 +301,7 @@ export async function readCatalogueCar(
       generationSlug: catalogueGeneration.slug,
       salesMarketName: catalogueSalesMarket.name,
       salesMarketId: catalogueSalesMarket.id,
+      countryCode: catalogueSalesMarket.countryCode,
       modelYearLabel: catalogueModelYear.label,
       modelYearId: catalogueModelYear.id,
       modelYearConvention: catalogueModelYear.convention,
@@ -329,9 +341,10 @@ export async function readCatalogueCar(
   const privatePreview = access.allowFixtures;
   const visibleRows = [];
   for (const row of rows) {
-    if (row.synthetic || (publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string")) &&
-      await readPublishedCatalogueDetail(db, row.applicabilityId, now))) {
-      visibleRows.push(row);
+    const projection = row.synthetic ? null : await readPublishedCatalogueDetail(db, row.applicabilityId, now);
+    if (row.synthetic || (projection && projectionMatchesIdentity(row, projection) &&
+      publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string")))) {
+      visibleRows.push({ ...row, projection });
     }
   }
   if (visibleRows.length === 0) {
@@ -351,9 +364,7 @@ export async function readCatalogueCar(
   if (!selected) {
     const [first] = visibleRows;
     if (!first) return { availability: "not-in-public-catalogue", privatePreview };
-    const overviewProjection = first.synthetic
-      ? null
-      : await readPublishedCatalogueDetail(db, first.applicabilityId, now);
+    const overviewProjection = first.projection;
     return {
       availability: "overview",
       privatePreview,
@@ -375,9 +386,7 @@ export async function readCatalogueCar(
     };
   }
 
-  const projection = selected.synthetic
-    ? null
-    : await readPublishedCatalogueDetail(db, selected.applicabilityId, now);
+  const projection = selected.projection;
   if (!selected.synthetic && !projection) {
     return { availability: "not-in-public-catalogue", privatePreview };
   }
@@ -422,6 +431,7 @@ function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized:
       applicabilityId: catalogueApplicability.id,
       normalizedName: catalogueAlias.normalizedName,
       aliasId: catalogueAlias.id,
+      aliasKind: catalogueAlias.kind,
       brandName: catalogueBrand.name,
       modelName: catalogueModel.name,
       generationName: catalogueGeneration.name,
@@ -429,6 +439,7 @@ function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized:
       generationSlug: catalogueGeneration.slug,
       salesMarketName: catalogueSalesMarket.name,
       salesMarketId: catalogueSalesMarket.id,
+      countryCode: catalogueSalesMarket.countryCode,
       modelYearLabel: catalogueModelYear.label,
       modelYearId: catalogueModelYear.id,
       variantName: catalogueMarketVariant.name,
@@ -492,13 +503,22 @@ function policyOf(row: {
 
 function policyFromProjection(policy: CataloguePolicy, projection: PublicDetail): CataloguePolicy {
   return {
-    name: policy.name,
+    name: projection.policyName ?? policy.name,
     audience: "public",
     attribution: projection.attribution,
     policyReviewerRef: projection.policyReviewerRef,
     factualReviewerRef: projection.factualReviewerRef,
     rightsReviewerRef: projection.rightsReviewerRef,
   };
+}
+
+function projectionMatchesIdentity(
+  identity: { countryCode: string; modelYearLabel: string },
+  projection: PublicDetail,
+): boolean {
+  return projection.policyName !== null &&
+    CATALOGUE_IDENTITY_FIELDS.every((field) => projection.permittedFields.includes(field)) &&
+    identity.countryCode === projection.salesMarket && identity.modelYearLabel === projection.modelYearLabel;
 }
 
 function projectionFacts(projection: PublicDetail, policy: CataloguePolicy): CatalogueFact[] {
