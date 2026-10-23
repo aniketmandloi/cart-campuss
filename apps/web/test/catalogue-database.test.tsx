@@ -1,36 +1,57 @@
 import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
 import { test } from "node:test";
 
-import {
-  prepareCatalogueMigrations,
-  readCatalogueMigrationSql,
-  rewriteCatalogueMigrationSql,
-  runPsql,
-} from "@cart-campuss/api/psql-client";
+import { openIsolatedCatalogueDatabase, runPsql } from "@cart-campuss/api/psql-client";
 
-const schema = "catalogue_run_0123456789abcdef";
+import { acquireCataloguePublicLock } from "./catalogue-public-lock";
 
-test("migration files stay unqualified while the test runner rewrites a public qualifier", () => {
-  const committed = readCatalogueMigrationSql();
-  assert.doesNotMatch(committed, /catalogue_run_/);
-  assert.doesNotMatch(committed, /drop\s+schema/i);
-  assert.match(committed, /CREATE TABLE "catalogue_alias"/);
+const databaseUrl = process.env.CATALOGUE_TEST_DATABASE_URL ?? "";
+const psql = process.env.PSQL ?? "";
 
-  const prepared = prepareCatalogueMigrations(schema);
-  assert.doesNotMatch(prepared, /statement-breakpoint/);
-  assert.equal(readCatalogueMigrationSql(), committed);
+test(
+  "an isolated catalogue migration preserves a preexisting public sentinel",
+  {
+    skip:
+      databaseUrl && psql
+        ? false
+        : "Set CATALOGUE_TEST_DATABASE_URL to a localhost database and PSQL to the psql binary. The public-sentinel preservation check was not run.",
+  },
+  () => {
+    const sentinel = `cc_sentinel_${randomBytes(8).toString("hex")}`;
+    const release = acquireCataloguePublicLock();
+    let database: ReturnType<typeof openIsolatedCatalogueDatabase> | undefined;
+    try {
+      runPsql({
+        databaseUrl,
+        psql,
+        sql: `create table ${publicSentinel(sentinel)} (marker text);\ninsert into ${publicSentinel(sentinel)} (marker) values ('${sentinelMarker(sentinel)}');`,
+      });
+      const before = readPublicSentinel(sentinel);
+      assert.match(before, sentinelSignature(sentinel));
 
-  const rewritten = rewriteCatalogueMigrationSql(
-    'ALTER TABLE "public"."catalogue_price_reference" ADD COLUMN "source_title" text;\n--> statement-breakpoint\n',
-    schema,
-  );
-  assert.match(rewritten, new RegExp(`"${schema}"\\."catalogue_price_reference"`));
-  assert.doesNotMatch(rewritten, /"public"|statement-breakpoint/);
-  assert.throws(
-    () => prepareCatalogueMigrations("public"),
-    /isolated catalogue schema/,
-  );
-});
+      database = openIsolatedCatalogueDatabase({ databaseUrl, psql });
+      assert.equal(readPublicSentinel(sentinel), before);
+      const schema = database.schema;
+      assert.equal(temporarySchemaCount(schema), "1");
+      database.close();
+      database = undefined;
+
+      assert.equal(temporarySchemaCount(schema), "0");
+      assert.equal(readPublicSentinel(sentinel), before);
+    } finally {
+      try {
+        database?.close();
+      } finally {
+        try {
+          dropPublicSentinel(sentinel);
+        } finally {
+          release();
+        }
+      }
+    }
+  },
+);
 
 test("the psql adapter refuses to drop the public schema", () => {
   assert.throws(
@@ -43,3 +64,50 @@ test("the psql adapter refuses to drop the public schema", () => {
     /Refusing to drop the public schema/,
   );
 });
+
+function publicSentinel(sentinel: string): string {
+  if (!/^cc_sentinel_[0-9a-f]{16}$/.test(sentinel)) {
+    throw new Error("Refusing to touch a public relation outside this test sentinel.");
+  }
+  return `public."${sentinel}"`;
+}
+
+function sentinelMarker(sentinel: string): string {
+  publicSentinel(sentinel);
+  return `preexisting-${sentinel}`;
+}
+
+function sentinelSignature(sentinel: string): RegExp {
+  return new RegExp(`^\\d+:${sentinelMarker(sentinel)}$`);
+}
+
+function readPublicSentinel(sentinel: string): string {
+  const relation = publicSentinel(sentinel);
+  return runPsql({
+    databaseUrl,
+    psql,
+    sql: `select c.oid::text || ':' || (select marker from ${relation})
+from pg_class c
+join pg_namespace n on n.oid = c.relnamespace
+where n.nspname = 'public' and c.relname = '${sentinel}';`,
+  }).trim();
+}
+
+function temporarySchemaCount(schema: string): string {
+  if (!/^catalogue_run_[0-9a-f]{16}$/.test(schema)) {
+    throw new Error("Refusing to inspect a schema outside an isolated catalogue run.");
+  }
+  return runPsql({
+    databaseUrl,
+    psql,
+    sql: `select count(*)::text from pg_namespace where nspname = '${schema}';`,
+  }).trim();
+}
+
+function dropPublicSentinel(sentinel: string): void {
+  runPsql({
+    databaseUrl,
+    psql,
+    sql: `drop table if exists ${publicSentinel(sentinel)};`,
+  });
+}

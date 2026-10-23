@@ -8,6 +8,7 @@ import { openIsolatedCatalogueDatabase, runPsql } from "@cart-campuss/api/psql-c
 import { appRouter } from "@cart-campuss/api/routers/index";
 
 import { CatalogueDetailView, CatalogueSearchView } from "../src/catalogue/views";
+import { acquireCataloguePublicLock } from "./catalogue-public-lock";
 
 const databaseUrl = process.env.CATALOGUE_TEST_DATABASE_URL ?? "";
 const psql = process.env.PSQL ?? "";
@@ -28,30 +29,43 @@ describe(
     let previewCaller: ReturnType<typeof appRouter.createCaller>;
     let schema = "";
     let closeDatabase: (() => void) | undefined;
+    let releasePublicLock: (() => void) | undefined;
 
     before(async () => {
-      const isolated = openIsolatedCatalogueDatabase({ databaseUrl, psql });
-      schema = isolated.schema;
-      closeDatabase = isolated.close;
+      releasePublicLock = acquireCataloguePublicLock();
       try {
-        const preview = createCatalogueContextFromClient(isolated.client, true);
-        await insertSyntheticPreviewFixture(preview.db);
-        await insertSyntheticPreviewFixture(preview.db);
-        runPsql({ databaseUrl, psql, schema, sql: publishedProbeSql });
-        runPsql({ databaseUrl, psql, schema, sql: rankProbeSql });
+        const isolated = openIsolatedCatalogueDatabase({ databaseUrl, psql });
+        schema = isolated.schema;
+        closeDatabase = isolated.close;
+        try {
+          const preview = createCatalogueContextFromClient(isolated.client, true);
+          await insertSyntheticPreviewFixture(preview.db);
+          await insertSyntheticPreviewFixture(preview.db);
+          runPsql({ databaseUrl, psql, schema, sql: publishedProbeSql });
+          runPsql({ databaseUrl, psql, schema, sql: rankProbeSql });
 
-        publicCaller = appRouter.createCaller(
-          createCatalogueContextFromClient(isolated.client, false),
-        );
-        previewCaller = appRouter.createCaller(preview);
+          publicCaller = appRouter.createCaller(
+            createCatalogueContextFromClient(isolated.client, false),
+          );
+          previewCaller = appRouter.createCaller(preview);
+        } catch (error) {
+          isolated.close();
+          throw error;
+        }
       } catch (error) {
-        isolated.close();
+        releasePublicLock();
+        releasePublicLock = undefined;
         throw error;
       }
     });
 
     after(() => {
-      closeDatabase?.();
+      try {
+        closeDatabase?.();
+      } finally {
+        releasePublicLock?.();
+        releasePublicLock = undefined;
+      }
     });
 
     test("public search and the sourced page exclude the synthetic fixture", async () => {
