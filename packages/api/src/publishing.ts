@@ -1182,7 +1182,9 @@ const CONTACT_PHONE = /(?:^|[^a-z0-9])(?:call|phone|mobile|telephone|contact|wha
 const TEL_URI = /(?:^|[^a-z0-9])tel:\+?\d{8,15}/i;
 const WHATSAPP_URI = /(?:^|[^a-z0-9])wa\.me\/\d{8,15}/i;
 const VIN_TOKEN = /(?:^|[^a-z0-9])[a-hj-npr-z0-9]{17}(?=$|[^a-z0-9])/i;
-const REGISTRATION_TOKEN = /^(?:[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}|[A-HJ-PR-Y]{2}\d{2}[A-HJ-PR-Z]{3})$/;
+const INDIAN_REGISTRATION = /(?:^|[^a-z0-9])[A-Z]{2}[ -]?\d{1,2}[ -]?[A-Z]{1,3}[ -]?\d{4}(?=$|[^a-z0-9])/i;
+// The UK area and age code is one token; joining spec tokens misreads "PS 77 kWh" as a plate.
+const UK_REGISTRATION = /(?:^|[^a-z0-9])[A-HJ-PR-Y]{2}\d{2}[ -]?[A-HJ-PR-Z]{3}(?=$|[^a-z0-9])/i;
 
 function containsForbiddenIdentifier(value: string): boolean {
   return (
@@ -1198,16 +1200,7 @@ function containsForbiddenIdentifier(value: string): boolean {
 }
 
 function containsRegistrationNumber(value: string): boolean {
-  const tokens = value.toUpperCase().split(/[^A-Z0-9]+/).filter((token) => token.length > 0);
-  for (let start = 0; start < tokens.length; start += 1) {
-    let joined = "";
-    for (let end = start; end < tokens.length && end < start + 4; end += 1) {
-      joined += tokens[end] ?? "";
-      if (joined.length > 11) break;
-      if (REGISTRATION_TOKEN.test(joined)) return true;
-    }
-  }
-  return false;
+  return INDIAN_REGISTRATION.test(value) || UK_REGISTRATION.test(value);
 }
 
 function tokensMatch(expected: string, presented: string): boolean {

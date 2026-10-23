@@ -656,6 +656,26 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal((await caller(null).publishing.detail({ subjectId: valid.records[0]!.document.canonicalSubjectId }))?.facts.length, 3);
   });
 
+  it("publishes power and battery specifications without joining their units into a registration number", async () => {
+    const input = reviewedImport("Power And Battery Specifications Coupe");
+    const specification = "204 PS 77 kWh battery";
+    input.records[0]!.document.facts[0]!.rawValue = specification;
+    input.records[0]!.document.media[0]!.altText = specification;
+    input.sourcePolicy.attribution = `Manufacturer specifications: ${specification}`;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    assert.equal((await caller(null).publishing.search({ q: input.records[0]!.document.displayName })).length, 1);
+    const detail = await caller(null).publishing.detail({ subjectId });
+    assert.equal(detail?.facts[0]?.rawValue, specification);
+    assert.equal(detail?.media[0]?.altText, specification);
+
+    for (const [index, plate] of ["AB12 CDE", "AB12CDE", "MH 01 AB 1234", "MH-01-AB-1234", "DL8CAF5031"].entries()) {
+      const privatePlate = reviewedImport(`Physical Plate Format ${index} Coupe`);
+      privatePlate.records[0]!.document.media[0]!.altText = `Vehicle ${plate} at the showroom`;
+      assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(privatePlate)).status, "held", plate);
+    }
+  });
+
   it("withholds normalized contact query keys across source URLs, media, and encoded metadata links", async () => {
     const keys = ["phone_number", "phoneNumber", "mobile_number", "contact_phone", "phone%5Fnumber", "%70honeNumber", "CONTACT.PHONE"];
     for (const [index, key] of keys.entries()) {
