@@ -774,6 +774,35 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     const rawValue = detail?.facts[0]?.rawValue;
     assert.ok(rawValue === "100 PS" || rawValue === "999 PS");
   });
+  it("keeps database error details and private bound parameters out of operator/API errors", async () => {
+    const input = reviewedImport("Error Reporting Coupe");
+    await db.execute(sql`create function test_private_failure() returns trigger language plpgsql as $$
+      begin raise exception 'private database detail: %', NEW.private_payload; end $$`);
+    await db.execute(sql`create trigger test_private_failure before insert on ${publishingStagedRecord}
+      for each row execute function test_private_failure()`);
+    try {
+      await assert.rejects(
+        () => runOperatorCommand({ db, operatorToken: OPERATOR_TOKEN, now: testClock }, JSON.stringify(input)),
+        (error: unknown) => {
+          assert.ok(error instanceof PublishingRejected);
+          assert.equal(error.code, "partial");
+          assert.doesNotMatch(error.message, /PAYLOAD-NOT-PUBLIC|CONTRACT-TEXT-NOT-PUBLIC|private database detail|insert into|params:/);
+          return true;
+        },
+      );
+      const response = await requestJson("POST", "/api/trpc/publishing.submit", input, app, OPERATOR_TOKEN);
+      assert.equal(response.status, 412);
+      assert.equal(response.text.includes("previous public projection was left unchanged"), true);
+      for (const marker of [MARKERS.payload, MARKERS.contract, OPERATOR_TOKEN, "private database detail"]) {
+        assert.equal(response.text.includes(marker), false, marker);
+      }
+      assert.equal((await caller(null).publishing.search({ q: "Error Reporting Coupe" })).length, 0);
+    } finally {
+      await db.execute(sql`drop trigger test_private_failure on ${publishingStagedRecord}`);
+      await db.execute(sql`drop function test_private_failure()`);
+    }
+  });
+
   it("backfills source capture time on populated legacy tables without resetting their retention", async () => {
     const before = (await db.select().from(publishingPublishedAssertion)).find((row) => row.displayName === "Reviewed Sample Coupe");
     assert.ok(before);
@@ -929,11 +958,12 @@ function visitorText(value: unknown): string {
   return JSON.stringify(value);
 }
 
-async function requestJson(method: "GET" | "POST", path: string, input: unknown, targetApp = app): Promise<{
+async function requestJson(method: "GET" | "POST", path: string, input: unknown, targetApp = app, token?: string): Promise<{
   status: number;
   text: string;
 }> {
   const headers = new Headers({ "content-type": "application/json" });
+  if (token) headers.set("authorization", `Bearer ${token}`);
   const url = new URL(path, "http://127.0.0.1");
   if (method === "GET") url.searchParams.set("input", JSON.stringify(input));
   const response = await targetApp.request(url, {

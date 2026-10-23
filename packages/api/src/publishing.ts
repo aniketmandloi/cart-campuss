@@ -516,20 +516,15 @@ export async function applyOperatorImport(
 
   try {
     await commitNeonHttpBatch(deps.db, statements);
-  } catch (error) {
+  } catch {
     const raced = await readIdempotentReplay(deps.db, parsed.idempotencyKey, payloadHash);
     if (raced) return raced;
     if (await storedPolicyDiffers(deps.db, policyId, parsed.sourcePolicy)) {
       throw new PublishingRejected("policy-immutable", "A reviewed source policy cannot be changed.");
     }
-    const secrets = [
-      deps.operatorToken ?? "",
-      parsed.sourcePolicy.contractText ?? "",
-      JSON.stringify(parsed.records.map((record) => record.privatePayload)),
-    ];
     throw new PublishingRejected(
       "partial",
-      `The publication did not commit, and the previous public projection was left unchanged. ${redact(errorText(error), secrets)}`,
+      "The publication did not commit, and the previous public projection was left unchanged.",
     );
   }
 
@@ -1201,16 +1196,3 @@ const publicMediaSchema = z.object({
   sourcePolicyId: z.string(),
   rightsReviewerRef: z.string(),
 });
-
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : "database error";
-}
-
-function redact(message: string, secrets: string[]): string {
-  let redacted = message;
-  for (const secret of secrets) {
-    if (secret.length < 4) continue;
-    redacted = redacted.split(secret).join("[redacted]");
-  }
-  return redacted.slice(0, 400);
-}
