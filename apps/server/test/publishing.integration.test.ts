@@ -1524,6 +1524,46 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
   });
 
+  it("backfills legacy staging deadlines before republishing or cleaning retained source copies", async () => {
+    const later = () => new Date(testClock().getTime() + 30_000);
+    const republishAt = () => new Date(testClock().getTime() + 40_000);
+    const cutoff = () => new Date(testClock().getTime() + 60_000);
+    const inputs = ["Republish", "Cleanup"].map((action) => {
+      const input = labelledCatalogueImport(`Legacy Staging ${action} Dossier`);
+      input.sourcePolicy.retentionSeconds = 60;
+      input.records[0]!.document.facts.forEach((item) => { item.retrievedAt = later().toISOString(); });
+      input.records[0]!.catalogue!.priceReference!.retrievedOn = BASE_TIME;
+      return input;
+    });
+    for (const input of inputs) {
+      assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(input)).status, "published");
+      const record = input.records[0]!;
+      await db.update(publishingPublishedAssertion).set({ capturedAt: later().toISOString() })
+        .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${record.document.canonicalSubjectId}`);
+      await db.update(publishingStagedRecord).set({ capturedAt: later().toISOString() })
+        .where(sql`${publishingStagedRecord.externalId} = ${record.externalId}`);
+    }
+    const migration = await readFile(new URL("../../../packages/db/src/migrations/20261023160000_price_capture_retention/migration.sql", import.meta.url), "utf8");
+    for (const backfill of migration.split("--> statement-breakpoint").slice(1)) {
+      if (backfill.trim()) await db.execute(sql.raw(backfill));
+    }
+    const republish = inputs[0]!;
+    republish.idempotencyKey += "-replacement";
+    delete republish.records[0]!.catalogue;
+    assert.equal((await caller(OPERATOR_TOKEN, republishAt).publishing.submit(republish)).status, "published");
+    for (const input of inputs) {
+      const subjectId = input.records[0]!.document.canonicalSubjectId;
+      assert.equal(await caller(null, cutoff).publishing.detail({ subjectId }), null);
+    }
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: cutoff }, OPERATOR_TOKEN);
+    const staged = await db.select().from(publishingStagedRecord);
+    const assertions = await db.select().from(publishingPublishedAssertion);
+    for (const input of inputs) {
+      assert.equal(staged.some((row) => row.externalId === input.records[0]!.externalId), false);
+      assert.equal(assertions.some((row) => row.canonicalSubjectId === input.records[0]!.document.canonicalSubjectId), false);
+    }
+  });
+
   it("omits an unpermitted price without blocking other reviewed catalogue facts", async () => {
     const input = labelledCatalogueImport("Price Rights Dossier");
     input.sourcePolicy.permittedFields = input.sourcePolicy.permittedFields.filter((field) => field !== "priceReference");
