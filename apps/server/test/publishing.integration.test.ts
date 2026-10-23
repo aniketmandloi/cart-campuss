@@ -1252,6 +1252,67 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(new Date(backfilledStage.updatedAt).toISOString(), "2026-10-22T12:05:00.000Z");
   });
 
+  it("holds mismatched existing applicability even when the catalogue block is omitted", async () => {
+    const baseline = labelledCatalogueImport("Canonical Context Dossier");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(baseline)).status, "published");
+    const subjectId = baseline.records[0]!.document.canonicalSubjectId;
+    for (const change of ["market", "year", "variant", "generation"] as const) {
+      const input = structuredClone(baseline);
+      input.idempotencyKey += `-${change}`;
+      if (change === "market" || change === "year") {
+        delete input.records[0]!.catalogue;
+        if (change === "market") {
+          input.records[0]!.document.salesMarket = "DE";
+          input.sourcePolicy.id = crypto.randomUUID();
+          input.sourcePolicy.permittedGeographies = ["IN", "DE"];
+        } else input.records[0]!.document.modelYearLabel = "2025";
+      } else if (change === "variant") input.records[0]!.catalogue!.marketVariant.id += "-other";
+      else input.records[0]!.catalogue!.generation.id += "-other";
+      input.records[0]!.document.facts[0]!.rawValue = "999 PS";
+      const pointer = await db.select().from(publishingProjectionPointer);
+      const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
+      assert.equal(result.status, "held", change);
+      assert.equal(result.rejection?.code, "identity", change);
+      assert.deepEqual(await db.select().from(publishingProjectionPointer), pointer);
+      assert.equal((await caller(null).publishing.detail({ subjectId }))?.facts[0]?.rawValue, "100 PS");
+    }
+    for (const withBlock of [true, false]) {
+      const input = structuredClone(baseline);
+      input.idempotencyKey += `-correct-${withBlock}`;
+      if (!withBlock) delete input.records[0]!.catalogue;
+      input.records[0]!.document.facts[0]!.rawValue = "101 PS";
+      assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+      assert.equal((await caller(null).publishing.detail({ subjectId }))?.facts[0]?.rawValue, "101 PS");
+    }
+  });
+
+  it("rechecks canonical applicability inside the protected publication batch", async () => {
+    const input = labelledCatalogueImport("Concurrent Context Dossier");
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    input.idempotencyKey += "-republish";
+    delete input.records[0]!.catalogue;
+    const pointer = await db.select().from(publishingProjectionPointer);
+    const paused = pauseNextBatch(db);
+    const importing = runOperatorCommand({ db: paused.db, operatorToken: OPERATOR_TOKEN, now: testClock }, JSON.stringify(input));
+    const outcome = importing.then((value) => ({ value, error: null }), (error: unknown) => ({ value: null, error }));
+    try {
+      await paused.entered;
+      await db.execute(sql`insert into catalogue_model_year (id, label, convention) values ('year-context-race', '2025', 'Test convention')`);
+      await db.update(catalogueApplicability).set({ modelYearId: "year-context-race" })
+        .where(sql`${catalogueApplicability.id} = ${subjectId}`);
+    } finally { paused.release(); }
+    try {
+      const result = await outcome;
+      assert.ok(result.error instanceof PublishingRejected);
+      assert.equal(result.error.code, "partial");
+      assert.deepEqual(await db.select().from(publishingProjectionPointer), pointer);
+    } finally {
+      await db.update(catalogueApplicability).set({ modelYearId: "year-labeled-2026" })
+        .where(sql`${catalogueApplicability.id} = ${subjectId}`);
+    }
+  });
+
   it("bounds whole-copy retention by price capture on imports, corrections, and legacy reads", async () => {
     for (const publish of [true, false]) {
       const input = labelledCatalogueImport(`Expired Price ${publish} Dossier`);

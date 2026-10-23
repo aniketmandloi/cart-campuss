@@ -524,7 +524,8 @@ export async function applyOperatorImport(
   }
 
   const current = await readCurrentProjection(deps.db);
-  const failures = parsed.publish ? collectFailures(parsed, current, now) : [];
+  const contexts = await canonicalContexts(deps.db, parsed.records.map((record) => record.document.canonicalSubjectId));
+  const failures = parsed.publish ? collectFailures(parsed, current, contexts, now) : [];
   const publishable = parsed.publish && failures.length === 0 ? parsed.records : [];
   const status = !parsed.publish ? "staged" : failures.length > 0 ? "held" : "published";
   const rejection = status === "held" ? rejectionFor(parsed.records, failures) : undefined;
@@ -600,6 +601,11 @@ export async function applyOperatorImport(
       );
     }
     for (const record of publishable) {
+      const subjectId = record.document.canonicalSubjectId;
+      const context = contexts.find((item) => item.id === subjectId);
+      const actual = canonicalContexts(deps.db, [subjectId]).as("canonical_context");
+      statements.push(rejectBatchWhen(deps.db, sql`(select ${actual.signature} from ${actual})
+        is distinct from ${context ? sql`cast(${JSON.stringify(context.signature)} as jsonb)` : sql`null`}`));
       statements.push(
         deps.db.insert(publishingPublishedAssertion).values({
           ...publicAssertion(record, parsed.sourcePolicy, policyId, generationId, createdAt),
@@ -868,7 +874,7 @@ function assertCatalogueContext(policy: SourcePolicyInput, record: ImportRecord)
   }
 }
 
-function collectFailures(parsed: OperatorImport, current: CurrentProjection, now: Date): GateFailure[] {
+function collectFailures(parsed: OperatorImport, current: CurrentProjection, contexts: CanonicalContext[], now: Date): GateFailure[] {
   const subjectCounts = new Map<string, number>();
   for (const record of parsed.records) {
     const subjectId = record.document.canonicalSubjectId;
@@ -876,7 +882,7 @@ function collectFailures(parsed: OperatorImport, current: CurrentProjection, now
   }
   const failures: GateFailure[] = [];
   for (const record of parsed.records) {
-    const failure = evaluateRecord(record, parsed, current, subjectCounts, now);
+    const failure = evaluateRecord(record, parsed, current, contexts, subjectCounts, now);
     if (failure) failures.push(failure);
   }
   return failures;
@@ -886,6 +892,7 @@ function evaluateRecord(
   record: ImportRecord,
   parsed: OperatorImport,
   current: CurrentProjection,
+  contexts: CanonicalContext[],
   subjectCounts: Map<string, number>,
   now: Date,
 ): GateFailure | null {
@@ -928,6 +935,20 @@ function evaluateRecord(
       code: "identity",
       message: "That canonical subject is already published for a different source record.",
     };
+  }
+  const context = contexts.find((item) => item.id === subjectId);
+  const catalogue = record.catalogue;
+  if (context && (
+    context.synthetic || context.providerKey !== parsed.providerKey ||
+    context.countryCode !== record.document.salesMarket ||
+    context.modelYearLabel !== record.document.modelYearLabel ||
+    (catalogue && (
+      catalogue.brand.id !== context.brandId || catalogue.model.id !== context.modelId ||
+      catalogue.generation.id !== context.generationId || catalogue.marketVariant.id !== context.marketVariantId ||
+      catalogue.salesMarket.id !== context.salesMarketId || catalogue.modelYear.id !== context.modelYearId
+    ))
+  )) {
+    return { externalId, code: "identity", message: "The reviewed document does not match the existing canonical applicability." };
   }
   if (record.factualReview.outcome !== "passed" || !record.factualReview.reviewerRef) {
     return { externalId, code: "factual", message: "Factual review has not passed." };
@@ -1019,6 +1040,41 @@ async function readCurrentProjection(db: Database): Promise<CurrentProjection> {
     assertions: rows,
   };
 }
+
+function canonicalContexts(db: Database, subjectIds: string[]) {
+  return db.select({
+    id: catalogueApplicability.id,
+    marketVariantId: catalogueApplicability.marketVariantId,
+    modelYearId: catalogueApplicability.modelYearId,
+    salesMarketId: catalogueApplicability.salesMarketId,
+    generationId: catalogueMarketVariant.generationId,
+    modelId: catalogueGeneration.modelId,
+    brandId: catalogueModel.brandId,
+    countryCode: catalogueSalesMarket.countryCode,
+    modelYearLabel: catalogueModelYear.label,
+    synthetic: catalogueApplicability.synthetic,
+    providerKey: publishingSourcePolicy.providerKey,
+    signature: sql<unknown>`jsonb_build_array(
+      ${catalogueApplicability.id}, ${catalogueApplicability.marketVariantId},
+      ${catalogueApplicability.modelYearId}, ${catalogueApplicability.salesMarketId},
+      ${catalogueApplicability.sourcePolicyId}, ${catalogueApplicability.publicationStatus},
+      ${catalogueApplicability.synthetic}, ${catalogueSalesMarket.countryCode},
+      ${catalogueModelYear.label}, ${catalogueMarketVariant.generationId},
+      ${catalogueGeneration.modelId}, ${catalogueModel.brandId}, ${publishingSourcePolicy.providerKey},
+      ${catalogueMarketVariant.name}, ${catalogueGeneration.name}, ${catalogueGeneration.slug},
+      ${catalogueModel.name}, ${catalogueModel.slug}, ${catalogueSalesMarket.name}, ${catalogueModelYear.convention}
+    )`.as("signature"),
+  }).from(catalogueApplicability)
+    .innerJoin(catalogueMarketVariant, eq(catalogueMarketVariant.id, catalogueApplicability.marketVariantId))
+    .innerJoin(catalogueGeneration, eq(catalogueGeneration.id, catalogueMarketVariant.generationId))
+    .innerJoin(catalogueModel, eq(catalogueModel.id, catalogueGeneration.modelId))
+    .innerJoin(catalogueSalesMarket, eq(catalogueSalesMarket.id, catalogueApplicability.salesMarketId))
+    .innerJoin(catalogueModelYear, eq(catalogueModelYear.id, catalogueApplicability.modelYearId))
+    .leftJoin(publishingSourcePolicy, eq(publishingSourcePolicy.id, catalogueApplicability.sourcePolicyId))
+    .where(inArray(catalogueApplicability.id, subjectIds));
+}
+
+type CanonicalContext = Awaited<ReturnType<typeof canonicalContexts>>[number];
 
 function insertPolicy(db: Database, parsed: OperatorImport, policyId: string, createdAt: string) {
   const policy = parsed.sourcePolicy;
