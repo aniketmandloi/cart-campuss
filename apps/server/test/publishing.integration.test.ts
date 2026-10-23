@@ -33,12 +33,14 @@ const MARKERS = {
 
 let db: Database;
 let app: ReturnType<typeof createApp>;
+let holdAdvisoryLock: Awaited<ReturnType<typeof startPublishingDatabase>>["holdAdvisoryLock"];
 let stopDatabase: (() => Promise<void>) | undefined;
 
 before(async () => {
   const started = await startPublishingDatabase();
   db = started.db;
   stopDatabase = started.stop;
+  holdAdvisoryLock = started.holdAdvisoryLock;
   app = createApp({
     db,
     now: testClock,
@@ -837,11 +839,16 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     const baseline = await caller(null, cutoff).publishing.detail({ subjectId: "subject-reviewed-sample-coupe" });
     assert.ok(baseline);
     await db.execute(sql`create function test_cleanup_failure() returns trigger language plpgsql as $$
-      begin raise exception 'cleanup must roll back'; end $$`);
+      begin raise exception 'private cleanup detail: %', row_to_json(OLD); end $$`);
     await db.execute(sql`create trigger test_cleanup_failure before delete on ${publishingPublishedAssertion}
       for each row execute function test_cleanup_failure()`);
     try {
-      await assert.rejects(() => cleanupPublishingCopies(deps, OPERATOR_TOKEN), /cleanup did not commit/);
+      await assert.rejects(() => cleanupPublishingCopies(deps, OPERATOR_TOKEN), (error: unknown) => {
+        assert.ok(error instanceof PublishingRejected);
+        assert.match(error.message, /cleanup did not commit/);
+        assert.doesNotMatch(error.message, /PAYLOAD-NOT-PUBLIC|CONTRACT-TEXT-NOT-PUBLIC|private cleanup detail|params:/);
+        return true;
+      });
       assert.ok((await db.select().from(publishingStagedRecord)).some((row) => row.id === stagedRow.id));
     } finally {
       await db.execute(sql`drop trigger test_cleanup_failure on ${publishingPublishedAssertion}`);
@@ -930,6 +937,105 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     }
   });
 
+  it("serializes cleanup with protected import writes", async () => {
+    const input = reviewedImport("Serialized Cleanup Private Coupe");
+    input.publish = false;
+    input.sourcePolicy.retentionSeconds = 60;
+    input.records[0]!.document.facts = [];
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    const release = await holdAdvisoryLock(1128354388);
+    const cleaning = cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: () => new Date(testClock().getTime() + 60_000) }, OPERATOR_TOKEN);
+    try {
+      await until(async () => {
+        const [row] = await db.select({ waiting: sql<boolean>`exists (
+          select 1 from pg_locks where locktype = 'advisory' and objid = 1128354388 and not granted
+        )` }).from(sql`(select 1) as lock_probe`);
+        return row?.waiting === true;
+      });
+      assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), true);
+    } finally { await release(); }
+    assert.ok((await cleaning).stagedDeleted >= 1);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+  });
+
+  it("rejects an in-flight restage after cleanup deletes its original private copy", async () => {
+    const input = reviewedImport("In Flight Private Copy Coupe");
+    input.publish = false;
+    input.sourcePolicy.retentionSeconds = 60;
+    input.records[0]!.document.facts = [];
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    input.idempotencyKey += "-correction";
+    input.records[0]!.document.displayName += " Corrected";
+    let currentTime = new Date(testClock().getTime() + 30_000);
+    const paused = pauseNextBatch(db);
+    const importing = runOperatorCommand({ db: paused.db, operatorToken: OPERATOR_TOKEN, now: () => currentTime }, JSON.stringify(input));
+    const outcome = importing.then((value) => ({ value, error: null }), (error: unknown) => ({ value: null, error }));
+    try {
+      await paused.entered;
+      currentTime = new Date(testClock().getTime() + 60_000);
+      await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: () => currentTime }, OPERATOR_TOKEN);
+      assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+    } finally { paused.release(); }
+    const result = await outcome;
+    assert.ok(result.error instanceof PublishingRejected);
+    assert.equal(result.error.code, "partial");
+    assert.doesNotMatch(result.error.message, /PAYLOAD-NOT-PUBLIC|CONTRACT-TEXT-NOT-PUBLIC|params:/);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+  });
+
+  it("does not resurrect deleted assertions from a projection planned before cleanup", async () => {
+    const expiring = reviewedImport("In Flight Expiring Assertion Coupe");
+    expiring.sourcePolicy.retentionSeconds = 60;
+    expiring.records[0]!.document.facts[0]!.retrievedAt = BASE_TIME;
+    await caller(OPERATOR_TOKEN).publishing.submit(expiring);
+    const added = reviewedImport("In Flight Surviving Assertion Coupe");
+    const paused = pauseNextBatch(db);
+    const importing = runOperatorCommand({ db: paused.db, operatorToken: OPERATOR_TOKEN, now: () => new Date(testClock().getTime() + 30_000) }, JSON.stringify(added));
+    try {
+      await paused.entered;
+      await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: () => new Date(testClock().getTime() + 60_000) }, OPERATOR_TOKEN);
+    } finally { paused.release(); }
+    assert.equal((await importing).status, "published");
+    assert.equal((await db.select().from(publishingPublishedAssertion)).some((row) => row.externalId === expiring.records[0]!.externalId), false);
+    assert.ok(await caller(null).publishing.detail({ subjectId: added.records[0]!.document.canonicalSubjectId }));
+  });
+
+  it("checks actual database time after waiting for the publishing lock", async () => {
+    for (const deadline of ["permission", "retention"] as const) {
+      const lockKey = 1128354388;
+      const [clock] = await db.select({ currentTime: sql<string>`clock_timestamp()` }).from(sql`(select 1) as clock_probe`);
+      assert.ok(clock);
+      const input = reviewedImport(`Database Clock ${deadline} Deadline Coupe`);
+      const expiry = new Date(new Date(clock.currentTime).getTime() + 2000).toISOString();
+      input.sourcePolicy.permissionExpiresAt = deadline === "permission" ? expiry : null;
+      input.sourcePolicy.retentionSeconds = deadline === "retention" ? 2 : 86_400;
+      input.records[0]!.document.facts[0]!.retrievedAt = new Date(clock.currentTime).toISOString();
+      const before = await db.select().from(publishingProjectionPointer);
+      const release = await holdAdvisoryLock(lockKey);
+      // No deps.now: this exercises the production database clock after a real lock wait.
+      const outcome = runOperatorCommand({ db, operatorToken: OPERATOR_TOKEN }, JSON.stringify(input))
+        .then((value) => ({ value, error: null }), (error: unknown) => ({ value: null, error }));
+      try {
+        await until(async () => {
+          const [row] = await db.select({ waiting: sql<boolean>`exists (
+            select 1 from pg_locks where locktype = 'advisory' and objid = ${lockKey} and not granted
+          )` }).from(sql`(select 1) as lock_probe`);
+          return row?.waiting === true;
+        });
+        await until(async () => {
+          const [row] = await db.select({ due: sql<boolean>`clock_timestamp() >= cast(${expiry} as timestamptz)` }).from(sql`(select 1) as clock_probe`);
+          return row?.due === true;
+        });
+      } finally { await release(); }
+      const result = await outcome;
+      assert.ok(result.error instanceof PublishingRejected);
+      assert.equal(result.error.code, "partial");
+      assert.deepEqual(await db.select().from(publishingProjectionPointer), before);
+      assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+      assert.equal(await caller(null).publishing.detail({ subjectId: input.records[0]!.document.canonicalSubjectId }), null);
+    }
+  });
+
   it("backfills source capture time on populated legacy tables without resetting their retention", async () => {
     const before = (await db.select().from(publishingPublishedAssertion)).find((row) => row.displayName === "Reviewed Sample Coupe");
     assert.ok(before);
@@ -958,6 +1064,32 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
   });
 
 });
+
+function pauseNextBatch(database: Database) {
+  let enter!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => { enter = resolve; });
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  const paused = new Proxy(database, {
+    get(target, property, receiver) {
+      if (property !== "batch") return Reflect.get(target, property, receiver);
+      return async (...args: Parameters<Database["batch"]>) => {
+        enter();
+        await released;
+        return target.batch(...args);
+      };
+    },
+  });
+  return { db: paused, entered, release };
+}
+
+async function until(predicate: () => Promise<boolean>) {
+  const deadline = Date.now() + 10_000;
+  while (!(await predicate())) {
+    assert.ok(Date.now() < deadline, "Timed out waiting for the database synchronization condition");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
 
 function caller(token: string | null, now: () => Date = testClock) {
   return appRouter.createCaller({

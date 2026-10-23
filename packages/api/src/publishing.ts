@@ -6,7 +6,7 @@ import {
   publishingSourcePolicy,
   publishingStagedRecord,
 } from "@cart-campuss/db/schema/publishing";
-import { and, eq, getTableColumns, max, sql, type SQLWrapper } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, max, sql, type SQLWrapper } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { z } from "zod";
 
@@ -418,6 +418,8 @@ export async function applyOperatorImport(
   const replay = await readIdempotentReplay(deps.db, parsed.idempotencyKey, payloadHash);
   if (replay) return replay;
 
+  const stagedVersions = await readStagedVersions(deps.db, parsed);
+
   if (parsed.records.some((record) =>
     new Date(sourceCapturedAt(record, now.toISOString())).getTime() +
       parsed.sourcePolicy.retentionSeconds * 1000 <= now.getTime(),
@@ -445,7 +447,10 @@ export async function applyOperatorImport(
   }
   const batchId = randomId();
   const createdAt = now.toISOString();
+  const writeTime = publishingWriteTime(deps);
   const statements: BatchItem<"pg">[] = [
+    publishingWriteLock(deps.db),
+    ...stagedVersions.map((version) => rejectStaleStaging(deps.db, version)),
     insertPolicy(deps.db, parsed, policyId, createdAt),
     rejectPolicyRewrite(deps.db, parsed.sourcePolicy, policyId),
     deps.db.insert(publishingImportBatch).values({
@@ -492,7 +497,7 @@ export async function applyOperatorImport(
             .where(
               and(
                 eq(publishingPublishedAssertion.id, assertion.id),
-                publicPolicyAllows(publishingPublishedAssertion.capturedAt, now),
+                publicPolicyAllows(publishingPublishedAssertion.capturedAt, writeTime),
               ),
             ),
         ),
@@ -514,6 +519,16 @@ export async function applyOperatorImport(
           set: { generationId, updatedAt: createdAt },
         }),
     );
+  }
+
+  statements.push(rejectDueImport(deps.db, batchId, writeTime, status === "published"));
+  if (status !== "published") {
+    statements.push(deps.db.delete(publishingStagedRecord).where(and(
+      eq(publishingStagedRecord.batchId, batchId),
+      sql`exists (select 1 from ${publishingSourcePolicy}
+        where ${publishingSourcePolicy.id} = ${publishingStagedRecord.sourcePolicyId}
+          and ${sourceCopyDue(publishingStagedRecord.capturedAt, writeTime)})`,
+    )));
   }
 
   try {
@@ -550,9 +565,10 @@ export async function cleanupPublishingCopies(
   presentedToken: string | undefined,
 ): Promise<{ stagedDeleted: number; assertionsDeleted: number }> {
   assertOperatorAuthorized(deps.operatorToken, presentedToken);
-  const now = (deps.now ?? (() => new Date()))();
+  const now = publishingWriteTime(deps);
   try {
-    const [staged, assertions] = await deps.db.batch([
+    const [, staged, assertions] = await deps.db.batch([
+      publishingWriteLock(deps.db),
       deps.db.delete(publishingStagedRecord).where(sql`exists (
         select 1 from ${publishingSourcePolicy}
         where ${publishingSourcePolicy.id} = ${publishingStagedRecord.sourcePolicyId}
@@ -570,17 +586,73 @@ export async function cleanupPublishingCopies(
   }
 }
 
-function sourceCopyDue(capturedAt: SQLWrapper, now: Date) {
+// Cleanup and import writes share one transaction-scoped lock, including their final deadline checks.
+function publishingWriteLock(db: Database) {
+  return db.select({ lock: sql`pg_advisory_xact_lock(1128354388)` })
+    .from(sql`(select 1) as publishing_lock`);
+}
+
+function publishingWriteTime(deps: PublishingDeps) {
+  // Injected test time still advances through a database lock wait; production uses the DB clock.
+  return deps.now
+    ? sql`cast(${deps.now().toISOString()} as timestamptz) + (clock_timestamp() - transaction_timestamp())`
+    : sql`clock_timestamp()`;
+}
+
+async function readStagedVersions(db: Database, parsed: OperatorImport) {
+  return db.select({
+    id: publishingStagedRecord.id,
+    contentHash: publishingStagedRecord.contentHash,
+    sourcePolicyId: publishingStagedRecord.sourcePolicyId,
+    capturedAt: publishingStagedRecord.capturedAt,
+    updatedAt: publishingStagedRecord.updatedAt,
+  }).from(publishingStagedRecord).where(and(
+    eq(publishingStagedRecord.providerKey, parsed.providerKey),
+    inArray(publishingStagedRecord.externalId, parsed.records.map((record) => record.externalId)),
+  ));
+}
+
+function rejectStaleStaging(db: Database, version: Awaited<ReturnType<typeof readStagedVersions>>[number]) {
+  return rejectBatchWhen(db, sql`not exists (
+    select 1 from ${publishingStagedRecord}
+    where ${publishingStagedRecord.id} = ${version.id}
+      and ${publishingStagedRecord.contentHash} = ${version.contentHash}
+      and ${publishingStagedRecord.sourcePolicyId} = ${version.sourcePolicyId}
+      and ${publishingStagedRecord.capturedAt} = cast(${version.capturedAt} as timestamptz)
+      and ${publishingStagedRecord.updatedAt} = cast(${version.updatedAt} as timestamptz)
+  )`);
+}
+
+function rejectDueImport(db: Database, batchId: string, now: SQLWrapper, published: boolean) {
+  const due = published ? sourceCopyDue(publishingStagedRecord.capturedAt, now)
+    : sql`${publishingStagedRecord.capturedAt} + ${publishingSourcePolicy.retentionSeconds} * interval '1 second' <= ${now}`;
+  return rejectBatchWhen(db, sql`exists (
+    select 1 from ${publishingStagedRecord}
+    inner join ${publishingSourcePolicy}
+      on ${publishingSourcePolicy.id} = ${publishingStagedRecord.sourcePolicyId}
+    where ${publishingStagedRecord.batchId} = ${batchId} and ${due}
+  )`);
+}
+
+/** A duplicate audit key aborts the entire batch when a protected check fails. */
+function rejectBatchWhen(db: Database, condition: SQLWrapper) {
+  return db.insert(publishingImportBatch).select(
+    db.select().from(publishingImportBatch).where(sql`${condition}`).limit(1),
+  );
+}
+
+function sourceCopyDue(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
+  const at = now instanceof Date ? sql`cast(${now.toISOString()} as timestamptz)` : now;
   return sql`(
     ${publishingSourcePolicy.suspended}
     or ${publishingSourcePolicy.retentionSeconds} <= 0
-    or ${publishingSourcePolicy.permissionExpiresAt} <= cast(${now.toISOString()} as timestamptz)
+    or ${publishingSourcePolicy.permissionExpiresAt} <= ${at}
     or ${capturedAt} + ${publishingSourcePolicy.retentionSeconds} * interval '1 second'
-      <= cast(${now.toISOString()} as timestamptz)
+      <= ${at}
   )`;
 }
 
-function publicPolicyAllows(capturedAt: SQLWrapper, now: Date) {
+function publicPolicyAllows(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
   return sql`(
     ${publishingSourcePolicy.factPermission} = 'permitted'
     and ${publishingSourcePolicy.reviewerRef} is not null

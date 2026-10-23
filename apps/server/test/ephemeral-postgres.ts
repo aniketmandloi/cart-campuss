@@ -449,7 +449,7 @@ async function reservePort(): Promise<number> {
  * through the Neon HTTP transaction protocol. It does not read DATABASE_URL
  * and does not open an existing database.
  */
-export async function startPublishingDatabase(): Promise<{ db: Database; stop: () => Promise<void> }> {
+export async function startPublishingDatabase(): Promise<{ db: Database; stop: () => Promise<void>; holdAdvisoryLock: (key: number) => Promise<() => Promise<void>> }> {
   const dataDir = await mkdtemp(join(tmpdir(), "cart-campuss-publishing-"));
   const env = commandEnv(dataDir);
   const port = await reservePort();
@@ -506,7 +506,19 @@ export async function startPublishingDatabase(): Promise<{ db: Database; stop: (
     });
     const migrationsFolder = fileURLToPath(new URL("../../../packages/db/src/migrations", import.meta.url));
     await migrateDatabase(db, migrationsFolder);
-    return { db, stop };
+    return {
+      db,
+      stop,
+      holdAdvisoryLock: async (key) => {
+        const session = await PgSession.connect(port, "postgres");
+        await session.query("BEGIN");
+        await session.query(`select pg_advisory_xact_lock(${sqlLiteral(key)})`);
+        return async () => {
+          try { await session.query("COMMIT"); }
+          finally { await session.close(); }
+        };
+      },
+    };
   } catch (error) {
     await stop();
     throw error;
