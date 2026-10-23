@@ -16,7 +16,7 @@ import { and, asc, eq, or, sql, type SQL } from "drizzle-orm";
 
 import { normalizeCatalogueQuery } from "./catalogue-name";
 import type { CatalogueAccess } from "./context";
-import { currentProjectionCovers, readPublishedCatalogueDetail, type PublicDetail } from "./publishing";
+import { currentProjectionCovers, publicMetadataEligible, readPublishedCatalogueDetail, type PublicDetail } from "./publishing";
 
 export { normalizeCatalogueQuery } from "./catalogue-name";
 
@@ -244,6 +244,7 @@ export async function searchCatalogue(
   const hits: CatalogueSearchHit[] = [];
   for (const row of rows) {
     if (seen.has(row.applicabilityId)) continue;
+    if (!row.synthetic && !publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string"))) continue;
     if (!row.synthetic && !(await readPublishedCatalogueDetail(db, row.applicabilityId, now))) continue;
     seen.add(row.applicabilityId);
     hits.push({
@@ -328,7 +329,8 @@ export async function readCatalogueCar(
   const privatePreview = access.allowFixtures;
   const visibleRows = [];
   for (const row of rows) {
-    if (row.synthetic || (await readPublishedCatalogueDetail(db, row.applicabilityId, now))) {
+    if (row.synthetic || (publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string")) &&
+      await readPublishedCatalogueDetail(db, row.applicabilityId, now))) {
       visibleRows.push(row);
     }
   }
@@ -432,6 +434,8 @@ function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized:
       variantName: catalogueMarketVariant.name,
       variantId: catalogueMarketVariant.id,
       synthetic: catalogueApplicability.synthetic,
+      policyName: catalogueSourcePolicy.name,
+      policyAttribution: catalogueSourcePolicy.attribution,
     })
     .from(catalogueAlias)
     .innerJoin(

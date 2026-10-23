@@ -395,6 +395,7 @@ export async function searchPublishedCatalogue(
       providerKey: publishingPublishedAssertion.providerKey,
       factualReviewerRef: publishingPublishedAssertion.factualReviewerRef,
       rightsReviewerRef: publishingPublishedAssertion.rightsReviewerRef,
+      policyReviewerRef: publishingSourcePolicy.reviewerRef,
       publishedAt: publishingProjectionGeneration.publishedAt,
     })
     .from(publishingPublishedAssertion)
@@ -1505,6 +1506,7 @@ function publicationLeaksIdentifier(record: ImportRecord, policy: SourcePolicyIn
     policy.attribution,
     policy.displayName ?? "",
     policy.providerKey,
+    policy.reviewerRef ?? "",
     record.factualReview.reviewerRef ?? "",
     record.rightsReview.reviewerRef ?? "",
     ...record.document.aliases,
@@ -1569,6 +1571,10 @@ function factLeaksIdentifier(fact: {
       fact.sourceTitle ?? "",
     ])
   );
+}
+
+export function publicMetadataEligible(values: string[]): boolean {
+  return !textLeaksIdentifier(values);
 }
 
 function textLeaksIdentifier(values: string[]): boolean {
@@ -1711,7 +1717,7 @@ function publicRecordEligible(row: Pick<
   typeof publishingPublishedAssertion.$inferSelect,
   "canonicalSubjectId" | "displayName" | "aliases" | "salesMarket" | "modelYearLabel" |
   "attribution" | "providerKey" | "factualReviewerRef" | "rightsReviewerRef" | "facts"
->): boolean {
+> & { policyReviewerRef: string | null }): boolean {
   return asPublicFacts(row.facts).length > 0 && !textLeaksIdentifier([
     row.canonicalSubjectId,
     row.displayName,
@@ -1722,6 +1728,7 @@ function publicRecordEligible(row: Pick<
     row.providerKey,
     row.factualReviewerRef,
     row.rightsReviewerRef,
+    row.policyReviewerRef ?? "",
   ]);
 }
 

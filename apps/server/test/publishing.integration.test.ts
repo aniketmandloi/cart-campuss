@@ -11,6 +11,7 @@ import { commitNeonHttpBatch, sql, type Database } from "@cart-campuss/db";
 import {
   catalogueApplicability,
   cataloguePriceReference,
+  catalogueSourcePolicy,
   catalogueSourcedFact,
 } from "@cart-campuss/db/schema/catalogue";
 import {
@@ -1249,6 +1250,40 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.ok(backfilledStage);
     assert.equal(new Date(backfilledStage.capturedAt).toISOString(), BASE_TIME);
     assert.equal(new Date(backfilledStage.updatedAt).toISOString(), "2026-10-22T12:05:00.000Z");
+  });
+
+  it("holds private policy metadata and withholds unsafe legacy policy metadata", async () => {
+    const privateValues = ["1HGCM82633A004352", "seller@example.test", "MH 12 AB 1234"];
+    for (const [index, value] of privateValues.entries()) {
+      for (const field of ["reviewerRef", "displayName"] as const) {
+        const input = labelledCatalogueImport(`Policy Metadata ${field} ${index}`);
+        input.sourcePolicy[field] = value;
+        const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
+        assert.equal(result.status, "held");
+        assert.equal(result.rejection?.code, "rights");
+        assert.equal((await caller(null).catalogue.search({ q: `Policy Metadata ${field} ${index}` })).hits.length, 0);
+      }
+    }
+    const input = labelledCatalogueImport("Legacy Policy Metadata");
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    const hit = (await caller(null).catalogue.search({ q: "Legacy Policy Metadata" })).hits[0];
+    assert.ok(hit);
+    for (const value of privateValues) {
+      await db.update(publishingSourcePolicy).set({ reviewerRef: value })
+        .where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id}`);
+      assert.equal(await caller(null).publishing.detail({ subjectId: hit.applicabilityId }), null);
+      assert.equal((await caller(null).publishing.search({ q: "Legacy Policy Metadata" })).length, 0);
+      assert.equal((await caller(null).catalogue.search({ q: "Legacy Policy Metadata" })).hits.length, 0);
+      assert.equal((await caller(null).catalogue.read(catalogueReadInput(hit.href))).availability, "not-in-public-catalogue");
+    }
+    await db.update(publishingSourcePolicy).set({ reviewerRef: "policy-reviewer" })
+      .where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id}`);
+    for (const value of privateValues) {
+      await db.update(catalogueSourcePolicy).set({ name: value })
+        .where(sql`${catalogueSourcePolicy.id} = ${input.sourcePolicy.id}`);
+      assert.equal((await caller(null).catalogue.search({ q: "Legacy Policy Metadata" })).hits.length, 0);
+      assert.equal((await caller(null).catalogue.read(catalogueReadInput(hit.href))).availability, "not-in-public-catalogue");
+    }
   });
 
   it("publishes a labelled catalogue record into the visitor search and SSR loader", async () => {
