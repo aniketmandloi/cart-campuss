@@ -944,7 +944,7 @@ function upsertStaged(
         sourcePolicyId: values.sourcePolicyId,
         capturedAt: sql`case
           when ${publishingStagedRecord.document} = cast(${JSON.stringify(values.document)} as jsonb)
-            and ${publishingStagedRecord.privatePayload} = cast(${JSON.stringify(values.privatePayload)} as jsonb)
+            or ${publishingStagedRecord.privatePayload} = cast(${JSON.stringify(values.privatePayload)} as jsonb)
           then least(${publishingStagedRecord.capturedAt}, cast(${values.capturedAt} as timestamptz))
           else cast(${values.capturedAt} as timestamptz) end`,
         updatedAt: values.updatedAt,

@@ -774,6 +774,35 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === noStorage.records[0]!.externalId), false);
   });
 
+  it("expires unchanged private payloads at their original deadline despite repeated document corrections", async () => {
+    const input = reviewedImport("Private Capture Deadline Coupe");
+    input.publish = false;
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.retentionSeconds = 60;
+    input.records[0]!.document.facts = [];
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    for (const seconds of [30, 50]) {
+      input.idempotencyKey += `-${seconds}`;
+      input.records[0]!.document.displayName = `Corrected Private Capture ${seconds} Coupe`;
+      await caller(OPERATOR_TOKEN, () => new Date(testClock().getTime() + seconds * 1000)).publishing.submit(input);
+      const row = (await db.select().from(publishingStagedRecord)).find((item) => item.externalId === input.records[0]!.externalId);
+      assert.equal(new Date(row!.capturedAt).toISOString(), BASE_TIME);
+    }
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: () => new Date(testClock().getTime() + 60_000) }, OPERATOR_TOKEN);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+
+    const stricter = reviewedImport("Older Document Capture Coupe");
+    stricter.publish = false;
+    stricter.sourcePolicy.retentionSeconds = 60;
+    stricter.records[0]!.document.facts[0]!.retrievedAt = new Date(testClock().getTime() - 30_000).toISOString();
+    await caller(OPERATOR_TOKEN).publishing.submit(stricter);
+    stricter.idempotencyKey += "-changed-private";
+    stricter.records[0]!.privatePayload.marker += "-changed";
+    await caller(OPERATOR_TOKEN).publishing.submit(stricter);
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: () => new Date(testClock().getTime() + 30_000) }, OPERATOR_TOKEN);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === stricter.records[0]!.externalId), false);
+  });
+
   it("withholds existing assertions when their policy is suspended", async () => {
     const input = reviewedImport("Read Suspension Coupe");
     input.sourcePolicy.id = crypto.randomUUID();
