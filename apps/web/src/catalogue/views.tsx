@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import type {
+  CatalogueAssertion,
   CatalogueCarPage,
   CatalogueFact,
   CatalogueSearchResult,
@@ -211,13 +212,7 @@ function Facts({ facts }: { facts: CatalogueFact[] }) {
                       {fact.curatedReason ? <p>{fact.curatedReason}</p> : null}
                     </>
                   )}
-                  {fact.conflict ? (
-                    <p>
-                      Conflicting reading {fact.conflict.rawValue} from {fact.conflict.sourceTitle}
-                      , observed {fact.conflict.observedOn ?? "an unknown date"}, review{" "}
-                      {fact.conflict.reviewStatus}.
-                    </p>
-                  ) : null}
+                  {fact.conflict ? <ConflictReading conflict={fact.conflict} /> : null}
                 </Cell>
                 <Cell>
                   <MaybeValue value={fact.normalizedValue} />
@@ -246,6 +241,34 @@ function Facts({ facts }: { facts: CatalogueFact[] }) {
         </table>
       </div>
     </section>
+  );
+}
+
+function ConflictReading({ conflict }: { conflict: CatalogueAssertion }) {
+  return (
+    <>
+      <p>Conflicting reading</p>
+      <p>
+        Raw: <MaybeValue value={conflict.rawValue} />
+      </p>
+      <p>
+        Normalized: <MaybeValue value={conflict.normalizedValue} />
+      </p>
+      <p>
+        Unit: <MaybeValue value={conflict.unit} />
+      </p>
+      <p>
+        Standard: <MaybeValue value={conflict.measurementStandard} />
+      </p>
+      <p>Source: {sourceText(conflict.sourceTitle, conflict.sourceUrl)}</p>
+      <p>Conflicting source policy: {conflict.policyName}</p>
+      <p>Audience: {conflict.policyAudience}</p>
+      <p>{conflict.policyAttribution}</p>
+      <p>Observed {conflict.observedOn ?? "an unknown date"}</p>
+      <p>Retrieved {conflict.retrievedOn}</p>
+      <p>Review: {conflict.reviewStatus}</p>
+      {conflict.reviewedOn ? <p>Reviewed {conflict.reviewedOn}</p> : null}
+    </>
   );
 }
 

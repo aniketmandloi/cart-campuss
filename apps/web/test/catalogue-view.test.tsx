@@ -80,7 +80,21 @@ test("a sourced page shows the source, an explicit unknown, a conflict, and a pr
         policyName: "Reviewed public policy",
         policyAudience: "public",
         policyAttribution: "Reviewed public probe attribution.",
-        conflict: null,
+        conflict: {
+          rawValue: "90 N·m",
+          normalizedValue: "90",
+          unit: "N·m",
+          measurementStandard: "probe-torque",
+          sourceTitle: "Conflicting probe note",
+          sourceUrl: "https://example.invalid/probe-torque-conflict",
+          observedOn: "2026-10-22",
+          retrievedOn: "2026-10-23",
+          reviewedOn: "2026-10-23",
+          reviewStatus: "reviewed",
+          policyName: "Reviewed conflict policy",
+          policyAudience: "public",
+          policyAttribution: "Reviewed conflict attribution.",
+        },
       },
     ],
     priceReference: {
@@ -107,6 +121,16 @@ test("a sourced page shows the source, an explicit unknown, a conflict, and a pr
   const html = renderToStaticMarkup(<CatalogueDetailView state={{ kind: "page", page }} />);
   assert.match(html, /No measured power figure is on the record/);
   assert.match(html, /not documented/);
+  assert.match(html, /Conflicting reading/);
+  assert.match(html, /Raw: 90 N·m/);
+  assert.match(html, /Normalized: 90/);
+  assert.match(html, /Unit: N·m/);
+  assert.match(html, /Standard: probe-torque/);
+  assert.match(html, /href="https:\/\/example\.invalid\/probe-torque-conflict"/);
+  assert.match(html, /Conflicting probe note/);
+  assert.match(html, /Conflicting source policy: Reviewed conflict policy/);
+  assert.match(html, /Reviewed conflict attribution/);
+  assert.match(html, /Reviewed 2026-10-23/);
   assert.match(html, /Reviewed public probe dossier/);
   assert.match(html, /₹1,000\.00/);
   assert.match(html, /100000 INR minor units/);

@@ -40,15 +40,11 @@ export type CatalogueSearchResult = {
   hits: CatalogueSearchHit[];
 };
 
-export type CatalogueFact = {
-  property: string;
-  state: "known" | "unknown";
+export type CatalogueAssertion = {
   rawValue: string | null;
   normalizedValue: string | null;
   unit: string | null;
   measurementStandard: string | null;
-  unknownReason: string | null;
-  curatedReason: string | null;
   sourceTitle: string;
   sourceUrl: string | null;
   observedOn: string | null;
@@ -58,12 +54,14 @@ export type CatalogueFact = {
   policyName: string;
   policyAudience: string;
   policyAttribution: string;
-  conflict: {
-    rawValue: string | null;
-    sourceTitle: string;
-    observedOn: string | null;
-    reviewStatus: string;
-  } | null;
+};
+
+export type CatalogueFact = CatalogueAssertion & {
+  property: string;
+  state: "known" | "unknown";
+  unknownReason: string | null;
+  curatedReason: string | null;
+  conflict: CatalogueAssertion | null;
 };
 
 export type CataloguePriceReference = {
@@ -504,36 +502,33 @@ async function readFacts(
     if (!row.curated && row.conflictsWithFactId) conflicts.set(row.conflictsWithFactId, row);
   }
 
+  const assertion = (row: (typeof rows)[number]): CatalogueAssertion => ({
+    rawValue: row.rawValue,
+    normalizedValue: row.normalizedValue,
+    unit: row.unit,
+    measurementStandard: row.measurementStandard,
+    sourceTitle: row.sourceTitle,
+    sourceUrl: row.sourceUrl,
+    observedOn: row.observedOn,
+    retrievedOn: row.retrievedOn,
+    reviewedOn: row.reviewedOn,
+    reviewStatus: row.reviewStatus,
+    policyName: row.policyName,
+    policyAudience: row.policyAudience,
+    policyAttribution: row.policyAttribution,
+  });
+
   return rows
     .filter((row) => row.curated)
     .map((row) => {
       const conflict = conflicts.get(row.id);
       return {
+        ...assertion(row),
         property: row.property,
         state: row.state === "unknown" ? "unknown" : "known",
-        rawValue: row.rawValue,
-        normalizedValue: row.normalizedValue,
-        unit: row.unit,
-        measurementStandard: row.measurementStandard,
         unknownReason: row.unknownReason,
         curatedReason: row.curatedReason,
-        sourceTitle: row.sourceTitle,
-        sourceUrl: row.sourceUrl,
-        observedOn: row.observedOn,
-        retrievedOn: row.retrievedOn,
-        reviewedOn: row.reviewedOn,
-        reviewStatus: row.reviewStatus,
-        policyName: row.policyName,
-        policyAudience: row.policyAudience,
-        policyAttribution: row.policyAttribution,
-        conflict: conflict
-          ? {
-              rawValue: conflict.rawValue,
-              sourceTitle: conflict.sourceTitle,
-              observedOn: conflict.observedOn,
-              reviewStatus: conflict.reviewStatus,
-            }
-          : null,
+        conflict: conflict ? assertion(conflict) : null,
       };
     });
 }

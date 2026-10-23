@@ -42,6 +42,19 @@ export async function insertSyntheticPreviewFixture(db: Database) {
     .onConflictDoNothing();
 
   await db
+    .insert(catalogueSourcePolicy)
+    .values({
+      id: "policy_synthetic_conflict",
+      name: "Synthetic conflict policy",
+      audience: "private-preview",
+      permitsPublicCatalogue: false,
+      rightsReview: "reviewed",
+      attribution: "Synthetic conflict note attribution. Not a manufacturer publication.",
+      internalNote: "provider-secret-do-not-project",
+    })
+    .onConflictDoNothing();
+
+  await db
     .insert(catalogueSalesMarket)
     .values({ id: salesMarketId, name: "India", countryCode: "IN" })
     .onConflictDoNothing();
@@ -231,7 +244,7 @@ export async function insertSyntheticPreviewFixture(db: Database) {
       {
         id: "fact_torque_conflict",
         applicabilityId,
-        sourcePolicyId: policyId,
+        sourcePolicyId: "policy_synthetic_conflict",
         property: "Torque",
         state: "known",
         rawValue: "90 N·m",
@@ -239,7 +252,7 @@ export async function insertSyntheticPreviewFixture(db: Database) {
         unit: "N·m",
         measurementStandard: "fixture-torque",
         sourceTitle: "Synthetic fixture conflict note",
-        sourceUrl: null,
+        sourceUrl: "https://example.invalid/fixture-torque-conflict",
         observedOn: "2026-10-22",
         retrievedOn: "2026-10-23",
         reviewedOn: "2026-10-23",
