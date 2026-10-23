@@ -72,6 +72,10 @@ CATALOGUE_TEST_DATABASE_URL='postgres://127.0.0.1:5432/catalogue' PSQL="$(comman
 
 `DATABASE_URL` is used when `CATALOGUE_TEST_DATABASE_URL` is empty. The database must be on localhost. The diagnostic does not drop `public`.
 
+## Visual direction
+
+The catalogue screens use the Taste app-screen direction True-black flat, seed 764579268. The dealt sheet is [catalogue-search-direction.json](design/catalogue-search-direction.json). The design-study concept used a different draw, seed 887344209, and its photograph and sample figures are not catalogue evidence.
+
 ## What you should see
 
 1. With no web `DATABASE_URL`, `/` says the catalogue database is not configured and names no car.
