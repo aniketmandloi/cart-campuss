@@ -108,6 +108,12 @@ function isRowQuery(sql: string): boolean {
 }
 
 function wrapRows(statement: string): string {
+  // OFFSET 0 keeps the statement's ORDER BY when it is wrapped. PostgreSQL
+  // otherwise may discard ORDER BY in a subquery, and a later JavaScript sort
+  // would no longer match the database.
+  const ordered = /\boffset\s+(?:\$\d+|\d+)\s*$/i.test(statement)
+    ? statement
+    : `${statement} offset 0`;
   return `select coalesce(json_agg(s.cells order by s.ord), '[]'::json)::text
 from (
   select __psql_row.__psql_ord as ord, (
@@ -117,7 +123,7 @@ from (
   ) as cells
   from (
     select row_number() over () as __psql_ord, __psql_src.*
-    from (${statement}) as __psql_src
+    from (${ordered}) as __psql_src
   ) as __psql_row
 ) as s`;
 }

@@ -224,19 +224,9 @@ export async function searchCatalogue(
   }
   const rows = await buildCatalogueSearch(db, access, normalized);
 
-  const ranked = [...rows].sort((left, right) => {
-    const leftRank = left.normalizedName === normalized ? 0 : 1;
-    const rightRank = right.normalizedName === normalized ? 0 : 1;
-    return (
-      leftRank - rightRank ||
-      left.applicabilityId.localeCompare(right.applicabilityId) ||
-      left.aliasId.localeCompare(right.aliasId)
-    );
-  });
-
   const seen = new Set<string>();
   const hits: CatalogueSearchHit[] = [];
-  for (const row of ranked) {
+  for (const row of rows) {
     if (seen.has(row.applicabilityId)) continue;
     seen.add(row.applicabilityId);
     hits.push({

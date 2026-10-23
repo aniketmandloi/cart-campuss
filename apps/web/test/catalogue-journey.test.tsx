@@ -45,6 +45,7 @@ describe(
         await insertSyntheticPreviewFixture(preview.db);
         await insertSyntheticPreviewFixture(preview.db);
         runPsql({ databaseUrl, psql, schema, sql: publishedProbeSql });
+        runPsql({ databaseUrl, psql, schema, sql: rankProbeSql });
 
         publicCaller = appRouter.createCaller(
           createCatalogueContextFromClient(isolated.client, false),
@@ -183,6 +184,38 @@ describe(
       assert.doesNotMatch(detail, new RegExp(hiddenSentinel));
     });
 
+    test("search keeps database order while collapsing aliases", async () => {
+      const found = await publicCaller.catalogue.search({ q: "rank probe" });
+      const listed = runPsql({
+        databaseUrl,
+        psql,
+        schema,
+        sql: `select applicability_id
+from catalogue_alias
+where normalized_name ~>=~ 'rank probe'
+  and normalized_name ~<~ 'rank probf'
+order by case when normalized_name = 'rank probe' then 0 else 1 end,
+  applicability_id,
+  id`,
+      })
+        .trim()
+        .split("\n")
+        .filter((id) => id.length > 0);
+      const expected: string[] = [];
+      for (const id of listed) {
+        if (!expected.includes(id)) expected.push(id);
+      }
+      assert.deepEqual(
+        found.hits.map((hit) => hit.applicabilityId),
+        expected,
+      );
+      assert.deepEqual(
+        [...expected].sort(),
+        ["app_f_order", "app_é_order"].sort(),
+      );
+      assert.equal(found.hits.length, 2);
+    });
+
     test("the name index can serve the prefix predicate", () => {
       if (!client) throw new Error("The isolated catalogue database is not open.");
       const preview = createCatalogueContextFromClient(client, true);
@@ -228,6 +261,30 @@ function hrefPattern(href: string): RegExp {
 }
 
 const fixtureLeak = /Sample Hatch|Kestrel Fixture|42424242|999 kW|Hidden output|provider-secret-do-not-project/;
+
+const rankProbeSql = `
+insert into catalogue_brand (id, name, slug) values
+  ('brand_rank_f', 'Rank F', 'rank-f'),
+  ('brand_rank_e', 'Rank E', 'rank-e');
+insert into catalogue_model (id, brand_id, name, slug) values
+  ('model_rank_f', 'brand_rank_f', 'Order F', 'order-f'),
+  ('model_rank_e', 'brand_rank_e', 'Order E', 'order-e');
+insert into catalogue_generation (id, model_id, name, slug) values
+  ('gen_rank_f', 'model_rank_f', 'Mark', 'mark'),
+  ('gen_rank_e', 'model_rank_e', 'Mark', 'mark');
+insert into catalogue_market_variant (id, generation_id, sales_market_id, name) values
+  ('var_rank_f', 'gen_rank_f', 'mkt_probe', 'Base'),
+  ('var_rank_e', 'gen_rank_e', 'mkt_probe', 'Base');
+insert into catalogue_applicability (
+  id, market_variant_id, model_year_id, sales_market_id, source_policy_id, publication_status, synthetic
+) values
+  ('app_f_order', 'var_rank_f', 'year_probe_2024', 'mkt_probe', 'policy_public_probe', 'published', false),
+  ('app_é_order', 'var_rank_e', 'year_probe_2024', 'mkt_probe', 'policy_public_probe', 'published', false);
+insert into catalogue_alias (id, applicability_id, kind, normalized_name) values
+  ('alias_rank_f_b', 'app_f_order', 'alias', 'rank probe ff'),
+  ('alias_rank_f_a', 'app_f_order', 'alias', 'rank probe f'),
+  ('alias_rank_e', 'app_é_order', 'alias', 'rank probe e');
+`;
 
 const publishedProbeSql = `
 insert into catalogue_source_policy (id, name, audience, permits_public_catalogue, rights_review, attribution, internal_note)
