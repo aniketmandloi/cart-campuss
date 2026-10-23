@@ -5,10 +5,8 @@ import { appRouter } from "@cart-campuss/api/routers/index";
 
 import { ENV } from "@/env.server";
 
+import { parseCatalogueRead } from "./selection";
 import type { CatalogueDetailState, CatalogueSearchState } from "./views";
-
-const slugPattern = /^[a-z0-9-]+$/;
-const idPattern = /^[a-z0-9_-]+$/;
 
 type Runtime = ReturnType<typeof createCatalogueContext>;
 
@@ -43,37 +41,18 @@ export const loadCatalogueCar = cache(
   }): Promise<CatalogueDetailState> => {
     const runtime = catalogueRuntime();
     if (!runtime) return { kind: "unconfigured" };
-    const modelSlug = validToken(input.modelSlug, slugPattern);
-    const generationSlug = validToken(input.generationSlug, slugPattern);
-    const market = validToken(input.market, idPattern);
-    const year = validToken(input.year, idPattern);
-    const variant = validToken(input.variant, idPattern);
-    const hidden = {
-      kind: "page" as const,
-      page: {
-        availability: "not-in-public-catalogue" as const,
-        privatePreview: runtime.access.allowFixtures,
-      },
-    };
-    if (
-      modelSlug === "invalid" ||
-      modelSlug === "absent" ||
-      generationSlug === "invalid" ||
-      generationSlug === "absent" ||
-      market === "invalid" ||
-      year === "invalid" ||
-      variant === "invalid"
-    ) {
-      return hidden;
+    const parsed = parseCatalogueRead(input);
+    if (parsed.status === "invalid") {
+      return {
+        kind: "page",
+        page: {
+          availability: "not-in-public-catalogue",
+          privatePreview: runtime.access.allowFixtures,
+        },
+      };
     }
     try {
-      const page = await appRouter.createCaller(runtime).catalogue.read({
-        modelSlug,
-        generationSlug,
-        market: market === "absent" ? undefined : market,
-        year: year === "absent" ? undefined : year,
-        variant: variant === "absent" ? undefined : variant,
-      });
+      const page = await appRouter.createCaller(runtime).catalogue.read(parsed.value);
       return { kind: "page", page };
     } catch {
       return { kind: "unavailable" };
@@ -94,11 +73,4 @@ function catalogueRuntime(): Runtime | null {
   const runtime = createCatalogueContext({ databaseUrl, allowFixtures });
   cached = { databaseUrl, allowFixtures, runtime };
   return runtime;
-}
-
-function validToken(value: string | undefined, pattern: RegExp): "absent" | "invalid" | string {
-  if (value === undefined || value.trim() === "") return "absent";
-  const trimmed = value.trim();
-  if (trimmed.length > 80 || !pattern.test(trimmed)) return "invalid";
-  return trimmed;
 }
