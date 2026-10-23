@@ -453,6 +453,7 @@ export async function readPublishedCatalogueDetail(
       reviewedAt: publishingPublishedAssertion.reviewedAt,
       publishedAt: publishingProjectionGeneration.publishedAt,
       priceReference: publishingPublishedAssertion.priceReference,
+      permittedFields: publishingSourcePolicy.permittedFields,
       policyReviewerRef: publishingSourcePolicy.reviewerRef,
     })
     .from(publishingPublishedAssertion)
@@ -496,7 +497,7 @@ export async function readPublishedCatalogueDetail(
     policyReviewerRef: row.policyReviewerRef,
     facts: asPublicFacts(row.facts),
     media: asPublicMedia(row.media),
-    priceReference: asPublicPrice(row.priceReference),
+    priceReference: row.permittedFields.includes("priceReference") ? asPublicPrice(row.priceReference) : null,
   };
 }
 
@@ -1235,7 +1236,7 @@ function publicAssertion(
     rightsReviewerRef,
     observedAt,
     reviewedAt,
-    priceReference: record.catalogue?.priceReference ?? null,
+    priceReference: policy.permittedFields.includes("priceReference") ? record.catalogue?.priceReference ?? null : null,
   };
 }
 

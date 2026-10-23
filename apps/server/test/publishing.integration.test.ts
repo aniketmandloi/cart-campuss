@@ -1252,6 +1252,33 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(new Date(backfilledStage.updatedAt).toISOString(), "2026-10-22T12:05:00.000Z");
   });
 
+  it("omits an unpermitted price without blocking other reviewed catalogue facts", async () => {
+    const input = labelledCatalogueImport("Price Rights Dossier");
+    input.sourcePolicy.permittedFields = input.sourcePolicy.permittedFields.filter((field) => field !== "priceReference");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    const detail = await caller(null).publishing.detail({ subjectId });
+    assert.ok(detail?.facts.length);
+    assert.equal(detail.priceReference, null);
+    const hit = (await caller(null).catalogue.search({ q: "Price Rights Dossier" })).hits[0];
+    assert.ok(hit);
+    const page = await caller(null).catalogue.read(catalogueReadInput(hit.href));
+    assert.equal(page.availability, "visible");
+    if (page.availability !== "visible") throw new Error("Expected visible catalogue page");
+    assert.equal(page.priceReference, null);
+    assert.equal(visitorText(page).includes(MARKERS.payload), false);
+    const rows = await db.select().from(publishingPublishedAssertion)
+      .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}`);
+    assert.ok(rows.every((row) => row.priceReference === null));
+    await db.update(publishingPublishedAssertion).set({ priceReference: sql`${JSON.stringify(input.records[0]!.catalogue!.priceReference)}::jsonb` })
+      .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}`);
+    assert.equal((await caller(null).publishing.detail({ subjectId }))?.priceReference, null);
+
+    const permitted = labelledCatalogueImport("Permitted Price Dossier");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(permitted)).status, "published");
+    assert.equal((await caller(null).publishing.detail({ subjectId: permitted.records[0]!.document.canonicalSubjectId }))?.priceReference?.amountMinor, 250_000);
+  });
+
   it("holds private policy metadata and withholds unsafe legacy policy metadata", async () => {
     const privateValues = ["1HGCM82633A004352", "seller@example.test", "MH 12 AB 1234"];
     for (const [index, value] of privateValues.entries()) {
@@ -1663,7 +1690,7 @@ function labelledCatalogueImport(name: string): ReviewedImport {
   const slug = name.toLowerCase().replaceAll(" ", "-");
   input.sourcePolicy.id = crypto.randomUUID();
   input.sourcePolicy.displayName = "Labeled test policy";
-  input.sourcePolicy.permittedFields = ["displayName", "alias", "modelYearLabel", "power", "torque", "salesMarket"];
+  input.sourcePolicy.permittedFields = ["displayName", "alias", "modelYearLabel", "power", "torque", "salesMarket", "priceReference"];
   const record = input.records[0];
   assert.ok(record);
   record.document.displayName = `Unindexed ${name}`;
