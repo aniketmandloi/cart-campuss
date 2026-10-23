@@ -53,7 +53,7 @@ pnpm --filter server build
 
 `NEXT_PUBLIC_SERVER_URL` is the starter's public API origin. It is not a secret. The web build reads it through Varlock and fails closed when it is empty.
 
-`CATALOGUE_TEST_DATABASE_URL` must be `localhost` or `127.0.0.1`. Without it, `pnpm test` still checks money formatting and the empty states, and skips the database journey with that reason. The database journey drops and recreates the `public` schema in that database.
+`CATALOGUE_TEST_DATABASE_URL` must be `localhost` or `127.0.0.1`. Without it, `pnpm test` still checks money formatting and the empty states, and skips the database journey with that reason. The database journey creates a unique schema, applies the reviewed migrations there, and drops only that schema. A `public` qualifier in migration SQL is rewritten in that test process and is not written back to the migration files. The journey does not drop or rewrite the `public` schema.
 
 The native workspace is part of `pnpm check-types`. This slice does not add a native catalogue screen.
 

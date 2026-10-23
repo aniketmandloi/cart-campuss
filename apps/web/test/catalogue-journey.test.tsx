@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { before, describe, test } from "node:test";
-import { fileURLToPath } from "node:url";
+import { after, before, describe, test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { catalogueSearchStatement } from "@cart-campuss/api/catalogue";
 import { insertSyntheticPreviewFixture } from "@cart-campuss/api/catalogue-fixture";
 import { createCatalogueContextFromClient } from "@cart-campuss/api/catalogue-runtime";
-import { createPsqlNeonClient, explainQuery, runPsql } from "@cart-campuss/api/psql-client";
+import {
+  explainQuery,
+  openIsolatedCatalogueDatabase,
+  runPsql,
+} from "@cart-campuss/api/psql-client";
 import { appRouter } from "@cart-campuss/api/routers/index";
 
 import { CatalogueDetailView, CatalogueSearchView } from "../src/catalogue/views";
@@ -30,35 +31,33 @@ describe(
   () => {
     let publicCaller: ReturnType<typeof appRouter.createCaller>;
     let previewCaller: ReturnType<typeof appRouter.createCaller>;
+    let schema = "";
+    let client: ReturnType<typeof openIsolatedCatalogueDatabase>["client"] | undefined;
+    let closeDatabase: (() => void) | undefined;
 
     before(async () => {
-      const host = new URL(databaseUrl).hostname;
-      if (host !== "127.0.0.1" && host !== "localhost") {
-        throw new Error("CATALOGUE_TEST_DATABASE_URL must point at localhost.");
+      const isolated = openIsolatedCatalogueDatabase({ databaseUrl, psql });
+      schema = isolated.schema;
+      client = isolated.client;
+      closeDatabase = isolated.close;
+      try {
+        const preview = createCatalogueContextFromClient(isolated.client, true);
+        await insertSyntheticPreviewFixture(preview.db);
+        await insertSyntheticPreviewFixture(preview.db);
+        runPsql({ databaseUrl, psql, schema, sql: publishedProbeSql });
+
+        publicCaller = appRouter.createCaller(
+          createCatalogueContextFromClient(isolated.client, false),
+        );
+        previewCaller = appRouter.createCaller(preview);
+      } catch (error) {
+        isolated.close();
+        throw error;
       }
-      const client = createPsqlNeonClient({ databaseUrl, psql });
-      const migrationsDir = fileURLToPath(
-        new URL("../../../packages/db/src/migrations/", import.meta.url),
-      );
-      const folder = readdirSync(migrationsDir).find((name) => name.endsWith("_catalogue_search"));
-      if (!folder) throw new Error("The catalogue migration is missing.");
-      const migration = readFileSync(join(migrationsDir, folder, "migration.sql"), "utf8").replaceAll(
-        "--> statement-breakpoint",
-        "\n",
-      );
-      runPsql({
-        databaseUrl,
-        psql,
-        sql: `set client_min_messages to warning;\ndrop schema if exists public cascade;\ncreate schema public;\n${migration}`,
-      });
+    });
 
-      const preview = createCatalogueContextFromClient(client, true);
-      await insertSyntheticPreviewFixture(preview.db);
-      await insertSyntheticPreviewFixture(preview.db);
-      runPsql({ databaseUrl, psql, sql: publishedProbeSql });
-
-      publicCaller = appRouter.createCaller(createCatalogueContextFromClient(client, false));
-      previewCaller = appRouter.createCaller(preview);
+    after(() => {
+      closeDatabase?.();
     });
 
     test("public search and the sourced page exclude the synthetic fixture", async () => {
@@ -185,14 +184,13 @@ describe(
     });
 
     test("the name index can serve the prefix predicate", () => {
-      const preview = createCatalogueContextFromClient(
-        createPsqlNeonClient({ databaseUrl, psql }),
-        true,
-      );
+      if (!client) throw new Error("The isolated catalogue database is not open.");
+      const preview = createCatalogueContextFromClient(client, true);
       const statement = catalogueSearchStatement(preview.db, preview.access, "kestrel");
       const plan = explainQuery({
         databaseUrl,
         psql,
+        schema,
         sql: statement.sql,
         params: statement.params,
       });
@@ -200,7 +198,8 @@ describe(
       const listed = runPsql({
         databaseUrl,
         psql,
-        sql: "select indexdef from pg_indexes where indexname = 'catalogue_alias_name_idx'",
+        schema,
+        sql: `select indexdef from pg_indexes where schemaname = '${schema}' and indexname = 'catalogue_alias_name_idx'`,
       });
       assert.match(listed, /text_pattern_ops/);
     });

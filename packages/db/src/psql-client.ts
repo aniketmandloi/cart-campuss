@@ -5,6 +5,8 @@ import type { NeonQueryFunction } from "@neondatabase/serverless";
 type PsqlOptions = {
   databaseUrl: string;
   psql: string;
+  /** Isolated catalogue schema. Never `public`. Set on every connection. */
+  schema?: string;
 };
 
 /**
@@ -56,13 +58,17 @@ export function explainQuery(options: PsqlOptions & { sql: string; params?: unkn
 }
 
 function executePsql(options: PsqlOptions, sql: string): string {
+  assertDoesNotDropPublic(sql);
+  const script = options.schema
+    ? `set search_path to ${quoteRunSchema(options.schema)};\n${sql}`
+    : sql;
   try {
     return execFileSync(
       options.psql,
       ["--dbname", options.databaseUrl, "-v", "ON_ERROR_STOP=1", "-X", "-q", "-t", "-A", "-f", "-"],
       {
         encoding: "utf8",
-        input: sql,
+        input: script,
         maxBuffer: 32 * 1024 * 1024,
         env: { ...process.env, PGCONNECT_TIMEOUT: "5" },
       },
@@ -114,6 +120,19 @@ from (
     from (${statement}) as __psql_src
   ) as __psql_row
 ) as s`;
+}
+
+export function quoteRunSchema(schema: string): string {
+  if (!/^catalogue_run_[0-9a-f]{16}$/.test(schema)) {
+    throw new Error("Refusing a search_path outside an isolated catalogue schema.");
+  }
+  return `"${schema}"`;
+}
+
+function assertDoesNotDropPublic(sql: string): void {
+  if (/\bdrop\s+schema\b[^;]*\bpublic\b/i.test(sql)) {
+    throw new Error("Refusing to drop the public schema.");
+  }
 }
 
 function redact(value: string): string {
