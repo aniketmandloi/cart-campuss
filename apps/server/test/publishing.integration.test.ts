@@ -1252,6 +1252,50 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(new Date(backfilledStage.updatedAt).toISOString(), "2026-10-22T12:05:00.000Z");
   });
 
+  it("bounds whole-copy retention by price capture on imports, corrections, and legacy reads", async () => {
+    for (const publish of [true, false]) {
+      const input = labelledCatalogueImport(`Expired Price ${publish} Dossier`);
+      input.publish = publish;
+      input.records[0]!.catalogue!.priceReference!.retrievedOn = "2020-01-01";
+      await assert.rejects(() => caller(OPERATOR_TOKEN).publishing.submit(input), /retention deadline/);
+      assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+    }
+    const input = labelledCatalogueImport("Price Capture Dossier");
+    input.sourcePolicy.retentionSeconds = 60;
+    input.publish = false;
+    input.records[0]!.document.facts.forEach((item) => { item.retrievedAt = BASE_TIME; });
+    input.records[0]!.catalogue!.priceReference!.retrievedOn = BASE_TIME;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "staged");
+    const later = () => new Date(testClock().getTime() + 30_000);
+    input.publish = true;
+    input.idempotencyKey += "-correction";
+    input.records[0]!.document.facts.forEach((item) => { item.retrievedAt = later().toISOString(); });
+    input.records[0]!.privatePayload.marker += "-corrected";
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(input)).status, "published");
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    assert.ok((await caller(null, later).publishing.detail({ subjectId }))?.priceReference);
+    const cutoff = () => new Date(testClock().getTime() + 60_000);
+    assert.equal(await caller(null, cutoff).publishing.detail({ subjectId }), null);
+
+    const legacy = labelledCatalogueImport("Legacy Price Capture Dossier");
+    await caller(OPERATOR_TOKEN).publishing.submit(legacy);
+    const legacySubject = legacy.records[0]!.document.canonicalSubjectId;
+    const oldPrice = { ...legacy.records[0]!.catalogue!.priceReference!, retrievedOn: "2020-01-01" };
+    await db.update(publishingPublishedAssertion).set({ capturedAt: BASE_TIME, priceReference: sql`${JSON.stringify(oldPrice)}::jsonb` })
+      .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${legacySubject}`);
+    assert.equal(await caller(null).publishing.detail({ subjectId: legacySubject }), null);
+    assert.equal((await caller(null).catalogue.search({ q: "Legacy Price Capture Dossier" })).hits.length, 0);
+    const migration = await readFile(new URL("../../../packages/db/src/migrations/20261023160000_price_capture_retention/migration.sql", import.meta.url), "utf8");
+    const backfill = migration.split("--> statement-breakpoint")[1];
+    assert.ok(backfill);
+    await db.execute(sql.raw(backfill));
+    const backfilled = (await db.select().from(publishingPublishedAssertion)).find((row) => row.canonicalSubjectId === legacySubject);
+    assert.equal(new Date(backfilled!.capturedAt).toISOString(), "2020-01-01T00:00:00.000Z");
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: cutoff }, OPERATOR_TOKEN);
+    assert.equal((await db.select().from(publishingPublishedAssertion)).some((row) => row.canonicalSubjectId === legacySubject || row.canonicalSubjectId === subjectId), false);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+  });
+
   it("omits an unpermitted price without blocking other reviewed catalogue facts", async () => {
     const input = labelledCatalogueImport("Price Rights Dossier");
     input.sourcePolicy.permittedFields = input.sourcePolicy.permittedFields.filter((field) => field !== "priceReference");
@@ -1469,6 +1513,7 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     const later = () => new Date(testClock().getTime() + 61_000);
     const expiring = labelledCatalogueImport("Expiring Wagon");
     expiring.sourcePolicy.retentionSeconds = 60;
+    expiring.records[0]!.catalogue!.priceReference!.retrievedOn = BASE_TIME;
     for (const fact of expiring.records[0]?.document.facts ?? []) fact.retrievedAt = BASE_TIME;
     assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(expiring)).status, "published");
     const expiringHits = await caller(null).catalogue.search({ q: "expiring wagon" });
@@ -1492,6 +1537,7 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
 
     const cleanup = labelledCatalogueImport("Cleanup Hatch");
     cleanup.sourcePolicy.retentionSeconds = 60;
+    cleanup.records[0]!.catalogue!.priceReference!.retrievedOn = BASE_TIME;
     for (const fact of cleanup.records[0]?.document.facts ?? []) fact.retrievedAt = BASE_TIME;
     assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(cleanup)).status, "published");
     const cleanupHits = await caller(null).catalogue.search({ q: "cleanup hatch" });

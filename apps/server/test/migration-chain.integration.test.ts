@@ -29,6 +29,7 @@ describe("catalogue and publishing migrations", { concurrency: 1, timeout: 120_0
         "20261023130303_publishing_retention",
         "20261023132821_price_reference_source",
         "20261023142856_projection_price_reference",
+        "20261023160000_price_capture_retention",
       ],
     );
     assert.equal(await relation(started, "catalogue_applicability"), "catalogue_applicability");

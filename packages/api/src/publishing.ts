@@ -241,7 +241,7 @@ const priceReferenceSchema = z
     basis: z.string().trim().min(1).max(200),
     taxInclusivity: z.enum(["unspecified", "tax-inclusive", "tax-exclusive"]),
     observedOn: z.string().trim().min(1).max(40),
-    retrievedOn: z.string().trim().min(1).max(40),
+    retrievedOn: z.union([z.iso.date(), z.iso.datetime()]),
     reviewedOn: z.string().trim().min(1).max(40),
     sourceTitle: z.string().trim().min(1).max(200),
     sourceUrl: sourceUrlSchema.nullable().default(null),
@@ -416,7 +416,7 @@ export async function searchPublishedCatalogue(
     )
     .where(
       and(
-        publicPolicyAllows(publishingPublishedAssertion.capturedAt, now()),
+        publicPolicyAllows(assertionCapturedAt(), now()),
         term.length > 0 ? match : undefined,
       ),
     )
@@ -475,7 +475,7 @@ export async function readPublishedCatalogueDetail(
     .where(
       and(
         eq(publishingProjectionPointer.id, 1),
-        publicPolicyAllows(publishingPublishedAssertion.capturedAt, now()),
+        publicPolicyAllows(assertionCapturedAt(), now()),
         eq(publishingPublishedAssertion.canonicalSubjectId, subjectId),
       ),
     )
@@ -593,7 +593,7 @@ export async function applyOperatorImport(
             .where(
               and(
                 eq(publishingPublishedAssertion.id, assertion.id),
-                publicPolicyAllows(publishingPublishedAssertion.capturedAt, writeTime),
+                publicPolicyAllows(assertionCapturedAt(), writeTime),
               ),
             ),
         ),
@@ -679,7 +679,7 @@ export async function cleanupPublishingCopies(
       deps.db.delete(publishingPublishedAssertion).where(sql`exists (
         select 1 from ${publishingSourcePolicy}
         where ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
-          and ${sourceCopyDue(publishingPublishedAssertion.capturedAt, now)}
+          and ${sourceCopyDue(assertionCapturedAt(), now)}
       )`).returning({ id: publishingPublishedAssertion.id }),
     ]);
     return { stagedDeleted: staged.length, assertionsDeleted: assertions.length };
@@ -774,8 +774,13 @@ export function currentProjectionCovers(subjectId: SQLWrapper, now: Date): SQL {
     inner join ${publishingSourcePolicy}
       on ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
     where ${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}
-      and ${publicPolicyAllows(publishingPublishedAssertion.capturedAt, now)}
+      and ${publicPolicyAllows(assertionCapturedAt(), now)}
   )`;
+}
+
+function assertionCapturedAt(): SQL {
+  return sql`least(${publishingPublishedAssertion.capturedAt},
+    publishing_price_captured_at(${publishingPublishedAssertion.priceReference}))`;
 }
 
 /** The oldest source retrieval bounds retention for the entire stored document and its media. */
@@ -783,6 +788,7 @@ function sourceCapturedAt(record: ImportRecord, receivedAt: string): string {
   return new Date(Math.min(
     new Date(receivedAt).getTime(),
     ...record.document.facts.map((fact) => new Date(fact.retrievedAt).getTime()),
+    ...(record.catalogue?.priceReference ? [new Date(record.catalogue.priceReference.retrievedOn).getTime()] : []),
   )).toISOString();
 }
 
