@@ -757,15 +757,56 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
       assert.equal(detail?.facts[0]?.sourceUrl, `${scheme}://example.test/source`);
       assert.equal(detail?.media[0]?.sourceUrl, `${scheme}://example.test/image`);
       assert.ok(detail);
-      for (const url of ["javascript:alert(1)", "data:text/html,unsafe", "file:///private/source"]) {
+      for (const url of ["javascript:alert(1)", "data:text/html,unsafe", "file:///private/source", "https://example.test/?phone_number=9876543210", "https://example.test/?phone=98765+43210&discount=50%"]) {
+        await db.update(publishingPublishedAssertion).set({
+          facts: detail.facts,
+          media: detail.media.map((item) => ({ ...item, sourceUrl: url })),
+        }).where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}`);
+        const withoutMedia = await caller(null).publishing.detail({ subjectId });
+        assert.equal(withoutMedia?.facts.length, 1);
+        assert.deepEqual(withoutMedia?.media, []);
+        assert.equal((await caller(null).publishing.search({ q: input.records[0]!.document.displayName })).length, 1);
+
         await db.update(publishingPublishedAssertion).set({
           facts: detail.facts.map((item) => ({ ...item, sourceUrl: url })),
           media: detail.media.map((item) => ({ ...item, sourceUrl: url })),
         }).where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}`);
-        const legacy = await caller(null).publishing.detail({ subjectId });
-        assert.deepEqual(legacy?.facts, []);
-        assert.deepEqual(legacy?.media, []);
+        assert.equal(await caller(null).publishing.detail({ subjectId }), null);
+        for (const q of [input.records[0]!.document.displayName, input.records[0]!.document.aliases[0]!]) {
+          assert.deepEqual(await caller(null).publishing.search({ q }), []);
+          const search = await requestJson("GET", "/api/trpc/publishing.search", { q });
+          assert.equal(search.text.includes('"data":[]'), true);
+        }
+        const legacyDetail = await requestJson("GET", "/api/trpc/publishing.detail", { subjectId });
+        assert.equal(legacyDetail.text.includes('"data":null'), true);
       }
+    }
+  });
+
+  it("withholds legacy names-only facts and private metadata on both search and detail", async () => {
+    const input = reviewedImport("Legacy Eligibility Coupe");
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    const detail = await caller(null).publishing.detail({ subjectId });
+    assert.ok(detail);
+    const privateLink = encodeURIComponent("https://example.test/?contact_phone=9876543210");
+    const cases = [
+      { facts: detail.facts.map((item) => ({ ...item, property: "displayName" })), attribution: detail.attribution, aliases: detail.aliases },
+      { facts: detail.facts, attribution: `Source: ${privateLink}`, aliases: detail.aliases },
+      { facts: detail.facts, attribution: detail.attribution, aliases: [privateLink] },
+    ];
+    for (const changes of cases) {
+      await db.update(publishingPublishedAssertion).set(changes)
+        .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}`);
+      assert.equal(await caller(null).publishing.detail({ subjectId }), null);
+      for (const q of [input.records[0]!.document.displayName, ""]) {
+        assert.equal((await caller(null).publishing.search({ q })).some((hit) => hit.canonicalSubjectId === subjectId), false);
+        const search = await requestJson("GET", "/api/trpc/publishing.search", { q });
+        assert.equal(search.text.includes(subjectId), false);
+        assert.equal(search.text.includes("9876543210"), false);
+      }
+      const legacyDetail = await requestJson("GET", "/api/trpc/publishing.detail", { subjectId });
+      assert.equal(legacyDetail.text.includes('"data":null'), true);
     }
   });
 

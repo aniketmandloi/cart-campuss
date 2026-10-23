@@ -306,6 +306,12 @@ export async function searchPublishedCatalogue(
       displayName: publishingPublishedAssertion.displayName,
       salesMarket: publishingPublishedAssertion.salesMarket,
       modelYearLabel: publishingPublishedAssertion.modelYearLabel,
+      aliases: publishingPublishedAssertion.aliases,
+      facts: publishingPublishedAssertion.facts,
+      attribution: publishingPublishedAssertion.attribution,
+      providerKey: publishingPublishedAssertion.providerKey,
+      factualReviewerRef: publishingPublishedAssertion.factualReviewerRef,
+      rightsReviewerRef: publishingPublishedAssertion.rightsReviewerRef,
       publishedAt: publishingProjectionGeneration.publishedAt,
     })
     .from(publishingPublishedAssertion)
@@ -332,7 +338,7 @@ export async function searchPublishedCatalogue(
     )
     .orderBy(publishingPublishedAssertion.displayName, publishingPublishedAssertion.canonicalSubjectId);
 
-  return rows.map((row) => ({
+  return rows.filter(publicRecordEligible).map((row) => ({
     canonicalSubjectId: row.canonicalSubjectId,
     displayName: row.displayName,
     salesMarket: row.salesMarket,
@@ -356,6 +362,7 @@ export async function readPublishedCatalogueDetail(
       facts: publishingPublishedAssertion.facts,
       media: publishingPublishedAssertion.media,
       attribution: publishingPublishedAssertion.attribution,
+      providerKey: publishingPublishedAssertion.providerKey,
       sourcePolicyId: publishingPublishedAssertion.sourcePolicyId,
       factualReviewerRef: publishingPublishedAssertion.factualReviewerRef,
       rightsReviewerRef: publishingPublishedAssertion.rightsReviewerRef,
@@ -387,7 +394,7 @@ export async function readPublishedCatalogueDetail(
     )
     .limit(1);
 
-  if (!row) return null;
+  if (!row || !publicRecordEligible(row)) return null;
   return {
     canonicalSubjectId: row.canonicalSubjectId,
     displayName: row.displayName,
@@ -1269,8 +1276,27 @@ function asPublicFacts(value: unknown): PublicFact[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const fact = publicFactSchema.safeParse(item);
-    return fact.success && !factLeaksIdentifier(fact.data) ? [fact.data] : [];
+    return fact.success && !IDENTITY_FACT_PROPERTIES.has(fact.data.property) && !factLeaksIdentifier(fact.data)
+      ? [fact.data] : [];
   });
+}
+
+function publicRecordEligible(row: Pick<
+  typeof publishingPublishedAssertion.$inferSelect,
+  "canonicalSubjectId" | "displayName" | "aliases" | "salesMarket" | "modelYearLabel" |
+  "attribution" | "providerKey" | "factualReviewerRef" | "rightsReviewerRef" | "facts"
+>): boolean {
+  return asPublicFacts(row.facts).length > 0 && !textLeaksIdentifier([
+    row.canonicalSubjectId,
+    row.displayName,
+    ...asStringArray(row.aliases),
+    row.salesMarket,
+    row.modelYearLabel ?? "",
+    row.attribution,
+    row.providerKey,
+    row.factualReviewerRef,
+    row.rightsReviewerRef,
+  ]);
 }
 
 function asPublicMedia(value: unknown): PublicMedia[] {
