@@ -37,6 +37,7 @@
   "globalEnv": [
     "CI",
     "CORS_ORIGIN",
+    "CATALOGUE_ALLOW_FIXTURES",
     "DATABASE_URL",
     "OPERATOR_TOKEN",
     "EXPO_PUBLIC_SERVER_URL",

@@ -25,7 +25,7 @@ export default function Home() {
                 textAlign: "center",
               }}
             >
-              BETTER T STACK
+              Cart Campuss
             </ExpoUIText>
           </Host>
 

@@ -1,12 +1,25 @@
 import {
+  catalogueAlias,
+  catalogueApplicability,
+  catalogueBrand,
+  catalogueGeneration,
+  catalogueMarketVariant,
+  catalogueModel,
+  catalogueModelYear,
+  catalogueSalesMarket,
+  catalogueSourcePolicy,
+} from "@cart-campuss/db/schema/catalogue";
+import {
   publishingImportBatch,
   publishingProjectionGeneration,
   publishingProjectionPointer,
   publishingPublishedAssertion,
   publishingSourcePolicy,
   publishingStagedRecord,
+  type PublishingPriceReference,
 } from "@cart-campuss/db/schema/publishing";
-import { and, eq, getTableColumns, inArray, max, sql, type SQLWrapper } from "drizzle-orm";
+import { and, eq, getTableColumns, inArray, max, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { normalizeCatalogueQuery } from "./catalogue-name";
 import type { BatchItem } from "drizzle-orm/batch";
 import { z } from "zod";
 
@@ -103,6 +116,7 @@ export type PublicFact = {
   unit: string | null;
   standard: string | null;
   sourceUrl: string | null;
+  sourceTitle: string | null;
   providerKey: string;
   observedAt: string | null;
   retrievedAt: string;
@@ -134,8 +148,10 @@ export type PublicDetail = PublicSearchHit & {
   factualReviewerRef: string;
   rightsReviewerRef: string;
   reviewedAt: string;
+  policyReviewerRef: string | null;
   facts: PublicFact[];
   media: PublicMedia[];
+  priceReference: PublishingPriceReference | null;
 };
 
 export type OperatorResult = {
@@ -161,6 +177,7 @@ const sourcedFactSchema = z
     unit: z.string().min(1).nullable(),
     standard: z.string().min(1).nullable(),
     sourceUrl: sourceUrlSchema.nullable(),
+    sourceTitle: z.string().trim().min(1).nullable().default(null),
     providerKey: z.string().trim().min(1),
     observedAt: z.iso.datetime().nullable(),
     retrievedAt: z.iso.datetime(),
@@ -199,6 +216,71 @@ const sourcePolicySchema = z.object({
   suspended: z.boolean().default(false),
   reviewerRef: z.string().trim().min(1).nullable().default(null),
   reviewedAt: z.iso.datetime().nullable().default(null),
+  displayName: z.string().trim().min(1).max(200).optional(),
+});
+
+const catalogueIdSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z0-9_-]+$/);
+const catalogueSlugSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .regex(/^[a-z0-9-]+$/);
+const catalogueNameSchema = z.string().trim().min(1).max(200);
+
+const priceReferenceSchema = z
+  .object({
+    amountMinor: z.number().int().min(-9_007_199_254_740_991).max(9_007_199_254_740_991),
+    currency: z.string().regex(/^[A-Z]{3}$/),
+    minorUnitExponent: z.number().int().min(0).max(6),
+    basis: z.string().trim().min(1).max(200),
+    taxInclusivity: z.enum(["unspecified", "tax-inclusive", "tax-exclusive"]),
+    observedOn: z.string().trim().min(1).max(40),
+    retrievedOn: z.string().trim().min(1).max(40),
+    reviewedOn: z.string().trim().min(1).max(40),
+    sourceTitle: z.string().trim().min(1).max(200),
+    sourceUrl: sourceUrlSchema.nullable().default(null),
+    sourceIdentifier: z.string().trim().min(1).max(200).nullable().default(null),
+  })
+  .superRefine((price, context) => {
+    if (!price.sourceUrl && !price.sourceIdentifier) {
+      context.addIssue({ code: "custom", path: ["sourceUrl"] });
+    }
+  });
+
+const catalogueIdentitySchema = z.object({
+  brand: z.object({ id: catalogueIdSchema, name: catalogueNameSchema, slug: catalogueSlugSchema }),
+  model: z.object({ id: catalogueIdSchema, name: catalogueNameSchema, slug: catalogueSlugSchema }),
+  generation: z.object({
+    id: catalogueIdSchema,
+    name: catalogueNameSchema,
+    slug: catalogueSlugSchema,
+  }),
+  marketVariant: z.object({ id: catalogueIdSchema, name: catalogueNameSchema }),
+  salesMarket: z.object({
+    id: catalogueIdSchema,
+    name: catalogueNameSchema,
+    countryCode: z.string().regex(/^[A-Z]{2}$/),
+  }),
+  modelYear: z.object({
+    id: catalogueIdSchema,
+    label: z.string().trim().min(1).max(40),
+    convention: z.string().trim().min(1).max(400),
+  }),
+  aliases: z
+    .array(
+      z.object({
+        kind: z.enum(["brand", "model", "generation", "alias"]),
+        name: catalogueNameSchema,
+      }),
+    )
+    .default([]),
+  priceReference: priceReferenceSchema.nullable().default(null),
 });
 
 const recordSchema = z.object({
@@ -214,6 +296,7 @@ const recordSchema = z.object({
     facts: z.array(sourcedFactSchema).default([]),
     media: z.array(mediaSchema).default([]),
   }),
+  catalogue: catalogueIdentitySchema.optional(),
   identity: z.object({
     outcome: z.enum(["pending", "certain", "uncertain"]),
     canonicalSubjectId: z.string().trim().min(1).nullable().default(null),
@@ -368,6 +451,8 @@ export async function readPublishedCatalogueDetail(
       rightsReviewerRef: publishingPublishedAssertion.rightsReviewerRef,
       reviewedAt: publishingPublishedAssertion.reviewedAt,
       publishedAt: publishingProjectionGeneration.publishedAt,
+      priceReference: publishingPublishedAssertion.priceReference,
+      policyReviewerRef: publishingSourcePolicy.reviewerRef,
     })
     .from(publishingPublishedAssertion)
     .innerJoin(
@@ -407,8 +492,10 @@ export async function readPublishedCatalogueDetail(
     factualReviewerRef: row.factualReviewerRef,
     rightsReviewerRef: row.rightsReviewerRef,
     reviewedAt: toIso(row.reviewedAt),
+    policyReviewerRef: row.policyReviewerRef,
     facts: asPublicFacts(row.facts),
     media: asPublicMedia(row.media),
+    priceReference: asPublicPrice(row.priceReference),
   };
 }
 
@@ -521,6 +608,7 @@ export async function applyOperatorImport(
               and ${publishingStagedRecord.externalId} = ${record.externalId})`,
         }),
       );
+      statements.push(...catalogueIdentityStatements(deps.db, parsed, record, policyId));
     }
     statements.push(
       deps.db
@@ -673,6 +761,21 @@ function publicPolicyAllows(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
   )`;
 }
 
+/** The visitor catalogue may show a subject only while this projection copy is still permitted. */
+export function currentProjectionCovers(subjectId: SQLWrapper, now: Date): SQL {
+  return sql`exists (
+    select 1
+    from ${publishingPublishedAssertion}
+    inner join ${publishingProjectionPointer}
+      on ${publishingPublishedAssertion.generationId} = ${publishingProjectionPointer.generationId}
+      and ${publishingProjectionPointer.id} = 1
+    inner join ${publishingSourcePolicy}
+      on ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
+    where ${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}
+      and ${publicPolicyAllows(publishingPublishedAssertion.capturedAt, now)}
+  )`;
+}
+
 /** The oldest source retrieval bounds retention for the entire stored document and its media. */
 function sourceCapturedAt(record: ImportRecord, receivedAt: string): string {
   return new Date(Math.min(
@@ -728,8 +831,33 @@ function parseImport(input: unknown): OperatorImport {
         throw new PublishingRejected("validation", "A sourced fact cites a different provider.");
       }
     }
+    assertCatalogueContext(value.sourcePolicy, record);
   }
   return value;
+}
+
+function assertCatalogueContext(policy: SourcePolicyInput, record: ImportRecord): void {
+  const catalogue = record.catalogue;
+  if (!catalogue) return;
+  if (!policy.displayName) {
+    throw new PublishingRejected("validation", "A catalogue record needs a source policy display name.");
+  }
+  if (!catalogueIdSchema.safeParse(record.document.canonicalSubjectId).success) {
+    throw new PublishingRejected("validation", "The canonical subject id is not a catalogue applicability id.");
+  }
+  if (catalogue.salesMarket.countryCode !== record.document.salesMarket) {
+    throw new PublishingRejected("validation", "The catalogue sales market does not match the record.");
+  }
+  if (record.document.modelYearLabel !== catalogue.modelYear.label) {
+    throw new PublishingRejected("validation", "The catalogue model year does not match the record.");
+  }
+  for (const fact of record.document.facts) {
+    if (IDENTITY_FACT_PROPERTIES.has(fact.property)) continue;
+    if (!policy.permittedFields.includes(fact.property)) continue;
+    if (!fact.sourceTitle) {
+      throw new PublishingRejected("validation", "A catalogue fact needs a source title.");
+    }
+  }
 }
 
 function collectFailures(parsed: OperatorImport, current: CurrentProjection, now: Date): GateFailure[] {
@@ -822,6 +950,9 @@ function evaluateRecord(
   }
   if (!policy.permittedFields.includes("salesMarket")) {
     return { externalId, code: "rights", message: "The sales market is not a permitted field." };
+  }
+  if (record.catalogue && !policy.permittedFields.includes("modelYearLabel")) {
+    return { externalId, code: "rights", message: "The model year is not a permitted field." };
   }
   if (publicationLeaksIdentifier(record, policy)) {
     return { externalId, code: "rights", message: FORBIDDEN_IDENTIFIER_MESSAGE };
@@ -1055,6 +1186,7 @@ function publicAssertion(
       unit: fact.unit,
       standard: fact.standard,
       sourceUrl: fact.sourceUrl,
+      sourceTitle: fact.sourceTitle,
       providerKey: fact.providerKey,
       observedAt: fact.observedAt,
       retrievedAt: fact.retrievedAt,
@@ -1102,7 +1234,255 @@ function publicAssertion(
     rightsReviewerRef,
     observedAt,
     reviewedAt,
+    priceReference: record.catalogue?.priceReference ?? null,
   };
+}
+
+function catalogueIdentityStatements(
+  db: Database,
+  parsed: OperatorImport,
+  record: ImportRecord,
+  policyId: string,
+): BatchItem<"pg">[] {
+  const catalogue = record.catalogue;
+  const displayName = parsed.sourcePolicy.displayName;
+  if (!catalogue || !displayName) return [];
+  const subjectId = record.document.canonicalSubjectId;
+  const statements: BatchItem<"pg">[] = [
+    db
+      .insert(catalogueSalesMarket)
+      .values({
+        id: catalogue.salesMarket.id,
+        name: catalogue.salesMarket.name,
+        countryCode: catalogue.salesMarket.countryCode,
+      })
+      .onConflictDoNothing({ target: catalogueSalesMarket.id }),
+    db.insert(catalogueSalesMarket).select(
+      db
+        .select()
+        .from(catalogueSalesMarket)
+        .where(
+          and(
+            eq(catalogueSalesMarket.id, catalogue.salesMarket.id),
+            sql`${catalogueSalesMarket.name} is distinct from ${catalogue.salesMarket.name}
+              or ${catalogueSalesMarket.countryCode} is distinct from ${catalogue.salesMarket.countryCode}`,
+          ),
+        )
+        .limit(1),
+    ),
+    db
+      .insert(catalogueBrand)
+      .values({ id: catalogue.brand.id, name: catalogue.brand.name, slug: catalogue.brand.slug })
+      .onConflictDoNothing({ target: catalogueBrand.id }),
+    db.insert(catalogueBrand).select(
+      db
+        .select()
+        .from(catalogueBrand)
+        .where(
+          and(
+            eq(catalogueBrand.id, catalogue.brand.id),
+            sql`${catalogueBrand.name} is distinct from ${catalogue.brand.name}
+              or ${catalogueBrand.slug} is distinct from ${catalogue.brand.slug}`,
+          ),
+        )
+        .limit(1),
+    ),
+    db
+      .insert(catalogueModel)
+      .values({
+        id: catalogue.model.id,
+        brandId: catalogue.brand.id,
+        name: catalogue.model.name,
+        slug: catalogue.model.slug,
+      })
+      .onConflictDoNothing({ target: catalogueModel.id }),
+    db.insert(catalogueModel).select(
+      db
+        .select()
+        .from(catalogueModel)
+        .where(
+          and(
+            eq(catalogueModel.id, catalogue.model.id),
+            sql`${catalogueModel.brandId} is distinct from ${catalogue.brand.id}
+              or ${catalogueModel.name} is distinct from ${catalogue.model.name}
+              or ${catalogueModel.slug} is distinct from ${catalogue.model.slug}`,
+          ),
+        )
+        .limit(1),
+    ),
+    db
+      .insert(catalogueGeneration)
+      .values({
+        id: catalogue.generation.id,
+        modelId: catalogue.model.id,
+        name: catalogue.generation.name,
+        slug: catalogue.generation.slug,
+      })
+      .onConflictDoNothing({ target: catalogueGeneration.id }),
+    db.insert(catalogueGeneration).select(
+      db
+        .select()
+        .from(catalogueGeneration)
+        .where(
+          and(
+            eq(catalogueGeneration.id, catalogue.generation.id),
+            sql`${catalogueGeneration.modelId} is distinct from ${catalogue.model.id}
+              or ${catalogueGeneration.name} is distinct from ${catalogue.generation.name}
+              or ${catalogueGeneration.slug} is distinct from ${catalogue.generation.slug}`,
+          ),
+        )
+        .limit(1),
+    ),
+    db
+      .insert(catalogueModelYear)
+      .values({
+        id: catalogue.modelYear.id,
+        label: catalogue.modelYear.label,
+        convention: catalogue.modelYear.convention,
+      })
+      .onConflictDoNothing({ target: catalogueModelYear.id }),
+    db.insert(catalogueModelYear).select(
+      db
+        .select()
+        .from(catalogueModelYear)
+        .where(
+          and(
+            eq(catalogueModelYear.id, catalogue.modelYear.id),
+            sql`${catalogueModelYear.label} is distinct from ${catalogue.modelYear.label}
+              or ${catalogueModelYear.convention} is distinct from ${catalogue.modelYear.convention}`,
+          ),
+        )
+        .limit(1),
+    ),
+    db
+      .insert(catalogueMarketVariant)
+      .values({
+        id: catalogue.marketVariant.id,
+        generationId: catalogue.generation.id,
+        salesMarketId: catalogue.salesMarket.id,
+        name: catalogue.marketVariant.name,
+      })
+      .onConflictDoNothing({ target: catalogueMarketVariant.id }),
+    db.insert(catalogueMarketVariant).select(
+      db
+        .select()
+        .from(catalogueMarketVariant)
+        .where(
+          and(
+            eq(catalogueMarketVariant.id, catalogue.marketVariant.id),
+            sql`${catalogueMarketVariant.generationId} is distinct from ${catalogue.generation.id}
+              or ${catalogueMarketVariant.salesMarketId} is distinct from ${catalogue.salesMarket.id}
+              or ${catalogueMarketVariant.name} is distinct from ${catalogue.marketVariant.name}`,
+          ),
+        )
+        .limit(1),
+    ),
+    db
+      .insert(catalogueSourcePolicy)
+      .values({
+        id: policyId,
+        name: displayName,
+        audience: "public",
+        permitsPublicCatalogue: true,
+        rightsReview: "reviewed",
+        attribution: parsed.sourcePolicy.attribution,
+        internalNote: "",
+      })
+      .onConflictDoNothing({ target: catalogueSourcePolicy.id }),
+    db.insert(catalogueSourcePolicy).select(
+      db
+        .select()
+        .from(catalogueSourcePolicy)
+        .where(
+          and(
+            eq(catalogueSourcePolicy.id, policyId),
+            sql`${catalogueSourcePolicy.name} is distinct from ${displayName}
+              or ${catalogueSourcePolicy.audience} is distinct from 'public'
+              or ${catalogueSourcePolicy.permitsPublicCatalogue} is distinct from true
+              or ${catalogueSourcePolicy.rightsReview} is distinct from 'reviewed'
+              or ${catalogueSourcePolicy.attribution} is distinct from ${parsed.sourcePolicy.attribution}
+              or ${catalogueSourcePolicy.internalNote} is distinct from ''`,
+          ),
+        )
+        .limit(1),
+    ),
+    db
+      .insert(catalogueApplicability)
+      .values({
+        id: subjectId,
+        marketVariantId: catalogue.marketVariant.id,
+        modelYearId: catalogue.modelYear.id,
+        salesMarketId: catalogue.salesMarket.id,
+        sourcePolicyId: policyId,
+        publicationStatus: "published",
+        synthetic: false,
+      })
+      .onConflictDoNothing({ target: catalogueApplicability.id }),
+    db.insert(catalogueApplicability).select(
+      db
+        .select()
+        .from(catalogueApplicability)
+        .where(
+          and(
+            eq(catalogueApplicability.id, subjectId),
+            sql`${catalogueApplicability.marketVariantId} is distinct from ${catalogue.marketVariant.id}
+              or ${catalogueApplicability.modelYearId} is distinct from ${catalogue.modelYear.id}
+              or ${catalogueApplicability.salesMarketId} is distinct from ${catalogue.salesMarket.id}
+              or ${catalogueApplicability.sourcePolicyId} is distinct from ${policyId}
+              or ${catalogueApplicability.publicationStatus} is distinct from 'published'
+              or ${catalogueApplicability.synthetic} is distinct from false`,
+          ),
+        )
+        .limit(1),
+    ),
+  ];
+  const seen = new Set<string>();
+  const aliasRows = [
+    { kind: "brand" as const, name: catalogue.brand.name },
+    { kind: "model" as const, name: catalogue.model.name },
+    { kind: "generation" as const, name: catalogue.generation.name },
+    ...(parsed.sourcePolicy.permittedFields.includes("alias") ? catalogue.aliases : []),
+  ];
+  for (const alias of aliasRows) {
+    const normalized = normalizeCatalogueQuery(alias.name);
+    const key = `${alias.kind}\0${normalized}`;
+    if (!normalized || seen.has(key)) continue;
+    seen.add(key);
+    statements.push(
+      db
+        .insert(catalogueAlias)
+        .values({
+          id: randomId(),
+          applicabilityId: subjectId,
+          kind: alias.kind,
+          normalizedName: normalized,
+        })
+        .onConflictDoNothing({
+          target: [catalogueAlias.applicabilityId, catalogueAlias.kind, catalogueAlias.normalizedName],
+        }),
+    );
+  }
+  return statements;
+}
+
+function asPublicPrice(value: unknown): PublishingPriceReference | null {
+  const parsed = priceReferenceSchema.safeParse(value);
+  if (!parsed.success) return null;
+  if (
+    textLeaksIdentifier([
+      parsed.data.sourceTitle,
+      parsed.data.sourceUrl ?? "",
+      parsed.data.sourceIdentifier ?? "",
+      parsed.data.basis,
+      parsed.data.currency,
+      parsed.data.observedOn,
+      parsed.data.retrievedOn,
+      parsed.data.reviewedOn,
+    ])
+  ) {
+    return null;
+  }
+  return parsed.data;
 }
 
 function sourceKey(providerKey: string, externalId: string): string {
@@ -1123,14 +1503,59 @@ function publicationLeaksIdentifier(record: ImportRecord, policy: SourcePolicyIn
     record.document.salesMarket,
     record.document.modelYearLabel ?? "",
     policy.attribution,
+    policy.displayName ?? "",
     policy.providerKey,
     record.factualReview.reviewerRef ?? "",
     record.rightsReview.reviewerRef ?? "",
     ...record.document.aliases,
+    ...catalogueIdentityText(record),
   ]);
 }
 
-function factLeaksIdentifier(fact: ImportRecord["document"]["facts"][number]): boolean {
+function catalogueIdentityText(record: ImportRecord): string[] {
+  const catalogue = record.catalogue;
+  if (!catalogue) return [];
+  const price = catalogue.priceReference;
+  return [
+    catalogue.brand.id,
+    catalogue.brand.name,
+    catalogue.brand.slug,
+    catalogue.model.id,
+    catalogue.model.name,
+    catalogue.model.slug,
+    catalogue.generation.id,
+    catalogue.generation.name,
+    catalogue.generation.slug,
+    catalogue.marketVariant.id,
+    catalogue.marketVariant.name,
+    catalogue.salesMarket.id,
+    catalogue.salesMarket.name,
+    catalogue.salesMarket.countryCode,
+    catalogue.modelYear.id,
+    catalogue.modelYear.label,
+    catalogue.modelYear.convention,
+    ...catalogue.aliases.flatMap((alias) => [alias.kind, alias.name]),
+    price?.basis ?? "",
+    price?.currency ?? "",
+    price?.sourceTitle ?? "",
+    price?.sourceUrl ?? "",
+    price?.sourceIdentifier ?? "",
+    price?.observedOn ?? "",
+    price?.retrievedOn ?? "",
+    price?.reviewedOn ?? "",
+  ];
+}
+
+function factLeaksIdentifier(fact: {
+  property: string;
+  rawValue: string;
+  normalizedValue?: string | null;
+  unknownReason?: string | null;
+  unit?: string | null;
+  standard?: string | null;
+  sourceUrl?: string | null;
+  sourceTitle?: string | null;
+}): boolean {
   return (
     forbiddenProperty(fact.property) ||
     textLeaksIdentifier([
@@ -1141,6 +1566,7 @@ function factLeaksIdentifier(fact: ImportRecord["document"]["facts"][number]): b
       fact.unit ?? "",
       fact.standard ?? "",
       fact.sourceUrl ?? "",
+      fact.sourceTitle ?? "",
     ])
   );
 }
@@ -1277,7 +1703,7 @@ function asPublicFacts(value: unknown): PublicFact[] {
   return value.flatMap((item) => {
     const fact = publicFactSchema.safeParse(item);
     return fact.success && !IDENTITY_FACT_PROPERTIES.has(fact.data.property) && !factLeaksIdentifier(fact.data)
-      ? [fact.data] : [];
+      ? [{ ...fact.data, sourceTitle: fact.data.sourceTitle ?? null }] : [];
   });
 }
 
@@ -1316,8 +1742,9 @@ const publicFactSchema = z.object({
   unknownReason: z.string().nullable(),
   unit: z.string().nullable(),
   standard: z.string().nullable(),
-  sourceUrl: sourceUrlSchema.nullable(),
-  providerKey: z.string(),
+      sourceUrl: sourceUrlSchema.nullable(),
+      sourceTitle: z.string().nullable().optional(),
+      providerKey: z.string(),
   observedAt: z.string().nullable(),
   retrievedAt: z.string(),
   sourcePolicyId: z.string(),

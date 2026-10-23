@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { after, before, describe, it } from "node:test";
 
+import { insertSyntheticPreviewFixture } from "@cart-campuss/api/catalogue-fixture";
 import { cleanupPublishingCopies, PublishingRejected, operatorImportSchema, runOperatorCommand } from "@cart-campuss/api/publishing";
 import { z } from "zod";
 import { appRouter } from "@cart-campuss/api/routers/index";
 import { commitNeonHttpBatch, sql, type Database } from "@cart-campuss/db";
+import {
+  catalogueApplicability,
+  cataloguePriceReference,
+  catalogueSourcedFact,
+} from "@cart-campuss/db/schema/catalogue";
 import {
   publishingPublishedAssertion,
   publishingProjectionGeneration,
@@ -13,6 +20,16 @@ import {
   publishingSourcePolicy,
   publishingStagedRecord,
 } from "@cart-campuss/db/schema/publishing";
+
+const requireFromWeb = createRequire(new URL("../../web/package.json", import.meta.url));
+const { createElement } = requireFromWeb("react") as {
+  createElement: (type: (props: { state: unknown }) => unknown, props: { state: unknown }) => unknown;
+};
+// The server test loads the web views through tsx's classic JSX output, which expects React.
+Object.assign(globalThis, { React: requireFromWeb("react") });
+const { renderToStaticMarkup } = requireFromWeb("react-dom/server") as {
+  renderToStaticMarkup: (element: unknown) => string;
+};
 
 import { createApp, type AppDeps } from "../src/app";
 import { startPublishingDatabase } from "./ephemeral-postgres";
@@ -1234,6 +1251,223 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(new Date(backfilledStage.updatedAt).toISOString(), "2026-10-22T12:05:00.000Z");
   });
 
+  it("publishes a labelled catalogue record into the visitor search and SSR loader", async () => {
+    keptImport = labelledCatalogueImport("Labeled Dossier");
+    const published = await caller(OPERATOR_TOKEN).publishing.submit(keptImport);
+    assert.equal(published.status, "published");
+    const subjectId = "subject-labeled-dossier";
+    assert.deepEqual(published.publishedSubjectIds, [subjectId]);
+
+    const identities = await db.select({ id: catalogueApplicability.id }).from(catalogueApplicability);
+    assert.equal(identities.some((row) => row.id === subjectId), true);
+    const copiedFacts = await db.select({ applicabilityId: catalogueSourcedFact.applicabilityId }).from(catalogueSourcedFact);
+    assert.equal(copiedFacts.some((row) => row.applicabilityId === subjectId), false);
+    const copiedPrices = await db.select({ applicabilityId: cataloguePriceReference.applicabilityId }).from(cataloguePriceReference);
+    assert.equal(copiedPrices.some((row) => row.applicabilityId === subjectId), false);
+
+    const hits = await caller(null).catalogue.search({ q: "labeled dossier" });
+    assert.equal(hits.hits.length, 1);
+    assert.equal(hits.hits[0]?.brandName, "Labeled Dossier");
+    assert.equal(hits.hits[0]?.modelName, "Labeled Dossier Model");
+    assert.equal(hits.hits[0]?.synthetic, false);
+    const missed = await caller(null).catalogue.search({ q: "unindexed labeled dossier" });
+    assert.equal(missed.hits.length, 0);
+    const href = hits.hits[0]?.href ?? "";
+    const page = await caller(null).catalogue.read(catalogueReadInput(href));
+    assert.equal(page.availability, "visible");
+    if (page.availability !== "visible") return;
+    assert.equal(page.identity.brandName, "Labeled Dossier");
+    assert.equal(page.identity.modelName, "Labeled Dossier Model");
+    assert.equal(page.policy.name, "Labeled test policy");
+    assert.equal(page.policy.audience, "public");
+    assert.equal(page.policy.policyReviewerRef, "policy-reviewer");
+    assert.equal(page.policy.factualReviewerRef, "fact-reviewer");
+    assert.equal(page.policy.rightsReviewerRef, "rights-reviewer");
+    assert.equal(page.facts.some((fact) => fact.property === "power" && fact.rawValue === "100 PS" && fact.unit === "PS"), true);
+    const unknown = page.facts.find((fact) => fact.property === "torque");
+    assert.ok(unknown);
+    assert.equal(unknown.state, "unknown");
+    assert.equal(unknown.rawValue, null);
+    assert.equal(unknown.unit, null);
+    assert.equal(unknown.unknownReason, "The labelled test does not include a measured torque.");
+    assert.equal(page.priceReference?.displayAmount, "₹2,500.00");
+    assert.equal(page.priceReference?.sourceTitle, "Labeled test price sheet");
+    assert.equal(JSON.stringify(page).includes(MARKERS.contract), false);
+    assert.equal(JSON.stringify(page).includes(MARKERS.payload), false);
+    assert.equal(JSON.stringify(page).includes("Unindexed"), false);
+    assert.equal(JSON.stringify(page).includes("invented-unit"), false);
+    assert.equal(JSON.stringify(page).includes("not-a-measurement"), false);
+
+    const loaders = await importCatalogueLoaders();
+    const views = await importCatalogueViews();
+    const runtime = catalogueRuntime();
+    const searchState = await loaders.loadCatalogueSearchForContext(runtime, "labeled dossier");
+    assert.equal(searchState.kind, "results");
+    const searchHtml = renderToStaticMarkup(createElement(views.CatalogueSearchView, { state: searchState }));
+    assert.match(searchHtml, /Labeled Dossier/);
+    assert.match(searchHtml, /Exact name/);
+    assert.doesNotMatch(searchHtml, /Synthetic fixture|Unindexed|CONTRACT-TEXT-NOT-PUBLIC/);
+    const detailState = await loaders.loadCatalogueCarForContext(runtime, catalogueReadInput(href));
+    assert.equal(detailState.kind, "page");
+    const detailHtml = renderToStaticMarkup(createElement(views.CatalogueDetailView, { state: detailState }));
+    for (const text of [
+      "Labeled Dossier",
+      "Labeled Dossier Model",
+      "Labeled Mark",
+      "Labeled test policy",
+      "Policy reviewer: policy-reviewer",
+      "Factual reviewer: fact-reviewer",
+      "Rights reviewer: rights-reviewer",
+      "Labeled test dossier",
+      "The labelled test does not include a measured torque.",
+      "100 PS",
+      "₹2,500.00",
+      "250000 INR minor units",
+      "Labeled test price sheet",
+      "Not a listing",
+      "No market data",
+      "Not the calendar build year",
+      "No catalogue photograph",
+      "Audience: public",
+    ]) {
+      assert.match(detailHtml, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    }
+    assert.doesNotMatch(detailHtml, /<img|Unindexed|invented-unit|not-a-measurement|CONTRACT-TEXT-NOT-PUBLIC|PAYLOAD-NOT-PUBLIC|Synthetic fixture/);
+    assert.equal(detailHtml.includes(OPERATOR_TOKEN), false);
+
+    const http = await requestJson("GET", "/api/trpc/catalogue.search", { q: "labeled dossier" });
+    assert.equal(http.status, 200);
+    assert.equal(http.cacheControl, "private, no-store");
+    assert.equal(http.text.includes(MARKERS.contract), false);
+    assert.equal(http.text.includes(OPERATOR_TOKEN), false);
+  });
+
+  it("keeps held, unreviewed, uncertain, denied, and fixture imports out of the catalogue", async () => {
+    const uncertain = labelledCatalogueImport("Uncertain Match");
+    uncertain.records[0]!.identity.outcome = "uncertain";
+    const unreviewed = labelledCatalogueImport("Unreviewed Fact");
+    unreviewed.records[0]!.factualReview.outcome = "pending";
+    const denied = labelledCatalogueImport("Denied Facts");
+    denied.sourcePolicy.factPermission = "denied";
+    const fixture = labelledCatalogueImport("Fixture Provenance");
+    fixture.records[0]!.provenance = "fixture";
+    const names = labelledCatalogueImport("Names Only");
+    names.records[0]!.document.facts = [];
+    for (const input of [uncertain, unreviewed, denied, fixture, names]) {
+      const held = await caller(OPERATOR_TOKEN).publishing.submit(input);
+      assert.equal(held.status, "held");
+      const subjectId = input.records[0]!.document.canonicalSubjectId;
+      const rows = await db.select({ id: catalogueApplicability.id }).from(catalogueApplicability);
+      assert.equal(rows.some((row) => row.id === subjectId), false);
+      const query = input.records[0]!.catalogue?.brand.name ?? "";
+      assert.equal((await caller(null).catalogue.search({ q: query })).hits.length, 0);
+    }
+  });
+
+  it("excludes the synthetic fixture from public catalogue reads and the SSR loader", async () => {
+    await insertSyntheticPreviewFixture(db);
+    assert.equal((await caller(null).catalogue.search({ q: "kestrel" })).hits.length, 0);
+    const preview = appRouter.createCaller({
+      db,
+      now: testClock,
+      operatorToken: OPERATOR_TOKEN,
+      presentedOperatorToken: null,
+      access: { allowFixtures: true },
+    });
+    const found = await preview.catalogue.search({ q: "kestrel fixture" });
+    assert.equal(found.hits.length, 1);
+    assert.equal(found.hits[0]?.synthetic, true);
+    const blocked = await caller(null).catalogue.read({
+      modelSlug: "sample-hatch",
+      generationSlug: "series-one",
+      market: "mkt_fixture_in",
+      year: "year_2026_model",
+      variant: "var_base",
+    });
+    assert.equal(blocked.availability, "not-in-public-catalogue");
+    const loaders = await importCatalogueLoaders();
+    const views = await importCatalogueViews();
+    const state = await loaders.loadCatalogueSearchForContext(catalogueRuntime(), "kestrel");
+    const html = renderToStaticMarkup(createElement(views.CatalogueSearchView, { state }));
+    assert.match(html, /No published record matches this search/);
+    assert.doesNotMatch(html, /Kestrel Fixture|Sample Hatch|provider-secret-do-not-project|Synthetic fixture/);
+    const detail = await loaders.loadCatalogueCarForContext(catalogueRuntime(), {
+      modelSlug: "sample-hatch",
+      generationSlug: "series-one",
+      market: "mkt_fixture_in",
+      year: "year_2026_model",
+      variant: "var_base",
+    });
+    const detailHtml = renderToStaticMarkup(createElement(views.CatalogueDetailView, { state: detail }));
+    assert.match(detailHtml, /Not in the public catalogue/);
+    assert.doesNotMatch(detailHtml, /Kestrel Fixture|provider-secret-do-not-project/);
+  });
+
+  it("drops expired, suspended, and cleaned records from catalogue search and the SSR loader", async () => {
+    const later = () => new Date(testClock().getTime() + 61_000);
+    const expiring = labelledCatalogueImport("Expiring Wagon");
+    expiring.sourcePolicy.retentionSeconds = 60;
+    for (const fact of expiring.records[0]?.document.facts ?? []) fact.retrievedAt = BASE_TIME;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(expiring)).status, "published");
+    const expiringHits = await caller(null).catalogue.search({ q: "expiring wagon" });
+    assert.equal(expiringHits.hits.length, 1);
+    const expiringHref = expiringHits.hits[0]?.href ?? "";
+    assert.equal((await caller(null, later).catalogue.search({ q: "expiring wagon" })).hits.length, 0);
+    const loaders = await importCatalogueLoaders();
+    const expiredState = await loaders.loadCatalogueCarForContext(catalogueRuntime(later), catalogueReadInput(expiringHref));
+    assert.equal(expiredState.kind, "page");
+    assert.equal(expiredState.page?.availability, "not-in-public-catalogue");
+    assert.equal((await caller(null).catalogue.search({ q: "labeled dossier" })).hits.length, 1);
+
+    const suspended = labelledCatalogueImport("Suspended Van");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(suspended)).status, "published");
+    assert.equal((await caller(null).catalogue.search({ q: "suspended van" })).hits.length, 1);
+    await db.update(publishingSourcePolicy).set({ suspended: true }).where(sql`${publishingSourcePolicy.id} = ${suspended.sourcePolicy.id ?? ""}`);
+    assert.equal((await caller(null).catalogue.search({ q: "suspended van" })).hits.length, 0);
+    const suspendedSearch = await loaders.loadCatalogueSearchForContext(catalogueRuntime(), "suspended van");
+    assert.equal(suspendedSearch.kind, "results");
+    assert.equal(suspendedSearch.result?.hits.length, 0);
+
+    const cleanup = labelledCatalogueImport("Cleanup Hatch");
+    cleanup.sourcePolicy.retentionSeconds = 60;
+    for (const fact of cleanup.records[0]?.document.facts ?? []) fact.retrievedAt = BASE_TIME;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(cleanup)).status, "published");
+    const cleanupHits = await caller(null).catalogue.search({ q: "cleanup hatch" });
+    assert.equal(cleanupHits.hits.length, 1);
+    const cleanupHref = cleanupHits.hits[0]?.href ?? "";
+    const removed = await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: later }, OPERATOR_TOKEN);
+    assert.ok(removed.assertionsDeleted >= 1);
+    assert.equal((await caller(null).catalogue.search({ q: "cleanup hatch" })).hits.length, 0);
+    const cleaned = await loaders.loadCatalogueCarForContext(catalogueRuntime(), catalogueReadInput(cleanupHref));
+    assert.equal(cleaned.page?.availability, "not-in-public-catalogue");
+    assert.equal((await caller(null).catalogue.search({ q: "labeled dossier" })).hits.length, 1);
+  });
+
+  it("leaves the previous catalogue projection in place when a later publish fails", async () => {
+    assert.ok(keptImport);
+    const before = await caller(null).catalogue.search({ q: "labeled dossier" });
+    assert.equal(before.hits.length, 1);
+    const href = before.hits[0]?.href ?? "";
+    const rewrite = structuredClone(keptImport);
+    rewrite.idempotencyKey += "-rewrite";
+    const brand = rewrite.records[0]?.catalogue?.brand;
+    assert.ok(brand);
+    brand.name = "Rewritten Brand";
+    brand.slug = "rewritten-brand";
+    await assert.rejects(
+      () => runOperatorCommand({ db, operatorToken: OPERATOR_TOKEN, now: testClock }, JSON.stringify(rewrite)),
+      (error: unknown) => error instanceof PublishingRejected && error.code === "partial",
+    );
+    const after = await caller(null).catalogue.search({ q: "labeled dossier" });
+    assert.equal(after.hits.length, 1);
+    assert.equal(after.hits[0]?.href, href);
+    assert.equal(after.hits[0]?.brandName, "Labeled Dossier");
+    assert.equal((await caller(null).catalogue.search({ q: "rewritten brand" })).hits.length, 0);
+    const page = await caller(null).catalogue.read(catalogueReadInput(href));
+    assert.equal(page.availability, "visible");
+    if (page.availability === "visible") assert.equal(page.facts.some((fact) => fact.rawValue === "100 PS"), true);
+  });
+
 });
 
 function pauseNextBatch(database: Database) {
@@ -1268,6 +1502,7 @@ function caller(token: string | null, now: () => Date = testClock) {
     now,
     operatorToken: OPERATOR_TOKEN,
     presentedOperatorToken: token,
+    access: { allowFixtures: false },
   });
 }
 
@@ -1388,9 +1623,131 @@ function visitorText(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function labelledCatalogueImport(name: string): ReviewedImport {
+  const input = reviewedImport(name);
+  const slug = name.toLowerCase().replaceAll(" ", "-");
+  input.sourcePolicy.id = crypto.randomUUID();
+  input.sourcePolicy.displayName = "Labeled test policy";
+  input.sourcePolicy.permittedFields = ["displayName", "alias", "modelYearLabel", "power", "torque", "salesMarket"];
+  const record = input.records[0];
+  assert.ok(record);
+  record.document.displayName = `Unindexed ${name}`;
+  record.document.aliases = [];
+  const power = record.document.facts[0];
+  assert.ok(power);
+  power.sourceTitle = "Labeled test dossier";
+  record.document.facts.push({
+    ...fact(input, "torque", "not-a-measurement"),
+    state: "unknown",
+    normalizedValue: null,
+    unknownReason: "The labelled test does not include a measured torque.",
+    unit: "invented-unit",
+    sourceTitle: "Labeled test dossier",
+  });
+  record.catalogue = {
+    brand: { id: `brand-${slug}`, name, slug: `brand-${slug}` },
+    model: { id: `model-${slug}`, name: `${name} Model`, slug: `model-${slug}` },
+    generation: { id: `gen-${slug}`, name: "Labeled Mark", slug: "mark" },
+    marketVariant: { id: `var-${slug}`, name: "Base" },
+    salesMarket: { id: "mkt-labeled-in", name: "India", countryCode: "IN" },
+    modelYear: {
+      id: "year-labeled-2026",
+      label: "2026",
+      convention: "Manufacturer model-year label. Not the calendar build year.",
+    },
+    aliases: [],
+    priceReference: {
+      amountMinor: 250_000,
+      currency: "INR",
+      minorUnitExponent: 2,
+      basis: "official price reference",
+      taxInclusivity: "unspecified",
+      observedOn: "2026-10-22",
+      retrievedOn: "2026-10-22",
+      reviewedOn: "2026-10-22",
+      sourceTitle: "Labeled test price sheet",
+      sourceUrl: `https://example.test/prices/${slug}`,
+      sourceIdentifier: null,
+    },
+  };
+  return input;
+}
+
+let keptImport: ReviewedImport | undefined;
+
+function catalogueRuntime(now: () => Date = testClock) {
+  return {
+    db,
+    now,
+    operatorToken: OPERATOR_TOKEN,
+    presentedOperatorToken: null as string | null,
+    access: { allowFixtures: false },
+  };
+}
+
+function catalogueReadInput(href: string): {
+  modelSlug: string;
+  generationSlug: string;
+  market?: string;
+  year?: string;
+  variant?: string;
+} {
+  const url = new URL(href, "http://catalogue.local");
+  const [, , modelSlug, generationSlug] = url.pathname.split("/");
+  assert.ok(modelSlug && generationSlug);
+  const input: {
+    modelSlug: string;
+    generationSlug: string;
+    market?: string;
+    year?: string;
+    variant?: string;
+  } = { modelSlug, generationSlug };
+  const market = url.searchParams.get("market");
+  const year = url.searchParams.get("year");
+  const variant = url.searchParams.get("variant");
+  if (market) input.market = market;
+  if (year) input.year = year;
+  if (variant) input.variant = variant;
+  return input;
+}
+
+type CatalogueSearchState = {
+  kind: string;
+  result?: { hits: Array<{ href: string }> };
+};
+
+type CatalogueDetailState = {
+  kind: string;
+  page?: { availability: string };
+};
+
+type CatalogueView = (props: { state: unknown }) => unknown;
+
+function moduleSpecifier(parts: string[]): string {
+  return parts.join("/");
+}
+
+async function importCatalogueLoaders(): Promise<{
+  loadCatalogueSearchForContext: (runtime: ReturnType<typeof catalogueRuntime>, query: string) => Promise<CatalogueSearchState>;
+  loadCatalogueCarForContext: (
+    runtime: ReturnType<typeof catalogueRuntime>,
+    input: ReturnType<typeof catalogueReadInput>,
+  ) => Promise<CatalogueDetailState>;
+}> {
+  return import(moduleSpecifier(["..", "..", "web", "src", "catalogue", "load-state.ts"]));
+}
+
+async function importCatalogueViews(): Promise<{
+  CatalogueSearchView: CatalogueView;
+  CatalogueDetailView: CatalogueView;
+}> {
+  return import(moduleSpecifier(["..", "..", "web", "src", "catalogue", "views.tsx"]));
+}
+
 async function requestJson(method: "GET" | "POST", path: string, input: unknown, targetApp = app, token?: string): Promise<{
   status: number;
   text: string;
+  cacheControl: string | null;
 }> {
   const headers = new Headers({ "content-type": "application/json" });
   if (token) headers.set("authorization", `Bearer ${token}`);
@@ -1401,5 +1758,9 @@ async function requestJson(method: "GET" | "POST", path: string, input: unknown,
     headers,
     body: method === "POST" ? JSON.stringify(input) : undefined,
   });
-  return { status: response.status, text: await response.text() };
+  return {
+    status: response.status,
+    text: await response.text(),
+    cacheControl: response.headers.get("cache-control"),
+  };
 }

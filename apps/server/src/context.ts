@@ -8,6 +8,7 @@ export type CreateContextOptions = {
   db: Database;
   now?: () => Date;
   operatorToken: string | null;
+  allowFixtures: boolean;
 };
 
 export async function createContext(options: CreateContextOptions): Promise<ApiContext> {
@@ -16,5 +17,6 @@ export async function createContext(options: CreateContextOptions): Promise<ApiC
     now: options.now,
     operatorToken: options.operatorToken,
     presentedOperatorToken: readPresentedOperatorToken(options.context.req.header("authorization")),
+    access: { allowFixtures: options.allowFixtures },
   };
 }

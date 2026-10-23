@@ -1,4 +1,4 @@
-import { neon, neonConfig } from "@neondatabase/serverless";
+import { neon, neonConfig, type NeonQueryFunction } from "@neondatabase/serverless";
 import type { BatchItem } from "drizzle-orm/batch";
 import { drizzle } from "drizzle-orm/neon-http";
 import { migrate } from "drizzle-orm/neon-http/migrator";
@@ -8,9 +8,13 @@ import { relations } from "./relations";
 
 export { sql } from "drizzle-orm";
 
+export function createDbFromClient(client: NeonQueryFunction<false, false>) {
+  return drizzle({ client, relations });
+}
+
 export function createDb(env: DatabaseConfig) {
   const sql = neon(env.DATABASE_URL);
-  return drizzle({ client: sql, relations });
+  return createDbFromClient(sql);
 }
 
 export type Database = ReturnType<typeof createDb>;

@@ -1,18 +1,10 @@
 # Publishing setup
 
-Trusted-operator publishing is a server command and an authorized API mutation. Visitors can search and open the current public projection. They cannot publish, and responses omit contracts, private source payloads, and the operator credential.
+Trusted-operator publishing is a server command and an authorized API mutation. Visitors read the current public projection through `catalogue.search` and `catalogue.read`. They cannot publish. Responses omit contracts, private source payloads, and the operator credential.
 
-Issue #10 is still open. Its unmerged catalogue work reads Brand, Model, Generation, SalesMarket, ModelYear, MarketVariant, and a model-year applicability record, plus aliases, sourced facts, and price references, through `catalogue.search` and `catalogue.read`. That source-policy row is a public name, audience, attribution, and preview flag. It does not store a contract, retention, or a derivative restriction.
+`canonical_subject_id` is the catalogue applicability id. An import creates that applicability only when it includes an explicit Brand, Model, Generation, MarketVariant, SalesMarket, and ModelYear. The import does not invent those identities from the display name, and it does not invent a unit, a year, or a known value for an unknown fact. Public facts and the price reference stay on the current publishing assertion. The catalogue fact and price tables remain the synthetic fixture path. A catalogue row marked published is not public unless the current projection still permits that applicability.
 
-This branch does not create those catalogue tables and does not import that branch. The visitor reads checked here are `publishing.search` and `publishing.detail`. They follow the current row of `publishing_projection_pointer`. `canonical_subject_id` is the stable subject key those catalogue reads can later use as an applicability id.
-
-When issue #10 is on `origin/main`, the remaining integration is:
-
-- Map each current published assertion onto that catalogue's applicability, identity, aliases, and sourced facts.
-- Keep fixtures, uncertain matches, and held imports out of rows whose publication status is published.
-- Serve the public website from `catalogue.search` and `catalogue.read`, still limited to the current projection.
-- Keep `publishing_source_policy.contract_text`, staged `private_payload`, and `OPERATOR_TOKEN` out of those responses. The catalogue policy's public attribution does not replace this SourcePolicy.
-- Carry both the operator credential and the catalogue preview flag on the API context. Publishing mutations stay on the server command and `publishing.submit`.
+`publishing.search` and `publishing.detail` remain operator-projection reads for the publishing checks. The website does not use them.
 
 ## Manual environment
 
@@ -22,10 +14,13 @@ When issue #10 is on `origin/main`, the remaining integration is:
    pnpm install
    ```
 
-2. Create `apps/server/.env`. Do not commit it, and do not put these values in `apps/web` or `apps/native`.
+2. Create `apps/server/.env`. Do not commit it, and do not print these values.
 
-   - `DATABASE_URL`: the Neon Postgres connection string for this app. Use a database you are willing to migrate. Do not point the integration test at it; the test creates its own empty cluster.
-   - `OPERATOR_TOKEN`: at least 32 characters. Leave it unset until an operator should be able to publish. Varlock rejects a shorter value.
+   - `DATABASE_URL`: the Postgres connection string for this app. Use a database you are willing to migrate. Do not point the integration test at it; the test creates its own empty cluster.
+   - `OPERATOR_TOKEN`: at least 32 characters. Leave it unset until an operator should be able to publish. Varlock rejects a shorter value. Do not add this key to the web or native schemas.
+   - `CATALOGUE_ALLOW_FIXTURES`: `false` for a public server.
+
+   Create `apps/web/.env.local` for the site. It has its own server-only `DATABASE_URL`. Leave that empty and the site says the catalogue database is not configured. Set `CATALOGUE_ALLOW_FIXTURES=false` and `NEXT_PUBLIC_SERVER_URL` to the public API origin, for example `http://127.0.0.1:3000`. That origin is not a secret.
 
 3. Regenerate the typed accessors after the schema change:
 
@@ -43,13 +38,27 @@ When issue #10 is on `origin/main`, the remaining integration is:
 
 ## Migration
 
-The reviewed SQL is in `packages/db/src/migrations/20261023065345_publishing/migration.sql` and `packages/db/src/migrations/20261023130303_publishing_retention/migration.sql`. The second migration adds source capture timestamps. It backfills legacy rows from the earliest policy creation, original fact retrieval, and staging/publication timestamp, conservatively shortening retention when the original capture is uncertain. Apply it with Drizzle Kit. Do not use `db:push` for this change.
+Apply the reviewed SQL in folder order. Do not use `db:push`. These folders are the chain:
+
+1. `packages/db/src/migrations/20261023065345_publishing/migration.sql`
+2. `packages/db/src/migrations/20261023083647_catalogue_search/migration.sql`
+3. `packages/db/src/migrations/20261023130303_publishing_retention/migration.sql`
+4. `packages/db/src/migrations/20261023132821_price_reference_source/migration.sql`
+5. `packages/db/src/migrations/20261023142856_projection_price_reference/migration.sql`
+
+The retention migration adds source capture timestamps and backfills legacy rows from the earliest policy creation, original fact retrieval, and staging/publication timestamp. The catalogue price migration adds required source columns and expects a price table with no rows when that migration has not been applied yet. The last migration adds a nullable `price_reference` column on `publishing_published_assertion`. It does not rewrite catalogue rows. A database that already applied the catalogue folders still receives the publishing folders, because Drizzle skips only migration names it has recorded. None of these statements drop catalogue data. The historical `todo` statement uses `IF NOT EXISTS`; do not delete that table to make a later diff empty.
 
 ```bash
-pnpm --filter @cart-campuss/db db:migrate
+pnpm db:migrate
 ```
 
-The Neon HTTP migrator runs each statement separately. If a statement fails, fix the database by hand before retrying; that driver does not roll a migration back. The `todo` statement uses `IF NOT EXISTS` so a database that already received the starter table from `db:push` can still apply the publishing tables.
+The Neon HTTP migrator runs each statement separately. If a statement fails, fix the database by hand before retrying; that driver does not roll a migration back. For a local Postgres URL, apply the same files in order after removing Drizzle's statement markers:
+
+```bash
+for file in packages/db/src/migrations/*/migration.sql; do
+  sed 's/--> statement-breakpoint//g' "$file" | psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f -
+done
+```
 
 Publication itself is different: the command submits the projection switch as one Neon HTTP batch, and Postgres commits or rolls back that batch as a whole.
 
@@ -69,7 +78,138 @@ A SourcePolicy ID identifies an immutable reviewed revision. Exact content can b
 
 Both fact and media source URLs accept only HTTP/HTTPS. Public detail parsing also drops unsafe legacy fact/media URLs. Search and detail share the same eligibility check: when no safe non-identity sourced fact remains, both withhold the entire record. Private links in legacy public metadata also withhold the record. Private-contact screening covers common domestic phone formats, contact-labelled numbers, and decoded URL query keys normalized with the forbidden property keys; an unrelated malformed escape cannot disable query screening. Registration screening includes Indian patterns and the common current UK plate format, without joining separate specification units into a plate. These patterns do not establish worldwide plate/contact coverage, and rights reviewers must still withhold private identifiers.
 
-The HTTP mutation is `publishing.submit`. It accepts the same JSON and requires `Authorization: Bearer` matching `OPERATOR_TOKEN`. A token inside the JSON does not authorize the call. `publishing.search` and `publishing.detail` are anonymous reads of the current projection.
+A catalogue record also needs `sourcePolicy.displayName`, `modelYearLabel` in `permittedFields`, and a `catalogue` object whose country and model-year label match the record. Every permitted fact that will be published needs `sourceTitle`. Save this labelled test shape locally and do not commit it. It is not a live catalogue record.
+
+```json
+{
+  "idempotencyKey": "labeled-test-dossier",
+  "providerKey": "manual-test",
+  "publish": true,
+  "sourcePolicy": {
+    "id": "00000000-0000-4000-8000-000000000011",
+    "providerKey": "manual-test",
+    "displayName": "Labeled test policy",
+    "factPermission": "permitted",
+    "imagePermission": "denied",
+    "permittedFields": ["displayName", "alias", "modelYearLabel", "power", "torque", "salesMarket"],
+    "permittedGeographies": ["IN"],
+    "attribution": "Reviewed sample attribution",
+    "retentionSeconds": 86400,
+    "derivativeRestriction": "No derivative use.",
+    "aggregationRestriction": "No aggregation.",
+    "refreshIntervalSeconds": 7776000,
+    "permissionExpiresAt": "2030-01-01T00:00:00.000Z",
+    "takedownObligation": "Withdraw on request.",
+    "deletionObligation": "Delete when retention ends.",
+    "contractText": "Rights contract stays on the source policy and is not shown.",
+    "suspended": false,
+    "reviewerRef": "policy-reviewer",
+    "reviewedAt": "2026-10-22T00:00:00.000Z"
+  },
+  "records": [
+    {
+      "externalId": "ext-labeled-dossier",
+      "provenance": "manual",
+      "document": {
+        "displayName": "Unindexed labeled dossier",
+        "aliases": [],
+        "canonicalSubjectId": "subject-labeled-dossier",
+        "salesMarket": "IN",
+        "modelYearLabel": "2026",
+        "facts": [
+          {
+            "property": "power",
+            "rawValue": "100 PS",
+            "normalizedValue": "100",
+            "state": "known",
+            "unknownReason": null,
+            "unit": "PS",
+            "standard": "PS",
+            "sourceUrl": "https://example.test/sources/labeled-dossier",
+            "sourceTitle": "Labeled test dossier",
+            "providerKey": "manual-test",
+            "observedAt": "2026-10-22T00:00:00.000Z",
+            "retrievedAt": "2026-10-22T00:00:00.000Z"
+          },
+          {
+            "property": "torque",
+            "rawValue": "not-a-measurement",
+            "normalizedValue": null,
+            "state": "unknown",
+            "unknownReason": "The labelled test does not include a measured torque.",
+            "unit": "invented-unit",
+            "standard": null,
+            "sourceUrl": "https://example.test/sources/labeled-dossier",
+            "sourceTitle": "Labeled test dossier",
+            "providerKey": "manual-test",
+            "observedAt": null,
+            "retrievedAt": "2026-10-22T00:00:00.000Z"
+          }
+        ],
+        "media": []
+      },
+      "catalogue": {
+        "brand": { "id": "brand-labeled-dossier", "name": "Labeled Dossier", "slug": "brand-labeled-dossier" },
+        "model": { "id": "model-labeled-dossier", "name": "Labeled Dossier Model", "slug": "model-labeled-dossier" },
+        "generation": { "id": "gen-labeled-dossier", "name": "Labeled Mark", "slug": "mark" },
+        "marketVariant": { "id": "var-labeled-dossier", "name": "Base" },
+        "salesMarket": { "id": "mkt-labeled-in", "name": "India", "countryCode": "IN" },
+        "modelYear": {
+          "id": "year-labeled-2026",
+          "label": "2026",
+          "convention": "Manufacturer model-year label. Not the calendar build year."
+        },
+        "aliases": [],
+        "priceReference": {
+          "amountMinor": 250000,
+          "currency": "INR",
+          "minorUnitExponent": 2,
+          "basis": "official price reference",
+          "taxInclusivity": "unspecified",
+          "observedOn": "2026-10-22",
+          "retrievedOn": "2026-10-22",
+          "reviewedOn": "2026-10-22",
+          "sourceTitle": "Labeled test price sheet",
+          "sourceUrl": "https://example.test/prices/labeled-dossier",
+          "sourceIdentifier": null
+        }
+      },
+      "identity": {
+        "outcome": "certain",
+        "canonicalSubjectId": "subject-labeled-dossier",
+        "reviewerRef": "identity-reviewer",
+        "note": "Operator confirmed this labelled test subject."
+      },
+      "factualReview": {
+        "outcome": "passed",
+        "reviewerRef": "fact-reviewer",
+        "reviewedAt": "2026-10-22T00:00:00.000Z"
+      },
+      "rightsReview": {
+        "outcome": "passed",
+        "reviewerRef": "rights-reviewer",
+        "reviewedAt": "2026-10-22T00:00:00.000Z"
+      }
+    }
+  ]
+}
+```
+
+Use a new policy id for a real import. Reusing this id with different terms is rejected.
+
+The HTTP mutation is `publishing.submit`. It accepts the same JSON and requires `Authorization: Bearer` matching `OPERATOR_TOKEN`. A token inside the JSON does not authorize the call. `publishing.search` and `publishing.detail` still read the current projection, including records that have no catalogue block. The website reads `catalogue.search` and `catalogue.read` instead.
+
+## Screen checks
+
+Start the API and the web app yourself after the migrate and the operator command. With `CATALOGUE_ALLOW_FIXTURES=false`:
+
+1. `/` with no web `DATABASE_URL` says the catalogue database is not configured and names no car.
+2. Search `labeled dossier`. The result is Labeled Dossier, Labeled Dossier Model, Labeled Mark, India, model year 2026, Base, and says Exact name. Searching `unindexed labeled dossier` says no published record matches.
+3. Open that result. The heading is Labeled Dossier Model, not the display name Unindexed labeled dossier. The page shows Labeled test policy, Audience: public, Policy reviewer: policy-reviewer, Factual reviewer: fact-reviewer, Rights reviewer: rights-reviewer, the source title Labeled test dossier, 100 PS, the unknown-torque sentence, ₹2,500.00, 250000 INR minor units, Labeled test price sheet, Not a listing, No market data, Not the calendar build year, and No catalogue photograph. It does not show the torque raw value, the unit invented-unit, the contract sentence, or an `<img>`.
+4. Search `kestrel` says no published record matches. `/cars/sample-hatch/series-one` says it is not in the public catalogue.
+5. A record whose policy is suspended, whose retention has passed, or whose assertions cleanup has deleted disappears from that same search and its detail URL says it is not in the public catalogue. Refresh the page; the responses send `Cache-Control: private, no-store`.
+
+The fixture checks with the flag on are in [catalogue-search.md](catalogue-search.md).
 
 ## Retention cleanup
 

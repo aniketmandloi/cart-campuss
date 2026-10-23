@@ -11,6 +11,20 @@ import {
   unique,
 } from "drizzle-orm/pg-core";
 
+export type PublishingPriceReference = {
+  amountMinor: number;
+  currency: string;
+  minorUnitExponent: number;
+  basis: string;
+  taxInclusivity: "unspecified" | "tax-inclusive" | "tax-exclusive";
+  observedOn: string;
+  retrievedOn: string;
+  reviewedOn: string;
+  sourceTitle: string;
+  sourceUrl: string | null;
+  sourceIdentifier: string | null;
+};
+
 /**
  * Reviewed permission for one source. Fact and image permissions are
  * independent and default to denied. `contract_text` is never part of a
@@ -157,6 +171,7 @@ export const publishingPublishedAssertion = pgTable(
     capturedAt: timestamp("captured_at", { withTimezone: true, mode: "string" }).notNull(),
     observedAt: timestamp("observed_at", { withTimezone: true, mode: "string" }),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true, mode: "string" }).notNull(),
+    priceReference: jsonb("price_reference").$type<PublishingPriceReference | null>(),
   },
   (table) => [
     unique("publishing_published_provider_external").on(

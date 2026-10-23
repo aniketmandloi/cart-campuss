@@ -7,6 +7,7 @@ import { db } from "./services";
 const app = createApp({
   db,
   operatorToken: ENV.OPERATOR_TOKEN ?? null,
+  allowFixtures: ENV.CATALOGUE_ALLOW_FIXTURES === true,
   corsOrigin: ENV.CORS_ORIGIN,
 });
 

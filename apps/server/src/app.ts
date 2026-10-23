@@ -11,6 +11,7 @@ export type AppDeps = {
   db: Database;
   now?: () => Date;
   operatorToken: string | null;
+  allowFixtures?: boolean;
   corsOrigin: string;
   log?: boolean;
 };
@@ -21,6 +22,10 @@ export function createApp(deps: AppDeps) {
   if (deps.log !== false) {
     app.use(logger());
   }
+  app.use("/*", async (c, next) => {
+    await next();
+    c.header("Cache-Control", "private, no-store");
+  });
   app.use(
     "/*",
     cors({
@@ -40,6 +45,7 @@ export function createApp(deps: AppDeps) {
           db: deps.db,
           now: deps.now,
           operatorToken: deps.operatorToken,
+          allowFixtures: deps.allowFixtures === true,
         });
       },
     }),

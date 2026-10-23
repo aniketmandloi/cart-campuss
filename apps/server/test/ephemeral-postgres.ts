@@ -449,7 +449,14 @@ async function reservePort(): Promise<number> {
  * through the Neon HTTP transaction protocol. It does not read DATABASE_URL
  * and does not open an existing database.
  */
-export async function startPublishingDatabase(): Promise<{ db: Database; stop: () => Promise<void>; holdAdvisoryLock: (key: number) => Promise<() => Promise<void>> }> {
+export async function startPublishingDatabase(options?: { migrate?: boolean }): Promise<{
+  db: Database;
+  stop: () => Promise<void>;
+  holdAdvisoryLock: (key: number) => Promise<() => Promise<void>>;
+  withSession: <T>(
+    fn: (query: (statement: string) => Promise<{ rows: Array<Array<string | null>> }>) => Promise<T>,
+  ) => Promise<T>;
+}> {
   const dataDir = await mkdtemp(join(tmpdir(), "cart-campuss-publishing-"));
   const env = commandEnv(dataDir);
   const port = await reservePort();
@@ -505,7 +512,7 @@ export async function startPublishingDatabase(): Promise<{ db: Database; stop: (
       DATABASE_URL: `postgres://publishing_test@127.0.0.1:${port}/postgres`,
     });
     const migrationsFolder = fileURLToPath(new URL("../../../packages/db/src/migrations", import.meta.url));
-    await migrateDatabase(db, migrationsFolder);
+    if (options?.migrate !== false) await migrateDatabase(db, migrationsFolder);
     return {
       db,
       stop,
@@ -517,6 +524,14 @@ export async function startPublishingDatabase(): Promise<{ db: Database; stop: (
           try { await session.query("COMMIT"); }
           finally { await session.close(); }
         };
+      },
+      withSession: async (fn) => {
+        const session = await PgSession.connect(port, "postgres");
+        try {
+          return await fn((statement) => session.query(statement));
+        } finally {
+          await session.close();
+        }
       },
     };
   } catch (error) {
