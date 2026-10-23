@@ -17,6 +17,23 @@ UPDATE publishing_published_assertion
 SET captured_at = least(captured_at, publishing_price_captured_at(price_reference))
 WHERE price_reference IS NOT NULL;
 --> statement-breakpoint
+WITH deadlines AS (
+  SELECT assertion.provider_key, assertion.external_id,
+    min(CASE WHEN policy.suspended THEN '-infinity'::timestamptz ELSE
+      least(assertion.captured_at + policy.retention_seconds * interval '1 second',
+        coalesce(policy.permission_expires_at, 'infinity'::timestamptz))
+    END) AS deadline
+  FROM publishing_published_assertion AS assertion
+  JOIN publishing_source_policy AS policy ON policy.id = assertion.source_policy_id
+  GROUP BY assertion.provider_key, assertion.external_id
+)
+UPDATE publishing_published_assertion AS assertion
+SET captured_at = least(assertion.captured_at,
+  deadlines.deadline - policy.retention_seconds * interval '1 second')
+FROM deadlines, publishing_source_policy AS policy
+WHERE deadlines.provider_key = assertion.provider_key AND deadlines.external_id = assertion.external_id
+  AND policy.id = assertion.source_policy_id;
+--> statement-breakpoint
 UPDATE publishing_staged_record AS staged
 SET captured_at = least(staged.captured_at, (
   SELECT least(

@@ -1528,7 +1528,7 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     const later = () => new Date(testClock().getTime() + 30_000);
     const republishAt = () => new Date(testClock().getTime() + 40_000);
     const cutoff = () => new Date(testClock().getTime() + 60_000);
-    const inputs = ["Republish", "Cleanup"].map((action) => {
+    const inputs = ["Republish", "Cleanup", "Renewal"].map((action) => {
       const input = labelledCatalogueImport(`Legacy Staging ${action} Dossier`);
       input.sourcePolicy.retentionSeconds = 60;
       input.records[0]!.document.facts.forEach((item) => { item.retrievedAt = later().toISOString(); });
@@ -1543,6 +1543,12 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
       await db.update(publishingStagedRecord).set({ capturedAt: later().toISOString() })
         .where(sql`${publishingStagedRecord.externalId} = ${record.externalId}`);
     }
+    const renewal = structuredClone(inputs[2]!);
+    renewal.idempotencyKey += "-longer-policy";
+    renewal.sourcePolicy.id = crypto.randomUUID();
+    renewal.sourcePolicy.retentionSeconds = 120;
+    delete renewal.records[0]!.catalogue;
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(renewal)).status, "published");
     const migration = await readFile(new URL("../../../packages/db/src/migrations/20261023160000_price_capture_retention/migration.sql", import.meta.url), "utf8");
     for (const backfill of migration.split("--> statement-breakpoint").slice(1)) {
       if (backfill.trim()) await db.execute(sql.raw(backfill));
@@ -1551,8 +1557,10 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     republish.idempotencyKey += "-replacement";
     delete republish.records[0]!.catalogue;
     assert.equal((await caller(OPERATOR_TOKEN, republishAt).publishing.submit(republish)).status, "published");
+    const justBeforeCutoff = () => new Date(testClock().getTime() + 59_000);
     for (const input of inputs) {
       const subjectId = input.records[0]!.document.canonicalSubjectId;
+      assert.ok(await caller(null, justBeforeCutoff).publishing.detail({ subjectId }));
       assert.equal(await caller(null, cutoff).publishing.detail({ subjectId }), null);
     }
     await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: cutoff }, OPERATOR_TOKEN);
