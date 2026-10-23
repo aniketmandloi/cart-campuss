@@ -4,6 +4,7 @@ import type {
   CatalogueAssertion,
   CatalogueCarPage,
   CatalogueFact,
+  CataloguePolicy,
   CatalogueSearchResult,
 } from "@cart-campuss/api/catalogue";
 
@@ -234,6 +235,8 @@ function Facts({ facts }: { facts: CatalogueFact[] }) {
                 <Cell>
                   <p>{fact.reviewStatus}</p>
                   {fact.reviewedOn ? <p>Reviewed {fact.reviewedOn}</p> : null}
+                  {fact.factualReviewerRef ? <p>Factual reviewer: {fact.factualReviewerRef}</p> : null}
+                  {fact.rightsReviewerRef ? <p>Rights reviewer: {fact.rightsReviewerRef}</p> : null}
                 </Cell>
               </tr>
             ))}
@@ -272,11 +275,7 @@ function ConflictReading({ conflict }: { conflict: CatalogueAssertion }) {
   );
 }
 
-function PolicyBlock({
-  policy,
-}: {
-  policy: { name: string; audience: string; attribution: string };
-}) {
+function PolicyBlock({ policy }: { policy: CataloguePolicy }) {
   return (
     <section className="flex flex-col gap-2" aria-labelledby="source-policy">
       <h2 id="source-policy" className="text-base font-medium">
@@ -285,6 +284,9 @@ function PolicyBlock({
       <p>{policy.name}</p>
       <p>Audience: {policy.audience}</p>
       <p>{policy.attribution}</p>
+      {policy.policyReviewerRef ? <p>Policy reviewer: {policy.policyReviewerRef}</p> : null}
+      {policy.factualReviewerRef ? <p>Factual reviewer: {policy.factualReviewerRef}</p> : null}
+      {policy.rightsReviewerRef ? <p>Rights reviewer: {policy.rightsReviewerRef}</p> : null}
     </section>
   );
 }

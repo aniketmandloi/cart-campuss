@@ -27,14 +27,14 @@ pnpm install
 
 ## Database Setup
 
-Catalogue records live in PostgreSQL. Apply the reviewed migration, then optionally load the labelled synthetic fixture for a private preview. Public pages exclude that fixture unless `CATALOGUE_ALLOW_FIXTURES=true`.
+Catalogue records live in PostgreSQL. Apply the reviewed migrations, then optionally load the labelled synthetic fixture for a private preview. Public pages read the current reviewed publishing projection and exclude that fixture unless `CATALOGUE_ALLOW_FIXTURES=true`.
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm db:migrate
 ```
 
-Put `DATABASE_URL` in `apps/server/.env`. The web app has its own server-only `DATABASE_URL` and renders an unconfigured catalogue when it is empty. Exact migration, seed, test, and browser checks are in [docs/catalogue-search.md](docs/catalogue-search.md).
+Put `DATABASE_URL` in `apps/server/.env`. The web app has its own server-only `DATABASE_URL` and renders an unconfigured catalogue when it is empty. Do not use `db:push` for these tables. Operator publishing and the visitor catalogue are in [docs/publishing-setup.md](docs/publishing-setup.md). Fixture preview checks are in [docs/catalogue-search.md](docs/catalogue-search.md).
 
 Then, run the development server:
 

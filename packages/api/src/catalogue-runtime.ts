@@ -8,6 +8,8 @@ export function createCatalogueContext(config: {
 }): Context {
   return {
     db: createDb({ DATABASE_URL: config.databaseUrl }),
+    operatorToken: null,
+    presentedOperatorToken: null,
     access: { allowFixtures: config.allowFixtures },
   };
 }
@@ -18,6 +20,8 @@ export function createCatalogueContextFromClient(
 ): Context {
   return {
     db: createDbFromClient(client),
+    operatorToken: null,
+    presentedOperatorToken: null,
     access: { allowFixtures },
   };
 }

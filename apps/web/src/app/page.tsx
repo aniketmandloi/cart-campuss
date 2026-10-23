@@ -4,6 +4,7 @@ import { catalogueAllowsFixtures, loadCatalogueSearch } from "@/catalogue/load";
 import { CatalogueSearchView } from "@/catalogue/views";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 
 export async function generateMetadata(): Promise<Metadata> {

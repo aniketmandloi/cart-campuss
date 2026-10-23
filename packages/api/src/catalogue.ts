@@ -14,7 +14,11 @@ import {
 import type { Database } from "@cart-campuss/db";
 import { and, asc, eq, or, sql, type SQL } from "drizzle-orm";
 
+import { normalizeCatalogueQuery } from "./catalogue-name";
 import type { CatalogueAccess } from "./context";
+import { CATALOGUE_IDENTITY_FIELDS, currentProjectionCovers, publicMetadataEligible, readPublishedCatalogueDetail, type PublicDetail } from "./publishing";
+
+export { normalizeCatalogueQuery } from "./catalogue-name";
 
 export type CatalogueSearchHit = {
   applicabilityId: string;
@@ -54,6 +58,8 @@ export type CatalogueAssertion = {
   policyName: string;
   policyAudience: string;
   policyAttribution: string;
+  factualReviewerRef?: string | null;
+  rightsReviewerRef?: string | null;
 };
 
 export type CatalogueFact = CatalogueAssertion & {
@@ -89,6 +95,9 @@ export type CataloguePolicy = {
   name: string;
   audience: string;
   attribution: string;
+  policyReviewerRef?: string | null;
+  factualReviewerRef?: string | null;
+  rightsReviewerRef?: string | null;
 };
 
 export type CatalogueIdentity = {
@@ -146,10 +155,6 @@ export type CarSelection = {
   year?: string;
   variant?: string;
 };
-
-export function normalizeCatalogueQuery(value: string): string {
-  return value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
-}
 
 export function formatMinorUnits(
   amountMinor: number | bigint | string,
@@ -214,25 +219,44 @@ function prefixUpperBound(prefix: string): string {
   return `${prefix}\u{10ffff}`;
 }
 
-export function catalogueSearchStatement(db: Database, access: CatalogueAccess, query: string) {
-  return buildCatalogueSearch(db, access, normalizeCatalogueQuery(query)).toSQL();
+export function catalogueSearchStatement(
+  db: Database,
+  access: CatalogueAccess,
+  query: string,
+  now: () => Date = () => new Date(),
+) {
+  return buildCatalogueSearch(db, access, normalizeCatalogueQuery(query), now()).toSQL();
 }
 
 export async function searchCatalogue(
   db: Database,
   access: CatalogueAccess,
   query: string,
+  now: () => Date = () => new Date(),
 ): Promise<CatalogueSearchResult> {
   const normalized = normalizeCatalogueQuery(query);
   if (!normalized) {
     return { query, privatePreview: access.allowFixtures, hits: [] };
   }
-  const rows = await buildCatalogueSearch(db, access, normalized);
+  const rows = await buildCatalogueSearch(db, access, normalized, now());
 
   const seen = new Set<string>();
   const hits: CatalogueSearchHit[] = [];
   for (const row of rows) {
     if (seen.has(row.applicabilityId)) continue;
+    if (!row.synthetic && !publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string"))) continue;
+    if (!row.synthetic) {
+      const projection = await readPublishedCatalogueDetail(db, row.applicabilityId, now);
+      if (!projection || !projectionMatchesIdentity(row, projection)) continue;
+      const canonicalName = [
+        { kind: "brand", name: row.brandName },
+        { kind: "model", name: row.modelName },
+        { kind: "generation", name: row.generationName },
+      ].some((item) => item.kind === row.aliasKind && normalizeCatalogueQuery(item.name) === row.normalizedName);
+      const approvedAlias = projection.permittedFields.includes("alias") &&
+        projection.aliases.some((alias) => normalizeCatalogueQuery(alias) === row.normalizedName);
+      if (!canonicalName && !approvedAlias) continue;
+    }
     seen.add(row.applicabilityId);
     hits.push({
       applicabilityId: row.applicabilityId,
@@ -265,6 +289,7 @@ export async function readCatalogueCar(
   db: Database,
   access: CatalogueAccess,
   selection: CarSelection,
+  now: () => Date = () => new Date(),
 ): Promise<CatalogueCarPage> {
   const rows = await db
     .select({
@@ -276,6 +301,7 @@ export async function readCatalogueCar(
       generationSlug: catalogueGeneration.slug,
       salesMarketName: catalogueSalesMarket.name,
       salesMarketId: catalogueSalesMarket.id,
+      countryCode: catalogueSalesMarket.countryCode,
       modelYearLabel: catalogueModelYear.label,
       modelYearId: catalogueModelYear.id,
       modelYearConvention: catalogueModelYear.convention,
@@ -307,19 +333,27 @@ export async function readCatalogueCar(
       and(
         eq(catalogueModel.slug, selection.modelSlug),
         eq(catalogueGeneration.slug, selection.generationSlug),
-        visibleRecord(access),
+        visibleRecord(access, now()),
       ),
     )
     .orderBy(asc(catalogueApplicability.id));
 
   const privatePreview = access.allowFixtures;
-  if (rows.length === 0) {
+  const visibleRows = [];
+  for (const row of rows) {
+    const projection = row.synthetic ? null : await readPublishedCatalogueDetail(db, row.applicabilityId, now);
+    if (row.synthetic || (projection && projectionMatchesIdentity(row, projection) &&
+      publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string")))) {
+      visibleRows.push({ ...row, projection });
+    }
+  }
+  if (visibleRows.length === 0) {
     return { availability: "not-in-public-catalogue", privatePreview };
   }
 
   const selected =
     selection.market && selection.year && selection.variant
-      ? rows.find(
+      ? visibleRows.find(
           (row) =>
             row.salesMarketId === selection.market &&
             row.modelYearId === selection.year &&
@@ -328,13 +362,14 @@ export async function readCatalogueCar(
       : undefined;
 
   if (!selected) {
-    const [first] = rows;
+    const [first] = visibleRows;
     if (!first) return { availability: "not-in-public-catalogue", privatePreview };
+    const overviewProjection = first.projection;
     return {
       availability: "overview",
       privatePreview,
-      synthetic: rows.some((row) => row.synthetic),
-      policy: policyOf(first),
+      synthetic: visibleRows.some((row) => row.synthetic),
+      policy: overviewProjection ? policyFromProjection(policyOf(first), overviewProjection) : policyOf(first),
       identity: {
         brandName: first.brandName,
         modelName: first.modelName,
@@ -342,7 +377,7 @@ export async function readCatalogueCar(
         modelSlug: first.modelSlug,
         generationSlug: first.generationSlug,
       },
-      selections: rows.map((row) => ({
+      selections: visibleRows.map((row) => ({
         salesMarketName: row.salesMarketName,
         modelYearLabel: row.modelYearLabel,
         variantName: row.variantName,
@@ -351,16 +386,23 @@ export async function readCatalogueCar(
     };
   }
 
-  const [facts, prices] = await Promise.all([
-    readFacts(db, access, selected.applicabilityId),
-    readPrices(db, access, selected.applicabilityId),
-  ]);
+  const projection = selected.projection;
+  if (!selected.synthetic && !projection) {
+    return { availability: "not-in-public-catalogue", privatePreview };
+  }
+  const policy = projection ? policyFromProjection(policyOf(selected), projection) : policyOf(selected);
+  const [facts, prices] = projection
+    ? [projectionFacts(projection, policy), projectionPrices(projection, policy, selected.salesMarketName)]
+    : await Promise.all([
+        readFacts(db, access, selected.applicabilityId),
+        readPrices(db, access, selected.applicabilityId),
+      ]);
 
   return {
     availability: "visible",
     privatePreview,
     synthetic: selected.synthetic,
-    policy: policyOf(selected),
+    policy,
     identity: {
       brandName: selected.brandName,
       modelName: selected.modelName,
@@ -382,13 +424,14 @@ export async function readCatalogueCar(
   };
 }
 
-function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized: string) {
+function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized: string, now: Date) {
   const upper = prefixUpperBound(normalized);
   return db
     .select({
       applicabilityId: catalogueApplicability.id,
       normalizedName: catalogueAlias.normalizedName,
       aliasId: catalogueAlias.id,
+      aliasKind: catalogueAlias.kind,
       brandName: catalogueBrand.name,
       modelName: catalogueModel.name,
       generationName: catalogueGeneration.name,
@@ -396,11 +439,14 @@ function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized:
       generationSlug: catalogueGeneration.slug,
       salesMarketName: catalogueSalesMarket.name,
       salesMarketId: catalogueSalesMarket.id,
+      countryCode: catalogueSalesMarket.countryCode,
       modelYearLabel: catalogueModelYear.label,
       modelYearId: catalogueModelYear.id,
       variantName: catalogueMarketVariant.name,
       variantId: catalogueMarketVariant.id,
       synthetic: catalogueApplicability.synthetic,
+      policyName: catalogueSourcePolicy.name,
+      policyAttribution: catalogueSourcePolicy.attribution,
     })
     .from(catalogueAlias)
     .innerJoin(
@@ -428,7 +474,7 @@ function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized:
         // Range operators belong to text_pattern_ops, so a parameterized prefix can use the name index.
         sql`${catalogueAlias.normalizedName} ~>=~ ${normalized}`,
         sql`${catalogueAlias.normalizedName} ~<~ ${upper}`,
-        visibleRecord(access),
+        visibleRecord(access, now),
       ),
     )
     .orderBy(
@@ -455,11 +501,109 @@ function policyOf(row: {
   };
 }
 
-function visibleRecord(access: CatalogueAccess): SQL {
-  return visibleProjection(access, {
-    publicationStatus: catalogueApplicability.publicationStatus,
-    synthetic: catalogueApplicability.synthetic,
+function policyFromProjection(policy: CataloguePolicy, projection: PublicDetail): CataloguePolicy {
+  return {
+    name: projection.policyName ?? policy.name,
+    audience: "public",
+    attribution: projection.attribution,
+    policyReviewerRef: projection.policyReviewerRef,
+    factualReviewerRef: projection.factualReviewerRef,
+    rightsReviewerRef: projection.rightsReviewerRef,
+  };
+}
+
+function projectionMatchesIdentity(
+  identity: { countryCode: string; modelYearLabel: string },
+  projection: PublicDetail,
+): boolean {
+  return projection.policyName !== null &&
+    CATALOGUE_IDENTITY_FIELDS.every((field) => projection.permittedFields.includes(field)) &&
+    identity.countryCode === projection.salesMarket && identity.modelYearLabel === projection.modelYearLabel;
+}
+
+function projectionFacts(projection: PublicDetail, policy: CataloguePolicy): CatalogueFact[] {
+  return projection.facts.map((fact) => {
+    const unknown = fact.state === "unknown";
+    return {
+      property: fact.property,
+      state: unknown ? "unknown" : "known",
+      rawValue: unknown ? null : fact.rawValue,
+      normalizedValue: unknown ? null : fact.normalizedValue,
+      unit: unknown ? null : fact.unit,
+      measurementStandard: unknown ? null : fact.standard,
+      unknownReason: unknown ? fact.unknownReason : null,
+      curatedReason: null,
+      conflict: null,
+      sourceTitle: fact.sourceTitle ?? "",
+      sourceUrl: fact.sourceUrl,
+      observedOn: fact.observedAt,
+      retrievedOn: fact.retrievedAt,
+      reviewedOn: projection.reviewedAt,
+      reviewStatus: "reviewed",
+      policyName: policy.name,
+      policyAudience: policy.audience,
+      policyAttribution: policy.attribution,
+      factualReviewerRef: fact.factualReviewerRef,
+      rightsReviewerRef: fact.rightsReviewerRef,
+    };
   });
+}
+
+function projectionPrices(
+  projection: PublicDetail,
+  policy: CataloguePolicy,
+  salesMarketName: string,
+): CataloguePriceReference[] {
+  const price = projection.priceReference;
+  if (!price) return [];
+  const displayAmount = formatMinorUnits(price.amountMinor, price.currency, price.minorUnitExponent);
+  if (displayAmount === null) return [];
+  return [
+    {
+      kind: "price-reference",
+      amountMinor: price.amountMinor,
+      currency: price.currency,
+      minorUnitExponent: price.minorUnitExponent,
+      displayAmount,
+      basis: price.basis,
+      taxInclusivity: price.taxInclusivity,
+      salesMarketName,
+      observedOn: price.observedOn,
+      retrievedOn: price.retrievedOn,
+      reviewedOn: price.reviewedOn,
+      reviewStatus: "reviewed",
+      sourceTitle: price.sourceTitle,
+      sourceUrl: price.sourceUrl,
+      sourceIdentifier: price.sourceIdentifier,
+      policyName: policy.name,
+      policyAudience: policy.audience,
+      policyAttribution: policy.attribution,
+    },
+  ];
+}
+
+function visibleRecord(access: CatalogueAccess, now: Date): SQL {
+  const projected = mustSql(
+    and(
+      eq(catalogueApplicability.publicationStatus, "published"),
+      eq(catalogueApplicability.synthetic, false),
+      currentProjectionCovers(catalogueApplicability.id, now),
+    ),
+  );
+  if (!access.allowFixtures) return projected;
+  return mustSql(or(projected, fixtureRecord()));
+}
+
+function fixtureRecord(): SQL {
+  return mustSql(
+    and(
+      eq(catalogueApplicability.publicationStatus, "fixture"),
+      eq(catalogueApplicability.synthetic, true),
+      eq(catalogueSourcePolicy.permitsPublicCatalogue, false),
+      eq(catalogueSourcePolicy.audience, "private-preview"),
+      eq(catalogueSourcePolicy.rightsReview, "reviewed"),
+    ),
+  );
 }
 
 async function readFacts(

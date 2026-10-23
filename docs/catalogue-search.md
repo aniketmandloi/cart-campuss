@@ -1,6 +1,6 @@
 # Catalogue search
 
-The first catalogue journey is a name search that opens one scoped, sourced record. Public pages read only reviewed, published rows. The synthetic fixture is private preview data and stays out of those pages unless the server is explicitly switched.
+The first catalogue journey is a name search that opens one scoped, sourced record. Public pages read the current reviewed publishing projection. A catalogue row marked published is not a second copy of those facts and is not visible without that projection. The synthetic fixture is private preview data and stays out of those pages unless the server is explicitly switched.
 
 ## Install
 
@@ -20,7 +20,7 @@ pnpm env:generate
 
 Put `DATABASE_URL` in `apps/server/.env`. The web process has its own server-only `DATABASE_URL` in `apps/web/.env.local`. Leave it empty and the site renders an unconfigured catalogue instead of fixture HTML. `CATALOGUE_ALLOW_FIXTURES` defaults to false in both schemas and is not a client variable.
 
-Apply the reviewed migration on Neon, which is the driver Drizzle Kit uses:
+Apply the reviewed migrations on Neon, which is the driver Drizzle Kit uses. Do not use `db:push`. The folders are listed in [publishing-setup.md](publishing-setup.md). The last one adds a nullable price column on the publishing assertion and does not rewrite catalogue rows:
 
 ```bash
 pnpm db:migrate

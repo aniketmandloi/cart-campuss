@@ -1,14 +1,16 @@
 import { cache } from "react";
 
 import { createCatalogueContext } from "@cart-campuss/api/catalogue-runtime";
-import { appRouter } from "@cart-campuss/api/routers/index";
+import type { Context } from "@cart-campuss/api/context";
 
 import { ENV } from "@/env.server";
 
-import { parseCatalogueRead } from "./selection";
+import { loadCatalogueCarForContext, loadCatalogueSearchForContext } from "./load-state";
 import type { CatalogueDetailState, CatalogueSearchState } from "./views";
 
-type Runtime = ReturnType<typeof createCatalogueContext>;
+export { loadCatalogueCarForContext, loadCatalogueSearchForContext } from "./load-state";
+
+type Runtime = Context;
 
 let cached: { databaseUrl: string; allowFixtures: boolean; runtime: Runtime } | undefined;
 
@@ -22,13 +24,7 @@ export const loadCatalogueSearch = cache(async (query: string): Promise<Catalogu
   if (trimmed.length > 80) return { kind: "invalid", query: trimmed, privatePreview };
   const runtime = catalogueRuntime();
   if (!runtime) return { kind: "unconfigured", query: trimmed, privatePreview };
-  if (!trimmed) return { kind: "idle", query: "", privatePreview };
-  try {
-    const result = await appRouter.createCaller(runtime).catalogue.search({ q: trimmed });
-    return { kind: "results", query: trimmed, privatePreview, result };
-  } catch {
-    return { kind: "unavailable", query: trimmed, privatePreview };
-  }
+  return loadCatalogueSearchForContext(runtime, trimmed);
 });
 
 export const loadCatalogueCar = cache(
@@ -41,22 +37,7 @@ export const loadCatalogueCar = cache(
   }): Promise<CatalogueDetailState> => {
     const runtime = catalogueRuntime();
     if (!runtime) return { kind: "unconfigured" };
-    const parsed = parseCatalogueRead(input);
-    if (parsed.status === "invalid") {
-      return {
-        kind: "page",
-        page: {
-          availability: "not-in-public-catalogue",
-          privatePreview: runtime.access.allowFixtures,
-        },
-      };
-    }
-    try {
-      const page = await appRouter.createCaller(runtime).catalogue.read(parsed.value);
-      return { kind: "page", page };
-    } catch {
-      return { kind: "unavailable" };
-    }
+    return loadCatalogueCarForContext(runtime, input);
   },
 );
 

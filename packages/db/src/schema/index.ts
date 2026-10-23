@@ -11,3 +11,11 @@ export {
   catalogueSourcePolicy,
   catalogueSourcedFact,
 } from "./catalogue";
+export {
+  publishingImportBatch,
+  publishingProjectionGeneration,
+  publishingProjectionPointer,
+  publishingPublishedAssertion,
+  publishingSourcePolicy,
+  publishingStagedRecord,
+} from "./publishing";

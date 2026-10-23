@@ -4,6 +4,7 @@ import { loadCatalogueCar } from "@/catalogue/load";
 import { CatalogueDetailView, type CatalogueDetailState } from "@/catalogue/views";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 
 type CarRoute = {

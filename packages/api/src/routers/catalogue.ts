@@ -20,7 +20,9 @@ export const catalogueRouter = router({
   status: publicProcedure.query(({ ctx }) => catalogueStatus(ctx.access)),
   search: publicProcedure
     .input(z.object({ q: z.string().trim().min(1).max(80) }))
-    .query(({ ctx, input }) => searchCatalogue(ctx.db, ctx.access, input.q)),
+    .query(({ ctx, input }) =>
+      searchCatalogue(ctx.db, ctx.access, input.q, ctx.now ?? (() => new Date())),
+    ),
   read: publicProcedure
     .input(
       z.object({
@@ -31,5 +33,7 @@ export const catalogueRouter = router({
         variant: canonicalId.optional(),
       }),
     )
-    .query(({ ctx, input }) => readCatalogueCar(ctx.db, ctx.access, input)),
+    .query(({ ctx, input }) =>
+      readCatalogueCar(ctx.db, ctx.access, input, ctx.now ?? (() => new Date())),
+    ),
 });
