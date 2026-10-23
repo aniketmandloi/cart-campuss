@@ -43,7 +43,7 @@ When issue #10 is on `origin/main`, the remaining integration is:
 
 ## Migration
 
-The reviewed SQL is `packages/db/src/migrations/20261023065345_publishing/migration.sql`. Apply it with Drizzle Kit. Do not use `db:push` for this change.
+The reviewed SQL is in `packages/db/src/migrations/20261023065345_publishing/migration.sql` and `packages/db/src/migrations/20261023130303_publishing_retention/migration.sql`. The second migration adds source capture timestamps. It backfills legacy rows from the earliest policy creation, original fact retrieval, and staging/publication timestamp, conservatively shortening retention when the original capture is uncertain. Apply it with Drizzle Kit. Do not use `db:push` for this change.
 
 ```bash
 pnpm --filter @cart-campuss/db db:migrate
@@ -68,6 +68,22 @@ The JSON file has `idempotencyKey`, `providerKey`, `sourcePolicy`, `records`, an
 A SourcePolicy ID identifies an immutable reviewed revision. Exact content can be reused by other imports, including concurrent imports. Changing its provider, permissions, reviewer, or other terms requires a new policy ID; staged and held imports cannot rewrite a live revision.
 
 The HTTP mutation is `publishing.submit`. It accepts the same JSON and requires `Authorization: Bearer` matching `OPERATOR_TOKEN`. A token inside the JSON does not authorize the call. `publishing.search` and `publishing.detail` are anonymous reads of the current projection.
+
+## Retention cleanup
+
+Search and detail check the stored policy on every read, including alias search. Expired permissions, suspended sources, and copies at their retention deadline disappear immediately, without waiting for cleanup. A missing policy cannot appear in those reads. Later projection generations preserve the original capture time. A source document and its media use the oldest fact retrieval time, capped at import receipt; this deliberately uses the shortest lifetime for the whole copy. An identical restaging cannot extend that lifetime. Inputs already beyond their retention deadline, including zero-retention copies, are rejected without storing a private payload.
+
+Use the same server-only Varlock environment and operator credential for the bounded cleanup command:
+
+```bash
+pnpm --filter server operator -- cleanup
+```
+
+It atomically deletes due staged documents/private payloads and published assertions/media from **every** generation, including the current one. It deletes on permission expiry, suspension, or the source capture plus `retentionSeconds` deadline. It reports only deletion counts. Unexpired permitted history remains; import hashes/results, generation metadata, and reviewed policy terms remain for audit and replay. Replaying a cleaned import returns its historical result and does not restore source copies. This command does not invent a sale or a provider outage.
+
+Run cleanup after each import, immediately after an operator suspension, and at least once a minute while copies are stored. For terms requiring deletion exactly at a deadline, arrange the command to run by that deadline; if that cadence cannot satisfy the source's terms, keep that source out of storage. This branch adds no scheduler. Issue #13 owns scheduled rechecks, fuller withdrawal/audit workflows, and cache invalidation. Operators must also apply the source's deletion obligations to import files, exports, caches, and backup retention; this command only purges these database tables. Free-text restrictions/obligations still require the rights reviewer to confirm that this conservative behavior satisfies the actual terms.
+
+After migrations and before serving traffic, run cleanup once. A failed cleanup exits 1; retry it and keep affected sources suspended until successful. The anonymous reads remain fail-closed while cleanup is delayed. No populated database migration, cleanup, hosted Neon execution, or scheduler installation was performed by this change.
 
 ## Integration test
 

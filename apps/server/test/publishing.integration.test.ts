@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { after, before, describe, it } from "node:test";
 
-import { PublishingRejected, operatorImportSchema, runOperatorCommand } from "@cart-campuss/api/publishing";
+import { cleanupPublishingCopies, PublishingRejected, operatorImportSchema, runOperatorCommand } from "@cart-campuss/api/publishing";
 import { z } from "zod";
 import { appRouter } from "@cart-campuss/api/routers/index";
-import { commitNeonHttpBatch, type Database } from "@cart-campuss/db";
+import { commitNeonHttpBatch, sql, type Database } from "@cart-campuss/db";
 import {
   publishingPublishedAssertion,
   publishingProjectionGeneration,
@@ -15,6 +16,9 @@ import {
 
 import { createApp, type AppDeps } from "../src/app";
 import { startPublishingDatabase } from "./ephemeral-postgres";
+
+const BASE_TIME = "2026-10-22T12:00:00.000Z";
+const testClock = () => new Date(BASE_TIME);
 
 const OPERATOR_TOKEN = "test-operator-token-32-characters-min";
 const MARKERS = {
@@ -37,6 +41,7 @@ before(async () => {
   stopDatabase = started.stop;
   app = createApp({
     db,
+    now: testClock,
     operatorToken: OPERATOR_TOKEN,
     corsOrigin: "http://localhost:3001",
     log: false,
@@ -357,6 +362,7 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
         sourcePolicyId: existing.sourcePolicyId,
         factualReviewerRef: "fact-reviewer",
         rightsReviewerRef: "rights-reviewer",
+        capturedAt: BASE_TIME,
         observedAt: null,
         reviewedAt: publishedAt,
       }),
@@ -393,7 +399,7 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
   it("publishes from the operator command when the server token is configured", async () => {
     const input = reviewedImport("Command Published Coupe");
     input.records[0]!.provenance = "import";
-    const result = await runOperatorCommand({ db, operatorToken: OPERATOR_TOKEN }, JSON.stringify(input));
+    const result = await runOperatorCommand({ db, operatorToken: OPERATOR_TOKEN, now: testClock }, JSON.stringify(input));
     assert.equal(result.status, "published");
     assert.equal(result.publishedSubjectIds.includes(OPERATOR_TOKEN), false);
     const detail = await caller(null).publishing.detail({ subjectId: "subject-command-published-coupe" });
@@ -615,6 +621,121 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.deepEqual(reused.map((result) => result.status), ["staged", "staged"]);
   });
 
+  it("withholds expired permissions on HTTP search and detail after later publications", async () => {
+    const input = reviewedImport("Read Expiry Coupe");
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.permissionExpiresAt = "2026-10-22T13:00:00.000Z";
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const clock = () => new Date("2026-10-22T12:30:00.000Z");
+    assert.equal((await caller(OPERATOR_TOKEN, clock).publishing.submit(reviewedImport("After Expiry Source Coupe"))).status, "published");
+    assert.ok(await caller(null, clock).publishing.detail({ subjectId: "subject-read-expiry-coupe" }));
+
+    const expiredApp = createApp({ db, operatorToken: OPERATOR_TOKEN, corsOrigin: "http://localhost:3001", log: false,
+      now: () => new Date("2026-10-22T13:00:00.000Z") });
+    const search = await requestJson("GET", "/api/trpc/publishing.search", { q: "Read Expiry" }, expiredApp);
+    assert.equal(search.status, 200);
+    assert.equal(search.text.includes("Read Expiry Coupe"), false);
+    assert.equal((await caller(null, expiredAppClock).publishing.search({ q: "Read Expiry Alias Coupe" })).length, 0);
+    const detail = await requestJson("GET", "/api/trpc/publishing.detail", { subjectId: "subject-read-expiry-coupe" }, expiredApp);
+    assert.equal(detail.status, 200);
+    assert.equal(detail.text.includes('"data":null'), true);
+    assert.equal(detail.text.includes("100 PS"), false);
+
+    function expiredAppClock() { return new Date("2026-10-22T13:00:00.000Z"); }
+  });
+
+  it("keeps original source capture deadlines when assertions are copied or reimported", async () => {
+    const input = reviewedImport("Read Retention Coupe");
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.permissionExpiresAt = null;
+    input.sourcePolicy.retentionSeconds = 200;
+    input.records[0]!.document.facts[0]!.retrievedAt = "2026-10-22T11:58:20.000Z";
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const later = () => new Date("2026-10-22T12:00:50.000Z");
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(reviewedImport("Retention Copy Trigger Coupe"))).status, "published");
+    const before = await caller(null, later).publishing.detail({ subjectId: "subject-read-retention-coupe" });
+    assert.ok(before);
+    assert.equal(before.publishedAt, later().toISOString());
+    const copies = (await db.select().from(publishingPublishedAssertion)).filter((row) => row.sourcePolicyId === input.sourcePolicy.id);
+    assert.ok(copies.length >= 2);
+    assert.ok(copies.every((row) => new Date(row.capturedAt).toISOString() === input.records[0]!.document.facts[0]!.retrievedAt));
+
+    const reuse = structuredClone(input);
+    reuse.idempotencyKey += "-reimport";
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(reuse)).status, "published");
+    const cutoff = () => new Date("2026-10-22T12:01:40.000Z");
+    assert.equal((await caller(null, cutoff).publishing.search({ q: "Read Retention" })).length, 0);
+    assert.equal(await caller(null, cutoff).publishing.detail({ subjectId: "subject-read-retention-coupe" }), null);
+    reuse.idempotencyKey += "-too-old";
+    await assert.rejects(() => caller(OPERATOR_TOKEN, cutoff).publishing.submit(reuse), /expired/);
+
+    const noStorage = reviewedImport("Zero Retention Coupe");
+    noStorage.publish = false;
+    noStorage.sourcePolicy.retentionSeconds = 0;
+    await assert.rejects(() => caller(OPERATOR_TOKEN).publishing.submit(noStorage), /expired/);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === noStorage.records[0]!.externalId), false);
+  });
+
+  it("withholds existing assertions when their policy is suspended", async () => {
+    const input = reviewedImport("Read Suspension Coupe");
+    input.sourcePolicy.id = crypto.randomUUID();
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    assert.equal((await caller(null).publishing.search({ q: "Read Suspension" })).length, 1);
+    // Simulates the operator's database suspension; imports cannot rewrite a reviewed revision.
+    await db.update(publishingSourcePolicy).set({ suspended: true }).where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id}`);
+    assert.equal((await caller(null).publishing.search({ q: "Read Suspension" })).length, 0);
+    assert.equal(await caller(null).publishing.detail({ subjectId: "subject-read-suspension-coupe" }), null);
+  });
+
+  it("authorizes cleanup and purges expired staging and all historical copies while preserving permitted content", async () => {
+    const staged = reviewedImport("Cleanup Staged Private Coupe");
+    staged.sourcePolicy.id = crypto.randomUUID();
+    staged.publish = false;
+    staged.sourcePolicy.retentionSeconds = 60;
+    staged.records[0]!.document.facts = [];
+    await caller(OPERATOR_TOKEN).publishing.submit(staged);
+    const repeated = structuredClone(staged);
+    repeated.idempotencyKey += "-restaged";
+    repeated.records[0]!.identity.note = "A later review does not recapture the source.";
+    await caller(OPERATOR_TOKEN, () => new Date("2026-10-22T12:00:30.000Z")).publishing.submit(repeated);
+    const stagedRow = (await db.select().from(publishingStagedRecord)).find((row) => row.externalId === staged.records[0]!.externalId);
+    assert.ok(stagedRow);
+    assert.equal(new Date(stagedRow.capturedAt).toISOString(), BASE_TIME);
+
+    const cutoff = () => new Date("2026-10-22T13:00:00.000Z");
+    const deps = { db, operatorToken: OPERATOR_TOKEN, now: cutoff };
+    await assert.rejects(() => cleanupPublishingCopies(deps, undefined), /authorization/);
+    await assert.rejects(() => cleanupPublishingCopies({ ...deps, operatorToken: null }, OPERATOR_TOKEN), /authorization/);
+    assert.ok((await db.select().from(publishingStagedRecord)).some((row) => row.id === stagedRow.id));
+    const baseline = await caller(null, cutoff).publishing.detail({ subjectId: "subject-reviewed-sample-coupe" });
+    assert.ok(baseline);
+    await db.execute(sql`create function test_cleanup_failure() returns trigger language plpgsql as $$
+      begin raise exception 'cleanup must roll back'; end $$`);
+    await db.execute(sql`create trigger test_cleanup_failure before delete on ${publishingPublishedAssertion}
+      for each row execute function test_cleanup_failure()`);
+    try {
+      await assert.rejects(() => cleanupPublishingCopies(deps, OPERATOR_TOKEN), /cleanup did not commit/);
+      assert.ok((await db.select().from(publishingStagedRecord)).some((row) => row.id === stagedRow.id));
+    } finally {
+      await db.execute(sql`drop trigger test_cleanup_failure on ${publishingPublishedAssertion}`);
+      await db.execute(sql`drop function test_cleanup_failure()`);
+    }
+    const result = await cleanupPublishingCopies(deps, OPERATOR_TOKEN);
+    assert.ok(result.stagedDeleted >= 4);
+    assert.ok(result.assertionsDeleted >= 4);
+    const policies = await db.select().from(publishingSourcePolicy);
+    const duePolicies = new Set(policies.filter((policy) => policy.suspended || policy.retentionSeconds <= 200 ||
+      (policy.permissionExpiresAt && new Date(policy.permissionExpiresAt) <= cutoff())).map((policy) => policy.id));
+    const remainingStaged = await db.select().from(publishingStagedRecord);
+    const remainingAssertions = await db.select().from(publishingPublishedAssertion);
+    assert.equal(remainingStaged.some((row) => duePolicies.has(row.sourcePolicyId)), false);
+    assert.equal(remainingAssertions.some((row) => duePolicies.has(row.sourcePolicyId)), false);
+    assert.deepEqual(await caller(null, cutoff).publishing.detail({ subjectId: "subject-reviewed-sample-coupe" }), baseline);
+    assert.deepEqual(await cleanupPublishingCopies(deps, OPERATOR_TOKEN), { stagedDeleted: 0, assertionsDeleted: 0 });
+    assert.equal(visitorText(result).includes(MARKERS.payload), false);
+    assert.equal(visitorText(result).includes(MARKERS.contract), false);
+  });
+
   it("returns a replay when identical imports are submitted together", async () => {
     const input = reviewedImport("Concurrent Replay Coupe");
     const [first, second] = await Promise.all([
@@ -653,11 +774,39 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     const rawValue = detail?.facts[0]?.rawValue;
     assert.ok(rawValue === "100 PS" || rawValue === "999 PS");
   });
+  it("backfills source capture time on populated legacy tables without resetting their retention", async () => {
+    const before = (await db.select().from(publishingPublishedAssertion)).find((row) => row.displayName === "Reviewed Sample Coupe");
+    assert.ok(before);
+    const staged = reviewedImport("Legacy Unfetched Stage Coupe");
+    staged.sourcePolicy.id = crypto.randomUUID();
+    staged.publish = false;
+    staged.records[0]!.document.facts = [];
+    await caller(OPERATOR_TOKEN).publishing.submit(staged);
+    const restaged = structuredClone(staged);
+    restaged.idempotencyKey += "-later";
+    await caller(OPERATOR_TOKEN, () => new Date("2026-10-22T12:05:00.000Z")).publishing.submit(restaged);
+
+    await db.execute(sql`alter table ${publishingPublishedAssertion} drop column captured_at`);
+    await db.execute(sql`alter table ${publishingStagedRecord} drop column captured_at`);
+    const migration = await readFile(new URL("../../../packages/db/src/migrations/20261023130303_publishing_retention/migration.sql", import.meta.url), "utf8");
+    for (const statement of migration.split("--> statement-breakpoint").filter((part) => part.trim())) {
+      await db.execute(sql.raw(statement));
+    }
+    const after = (await db.select().from(publishingPublishedAssertion)).find((row) => row.id === before.id);
+    assert.ok(after);
+    assert.equal(new Date(after.capturedAt).toISOString(), "2026-10-22T00:00:00.000Z");
+    const backfilledStage = (await db.select().from(publishingStagedRecord)).find((row) => row.sourcePolicyId === staged.sourcePolicy.id);
+    assert.ok(backfilledStage);
+    assert.equal(new Date(backfilledStage.capturedAt).toISOString(), BASE_TIME);
+    assert.equal(new Date(backfilledStage.updatedAt).toISOString(), "2026-10-22T12:05:00.000Z");
+  });
+
 });
 
-function caller(token: string | null) {
+function caller(token: string | null, now: () => Date = testClock) {
   return appRouter.createCaller({
     db,
+    now,
     operatorToken: OPERATOR_TOKEN,
     presentedOperatorToken: token,
   });
@@ -780,14 +929,14 @@ function visitorText(value: unknown): string {
   return JSON.stringify(value);
 }
 
-async function requestJson(method: "GET" | "POST", path: string, input: unknown): Promise<{
+async function requestJson(method: "GET" | "POST", path: string, input: unknown, targetApp = app): Promise<{
   status: number;
   text: string;
 }> {
   const headers = new Headers({ "content-type": "application/json" });
   const url = new URL(path, "http://127.0.0.1");
   if (method === "GET") url.searchParams.set("input", JSON.stringify(input));
-  const response = await app.request(url, {
+  const response = await targetApp.request(url, {
     method,
     headers,
     body: method === "POST" ? JSON.stringify(input) : undefined,

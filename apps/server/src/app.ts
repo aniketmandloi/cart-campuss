@@ -9,6 +9,7 @@ import { createContext } from "./context";
 
 export type AppDeps = {
   db: Database;
+  now?: () => Date;
   operatorToken: string | null;
   corsOrigin: string;
   log?: boolean;
@@ -37,6 +38,7 @@ export function createApp(deps: AppDeps) {
         return createContext({
           context,
           db: deps.db,
+          now: deps.now,
           operatorToken: deps.operatorToken,
         });
       },

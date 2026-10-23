@@ -23,16 +23,16 @@ const operatorProcedure = t.procedure.use(({ ctx, next }) => {
 export const publishingRouter = router({
   search: publicProcedure
     .input(z.object({ q: z.string().max(200).optional() }))
-    .query(({ ctx, input }) => searchPublishedCatalogue(ctx.db, input)),
+    .query(({ ctx, input }) => searchPublishedCatalogue(ctx.db, input, ctx.now)),
 
   detail: publicProcedure
     .input(z.object({ subjectId: z.string().min(1).max(200) }))
-    .query(({ ctx, input }) => readPublishedCatalogueDetail(ctx.db, input.subjectId)),
+    .query(({ ctx, input }) => readPublishedCatalogueDetail(ctx.db, input.subjectId, ctx.now)),
 
   submit: operatorProcedure.input(operatorImportSchema).mutation(async ({ ctx, input }) => {
     try {
       return await applyOperatorImport(
-        { db: ctx.db, operatorToken: ctx.operatorToken },
+        { db: ctx.db, operatorToken: ctx.operatorToken, now: ctx.now },
         ctx.presentedOperatorToken ?? undefined,
         input,
       );

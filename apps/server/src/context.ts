@@ -6,12 +6,14 @@ import type { Context as HonoContext } from "hono";
 export type CreateContextOptions = {
   context: HonoContext;
   db: Database;
+  now?: () => Date;
   operatorToken: string | null;
 };
 
 export async function createContext(options: CreateContextOptions): Promise<ApiContext> {
   return {
     db: options.db,
+    now: options.now,
     operatorToken: options.operatorToken,
     presentedOperatorToken: readPresentedOperatorToken(options.context.req.header("authorization")),
   };

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { PublishingRejected, runOperatorCommand, type PublishingDeps } from "@cart-campuss/api/publishing";
+import { cleanupPublishingCopies, PublishingRejected, runOperatorCommand, type PublishingDeps } from "@cart-campuss/api/publishing";
 
 export { runOperatorCommand };
 
@@ -12,8 +12,8 @@ function runningAsOperatorCli(): boolean {
 async function main(): Promise<void> {
   const command = process.argv[2];
   const file = process.argv[3];
-  if (command !== "apply" || !file) {
-    process.stderr.write("Usage: tsx src/operator-command.ts apply <import.json>\n");
+  if (!((command === "apply" && file) || (command === "cleanup" && !file))) {
+    process.stderr.write("Usage: tsx src/operator-command.ts apply <import.json> | cleanup\n");
     process.exitCode = 1;
     return;
   }
@@ -25,9 +25,14 @@ async function main(): Promise<void> {
     operatorToken: ENV.OPERATOR_TOKEN ?? null,
   };
   try {
-    const result = await runOperatorCommand(deps, await readFile(file, "utf8"));
-    process.stdout.write(`${JSON.stringify(result)}\n`);
-    if (result.status === "held") process.exitCode = 2;
+    if (command === "cleanup") {
+      const result = await cleanupPublishingCopies(deps, deps.operatorToken ?? undefined);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } else if (file) {
+      const result = await runOperatorCommand(deps, await readFile(file, "utf8"));
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (result.status === "held") process.exitCode = 2;
+    }
   } catch (error) {
     const message =
       error instanceof PublishingRejected ? `${error.code}: ${error.message}` : "The operator command failed.";

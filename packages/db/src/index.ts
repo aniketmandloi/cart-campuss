@@ -6,6 +6,8 @@ import { migrate } from "drizzle-orm/neon-http/migrator";
 import type { DatabaseConfig } from "./config";
 import { relations } from "./relations";
 
+export { sql } from "drizzle-orm";
+
 export function createDb(env: DatabaseConfig) {
   const sql = neon(env.DATABASE_URL);
   return drizzle({ client: sql, relations });

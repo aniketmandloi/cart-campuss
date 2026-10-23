@@ -6,7 +6,7 @@ import {
   publishingSourcePolicy,
   publishingStagedRecord,
 } from "@cart-campuss/db/schema/publishing";
-import { and, eq, max, sql } from "drizzle-orm";
+import { and, eq, getTableColumns, max, sql, type SQLWrapper } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import { z } from "zod";
 
@@ -250,23 +250,10 @@ type GateFailure = {
   message: string;
 };
 
-type CurrentAssertion = {
-  providerKey: string;
-  externalId: string;
-  canonicalSubjectId: string;
-  displayName: string;
-  aliases: string[];
-  salesMarket: string;
-  modelYearLabel: string | null;
-  facts: unknown;
-  media: unknown;
-  attribution: string;
-  sourcePolicyId: string;
-  factualReviewerRef: string;
-  rightsReviewerRef: string;
-  observedAt: string | null;
-  reviewedAt: string;
-};
+type CurrentAssertion = Pick<
+  typeof publishingPublishedAssertion.$inferSelect,
+  "id" | "providerKey" | "externalId" | "canonicalSubjectId"
+>;
 
 const storedResultSchema = z.object({
   status: z.enum(["staged", "held", "published"]),
@@ -300,6 +287,7 @@ export function assertOperatorAuthorized(configured: string | null, presented: s
 export async function searchPublishedCatalogue(
   db: Database,
   query: { q?: string },
+  now: () => Date = () => new Date(),
 ): Promise<PublicSearchHit[]> {
   const term = query.q?.trim() ?? "";
   const pattern = likePattern(term);
@@ -327,10 +315,19 @@ export async function searchPublishedCatalogue(
       ),
     )
     .innerJoin(
+      publishingSourcePolicy,
+      eq(publishingSourcePolicy.id, publishingPublishedAssertion.sourcePolicyId),
+    )
+    .innerJoin(
       publishingProjectionGeneration,
       eq(publishingProjectionGeneration.id, publishingProjectionPointer.generationId),
     )
-    .where(term.length > 0 ? and(eq(publishingProjectionPointer.id, 1), match) : eq(publishingProjectionPointer.id, 1))
+    .where(
+      and(
+        publicPolicyAllows(publishingPublishedAssertion.capturedAt, now()),
+        term.length > 0 ? match : undefined,
+      ),
+    )
     .orderBy(publishingPublishedAssertion.displayName, publishingPublishedAssertion.canonicalSubjectId);
 
   return rows.map((row) => ({
@@ -345,6 +342,7 @@ export async function searchPublishedCatalogue(
 export async function readPublishedCatalogueDetail(
   db: Database,
   subjectId: string,
+  now: () => Date = () => new Date(),
 ): Promise<PublicDetail | null> {
   const [row] = await db
     .select({
@@ -371,12 +369,17 @@ export async function readPublishedCatalogueDetail(
       ),
     )
     .innerJoin(
+      publishingSourcePolicy,
+      eq(publishingSourcePolicy.id, publishingPublishedAssertion.sourcePolicyId),
+    )
+    .innerJoin(
       publishingProjectionGeneration,
       eq(publishingProjectionGeneration.id, publishingProjectionPointer.generationId),
     )
     .where(
       and(
         eq(publishingProjectionPointer.id, 1),
+        publicPolicyAllows(publishingPublishedAssertion.capturedAt, now()),
         eq(publishingPublishedAssertion.canonicalSubjectId, subjectId),
       ),
     )
@@ -412,6 +415,13 @@ export async function applyOperatorImport(
 
   const replay = await readIdempotentReplay(deps.db, parsed.idempotencyKey, payloadHash);
   if (replay) return replay;
+
+  if (parsed.records.some((record) =>
+    new Date(sourceCapturedAt(record, now.toISOString())).getTime() +
+      parsed.sourcePolicy.retentionSeconds * 1000 <= now.getTime(),
+  )) {
+    throw new PublishingRejected("expired", "The source copy is already beyond its retention deadline.");
+  }
 
   const current = await readCurrentProjection(deps.db);
   const failures = parsed.publish ? collectFailures(parsed, current, now) : [];
@@ -465,12 +475,25 @@ export async function applyOperatorImport(
     for (const assertion of current.assertions) {
       if (replaced.has(sourceKey(assertion.providerKey, assertion.externalId))) continue;
       statements.push(
-        deps.db.insert(publishingPublishedAssertion).values({
-          ...assertion,
-          id: randomId(),
-          generationId,
-          observedAt: assertion.observedAt,
-        }),
+        deps.db.insert(publishingPublishedAssertion).select(
+          deps.db
+            .select({
+              ...getTableColumns(publishingPublishedAssertion),
+              id: sql<string>`${randomId()}`.as("id"),
+              generationId: sql<string>`${generationId}`.as("generation_id"),
+            })
+            .from(publishingPublishedAssertion)
+            .innerJoin(
+              publishingSourcePolicy,
+              eq(publishingSourcePolicy.id, publishingPublishedAssertion.sourcePolicyId),
+            )
+            .where(
+              and(
+                eq(publishingPublishedAssertion.id, assertion.id),
+                publicPolicyAllows(publishingPublishedAssertion.capturedAt, now),
+              ),
+            ),
+        ),
       );
     }
     for (const record of publishable) {
@@ -522,6 +545,59 @@ export async function runOperatorCommand(deps: PublishingDeps, importText: strin
     throw new PublishingRejected("validation", "Import file was not valid JSON.");
   }
   return applyOperatorImport(deps, deps.operatorToken ?? undefined, input);
+}
+
+/** Purges source copies across staging and every projection generation; audit metadata stays. */
+export async function cleanupPublishingCopies(
+  deps: PublishingDeps,
+  presentedToken: string | undefined,
+): Promise<{ stagedDeleted: number; assertionsDeleted: number }> {
+  assertOperatorAuthorized(deps.operatorToken, presentedToken);
+  const now = (deps.now ?? (() => new Date()))();
+  try {
+    const [staged, assertions] = await deps.db.batch([
+      deps.db.delete(publishingStagedRecord).where(sql`exists (
+        select 1 from ${publishingSourcePolicy}
+        where ${publishingSourcePolicy.id} = ${publishingStagedRecord.sourcePolicyId}
+          and ${sourceCopyDue(publishingStagedRecord.capturedAt, now)}
+      )`).returning({ id: publishingStagedRecord.id }),
+      deps.db.delete(publishingPublishedAssertion).where(sql`exists (
+        select 1 from ${publishingSourcePolicy}
+        where ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
+          and ${sourceCopyDue(publishingPublishedAssertion.capturedAt, now)}
+      )`).returning({ id: publishingPublishedAssertion.id }),
+    ]);
+    return { stagedDeleted: staged.length, assertionsDeleted: assertions.length };
+  } catch {
+    throw new PublishingRejected("partial", "Source-copy cleanup did not commit. Retry the cleanup command.");
+  }
+}
+
+function sourceCopyDue(capturedAt: SQLWrapper, now: Date) {
+  return sql`(
+    ${publishingSourcePolicy.suspended}
+    or ${publishingSourcePolicy.retentionSeconds} <= 0
+    or ${publishingSourcePolicy.permissionExpiresAt} <= cast(${now.toISOString()} as timestamptz)
+    or ${capturedAt} + ${publishingSourcePolicy.retentionSeconds} * interval '1 second'
+      <= cast(${now.toISOString()} as timestamptz)
+  )`;
+}
+
+function publicPolicyAllows(capturedAt: SQLWrapper, now: Date) {
+  return sql`(
+    ${publishingSourcePolicy.factPermission} = 'permitted'
+    and ${publishingSourcePolicy.reviewerRef} is not null
+    and ${publishingSourcePolicy.reviewedAt} is not null
+    and not coalesce(${sourceCopyDue(capturedAt, now)}, false)
+  )`;
+}
+
+/** The oldest source retrieval bounds retention for the entire stored document and its media. */
+function sourceCapturedAt(record: ImportRecord, receivedAt: string): string {
+  return new Date(Math.min(
+    new Date(receivedAt).getTime(),
+    ...record.document.facts.map((fact) => new Date(fact.retrievedAt).getTime()),
+  )).toISOString();
 }
 
 async function readIdempotentReplay(
@@ -704,21 +780,10 @@ async function readCurrentProjection(db: Database): Promise<CurrentProjection> {
     .from(publishingProjectionGeneration);
   const rows = await db
     .select({
+      id: publishingPublishedAssertion.id,
       providerKey: publishingPublishedAssertion.providerKey,
       externalId: publishingPublishedAssertion.externalId,
       canonicalSubjectId: publishingPublishedAssertion.canonicalSubjectId,
-      displayName: publishingPublishedAssertion.displayName,
-      aliases: publishingPublishedAssertion.aliases,
-      salesMarket: publishingPublishedAssertion.salesMarket,
-      modelYearLabel: publishingPublishedAssertion.modelYearLabel,
-      facts: publishingPublishedAssertion.facts,
-      media: publishingPublishedAssertion.media,
-      attribution: publishingPublishedAssertion.attribution,
-      sourcePolicyId: publishingPublishedAssertion.sourcePolicyId,
-      factualReviewerRef: publishingPublishedAssertion.factualReviewerRef,
-      rightsReviewerRef: publishingPublishedAssertion.rightsReviewerRef,
-      observedAt: publishingPublishedAssertion.observedAt,
-      reviewedAt: publishingPublishedAssertion.reviewedAt,
     })
     .from(publishingPublishedAssertion)
     .innerJoin(
@@ -731,12 +796,7 @@ async function readCurrentProjection(db: Database): Promise<CurrentProjection> {
   const maxGeneration = generationNumber(generation?.value);
   return {
     maxGeneration,
-    assertions: rows.map((row) => ({
-      ...row,
-      aliases: asStringArray(row.aliases),
-      observedAt: row.observedAt ? toIso(row.observedAt) : null,
-      reviewedAt: toIso(row.reviewedAt),
-    })),
+    assertions: rows,
   };
 }
 
@@ -862,6 +922,7 @@ function upsertStaged(
     rightsOutcome: record.rightsReview.outcome,
     rightsReviewerRef: record.rightsReview.reviewerRef,
     sourcePolicyId: policyId,
+    capturedAt: sourceCapturedAt(record, updatedAt),
     updatedAt,
   };
   return db
@@ -884,6 +945,11 @@ function upsertStaged(
         rightsOutcome: values.rightsOutcome,
         rightsReviewerRef: values.rightsReviewerRef,
         sourcePolicyId: values.sourcePolicyId,
+        capturedAt: sql`case
+          when ${publishingStagedRecord.document} = cast(${JSON.stringify(values.document)} as jsonb)
+            and ${publishingStagedRecord.privatePayload} = cast(${JSON.stringify(values.privatePayload)} as jsonb)
+          then least(${publishingStagedRecord.capturedAt}, cast(${values.capturedAt} as timestamptz))
+          else cast(${values.capturedAt} as timestamptz) end`,
         updatedAt: values.updatedAt,
       },
     });
@@ -956,6 +1022,7 @@ function publicAssertion(
     sourcePolicyId: policyId,
     factualReviewerRef,
     rightsReviewerRef,
+    capturedAt: sourceCapturedAt(record, publishedAt),
     observedAt,
     reviewedAt,
   };

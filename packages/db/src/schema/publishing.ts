@@ -95,6 +95,7 @@ export const publishingStagedRecord = pgTable(
     sourcePolicyId: text("source_policy_id")
       .notNull()
       .references(() => publishingSourcePolicy.id),
+    capturedAt: timestamp("captured_at", { withTimezone: true, mode: "string" }).notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull(),
   },
   (table) => [
@@ -153,6 +154,7 @@ export const publishingPublishedAssertion = pgTable(
       .references(() => publishingSourcePolicy.id),
     factualReviewerRef: text("factual_reviewer_ref").notNull(),
     rightsReviewerRef: text("rights_reviewer_ref").notNull(),
+    capturedAt: timestamp("captured_at", { withTimezone: true, mode: "string" }).notNull(),
     observedAt: timestamp("observed_at", { withTimezone: true, mode: "string" }),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true, mode: "string" }).notNull(),
   },
