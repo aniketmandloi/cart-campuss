@@ -409,25 +409,8 @@ export async function applyOperatorImport(
   const payloadHash = await sha256(canonicalJson(parsed));
   const now = (deps.now ?? (() => new Date()))();
 
-  const [existing] = await deps.db
-    .select({
-      payloadHash: publishingImportBatch.payloadHash,
-      result: publishingImportBatch.result,
-    })
-    .from(publishingImportBatch)
-    .where(eq(publishingImportBatch.idempotencyKey, parsed.idempotencyKey))
-    .limit(1);
-
-  if (existing) {
-    if (existing.payloadHash !== payloadHash) {
-      throw new PublishingRejected(
-        "idempotency-conflict",
-        "This idempotency key was already used for a different import.",
-      );
-    }
-    const stored = storedResultSchema.parse(existing.result);
-    return { ...stored, status: "replayed" };
-  }
+  const replay = await readIdempotentReplay(deps.db, parsed.idempotencyKey, payloadHash);
+  if (replay) return replay;
 
   const current = await readCurrentProjection(deps.db);
   const failures = parsed.publish ? collectFailures(parsed, current, now) : [];
@@ -506,6 +489,8 @@ export async function applyOperatorImport(
   try {
     await commitNeonHttpBatch(deps.db, statements);
   } catch (error) {
+    const raced = await readIdempotentReplay(deps.db, parsed.idempotencyKey, payloadHash);
+    if (raced) return raced;
     const secrets = [
       deps.operatorToken ?? "",
       parsed.sourcePolicy.contractText ?? "",
@@ -529,6 +514,30 @@ export async function runOperatorCommand(deps: PublishingDeps, importText: strin
     throw new PublishingRejected("validation", "Import file was not valid JSON.");
   }
   return applyOperatorImport(deps, deps.operatorToken ?? undefined, input);
+}
+
+async function readIdempotentReplay(
+  db: Database,
+  idempotencyKey: string,
+  payloadHash: string,
+): Promise<OperatorResult | null> {
+  const [existing] = await db
+    .select({
+      payloadHash: publishingImportBatch.payloadHash,
+      result: publishingImportBatch.result,
+    })
+    .from(publishingImportBatch)
+    .where(eq(publishingImportBatch.idempotencyKey, idempotencyKey))
+    .limit(1);
+  if (!existing) return null;
+  if (existing.payloadHash !== payloadHash) {
+    throw new PublishingRejected(
+      "idempotency-conflict",
+      "This idempotency key was already used for a different import.",
+    );
+  }
+  const stored = storedResultSchema.parse(existing.result);
+  return { ...stored, status: "replayed" };
 }
 
 function parseImport(input: unknown): OperatorImport {

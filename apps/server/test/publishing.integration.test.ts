@@ -543,6 +543,45 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(visitorText(detail).includes("1HGCM82633A004352"), false);
     assert.equal(visitorText(detail).includes("private.seller@example.test"), false);
   });
+
+  it("returns a replay when identical imports are submitted together", async () => {
+    const input = reviewedImport("Concurrent Replay Coupe");
+    const [first, second] = await Promise.all([
+      caller(OPERATOR_TOKEN).publishing.submit(structuredClone(input)),
+      caller(OPERATOR_TOKEN).publishing.submit(structuredClone(input)),
+    ]);
+    assert.deepEqual([first.status, second.status].sort(), ["published", "replayed"]);
+    assert.equal((await caller(null).publishing.search({ q: "Concurrent Replay Coupe" })).length, 1);
+    const detail = await caller(null).publishing.detail({ subjectId: "subject-concurrent-replay-coupe" });
+    assert.equal(detail?.facts[0]?.rawValue, "100 PS");
+  });
+
+  it("rejects a different import that loses the race for an idempotency key", async () => {
+    const original = reviewedImport("Concurrent Conflict Coupe");
+    const changed = structuredClone(original);
+    const changedFact = changed.records[0]?.document.facts[0];
+    assert.ok(changedFact);
+    changedFact.rawValue = "999 PS";
+    const settled = await Promise.allSettled([
+      caller(OPERATOR_TOKEN).publishing.submit(original),
+      caller(OPERATOR_TOKEN).publishing.submit(changed),
+    ]);
+    const fulfilled = settled.filter((result) => result.status === "fulfilled");
+    const rejected = settled.filter((result) => result.status === "rejected");
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    const published = fulfilled[0];
+    const conflict = rejected[0];
+    assert.ok(published && published.status === "fulfilled");
+    assert.equal(published.value.status, "published");
+    assert.ok(conflict && conflict.status === "rejected");
+    assert.match(String(conflict.reason), /idempotency-conflict/);
+    assert.doesNotMatch(String(conflict.reason), /did not commit/);
+    assert.equal((await caller(null).publishing.search({ q: "Concurrent Conflict Coupe" })).length, 1);
+    const detail = await caller(null).publishing.detail({ subjectId: "subject-concurrent-conflict-coupe" });
+    const rawValue = detail?.facts[0]?.rawValue;
+    assert.ok(rawValue === "100 PS" || rawValue === "999 PS");
+  });
 });
 
 function caller(token: string | null) {
