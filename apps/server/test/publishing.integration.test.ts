@@ -1252,6 +1252,101 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(new Date(backfilledStage.updatedAt).toISOString(), "2026-10-22T12:05:00.000Z");
   });
 
+  it("advances a canonical applicability to a new reviewed policy revision atomically", async () => {
+    const baseline = labelledCatalogueImport("Policy Renewal Dossier");
+    await caller(OPERATOR_TOKEN).publishing.submit(baseline);
+    const subjectId = baseline.records[0]!.document.canonicalSubjectId;
+    const oldPolicy = (await db.select().from(publishingSourcePolicy)).find((row) => row.id === baseline.sourcePolicy.id);
+    const oldCataloguePolicy = (await db.select().from(catalogueSourcePolicy)).find((row) => row.id === baseline.sourcePolicy.id);
+    for (const withBlock of [true, false]) {
+      const next = structuredClone(baseline);
+      next.idempotencyKey += `-renew-${withBlock}`;
+      next.sourcePolicy.id = crypto.randomUUID();
+      next.sourcePolicy.displayName = `Renewed policy ${withBlock}`;
+      next.sourcePolicy.reviewerRef = "renewal-reviewer";
+      next.sourcePolicy.attribution = "Renewed attribution";
+      if (!withBlock) delete next.records[0]!.catalogue;
+      next.records[0]!.document.facts[0]!.rawValue = "102 PS";
+      assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(next)).status, "published");
+      const applicability = (await db.select().from(catalogueApplicability)).find((row) => row.id === subjectId);
+      assert.equal(applicability?.sourcePolicyId, next.sourcePolicy.id);
+      assert.equal(applicability?.marketVariantId, baseline.records[0]!.catalogue!.marketVariant.id);
+      const detail = await caller(null).publishing.detail({ subjectId });
+      assert.equal(detail?.sourcePolicyId, next.sourcePolicy.id);
+      assert.equal(detail?.policyReviewerRef, "renewal-reviewer");
+      assert.equal(detail?.facts[0]?.rawValue, "102 PS");
+      const hit = (await caller(null).catalogue.search({ q: "Policy Renewal Dossier" })).hits[0];
+      assert.ok(hit);
+      const page = await caller(null).catalogue.read(catalogueReadInput(hit.href));
+      assert.equal(page.availability, "visible");
+      if (page.availability !== "visible") throw new Error("Expected visible renewal");
+      assert.equal(page.policy.name, next.sourcePolicy.displayName);
+      const denied = structuredClone(next);
+      denied.idempotencyKey += "-denied";
+      denied.sourcePolicy.id = crypto.randomUUID();
+      denied.sourcePolicy.factPermission = "denied";
+      assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(denied)).status, "held");
+      assert.equal((await caller(null).publishing.detail({ subjectId }))?.sourcePolicyId, next.sourcePolicy.id);
+    }
+    assert.deepEqual((await db.select().from(publishingSourcePolicy)).find((row) => row.id === baseline.sourcePolicy.id), oldPolicy);
+    assert.deepEqual((await db.select().from(catalogueSourcePolicy)).find((row) => row.id === baseline.sourcePolicy.id), oldCataloguePolicy);
+  });
+
+  it("allows a newly captured reviewed renewal after cleanup without changing provider ownership", async () => {
+    const input = labelledCatalogueImport("Cleaned Renewal Dossier");
+    input.sourcePolicy.retentionSeconds = 60;
+    input.records[0]!.document.facts.forEach((item) => { item.retrievedAt = BASE_TIME; });
+    input.records[0]!.catalogue!.priceReference!.retrievedOn = BASE_TIME;
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    const later = () => new Date(testClock().getTime() + 61_000);
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: later }, OPERATOR_TOKEN);
+    assert.equal(await caller(null, later).publishing.detail({ subjectId }), null);
+    const hijack = structuredClone(input);
+    hijack.idempotencyKey += "-other-provider";
+    hijack.providerKey = "other-provider";
+    hijack.sourcePolicy.providerKey = hijack.providerKey;
+    hijack.sourcePolicy.id = crypto.randomUUID();
+    hijack.records[0]!.document.facts.forEach((item) => {
+      item.providerKey = hijack.providerKey;
+      item.retrievedAt = later().toISOString();
+    });
+    hijack.records[0]!.catalogue!.priceReference!.retrievedOn = later().toISOString();
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(hijack)).rejection?.code, "identity");
+    input.idempotencyKey += "-new-capture";
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.records[0]!.document.facts.forEach((item) => {
+      item.retrievedAt = later().toISOString();
+      item.rawValue += " newly captured";
+    });
+    input.records[0]!.catalogue!.priceReference!.retrievedOn = later().toISOString();
+    input.records[0]!.document.media[0]!.sourceUrl += "-new-capture";
+    input.records[0]!.privatePayload.marker += "-new-capture";
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(input)).status, "published");
+    assert.equal((await caller(null, later).publishing.detail({ subjectId }))?.sourcePolicyId, input.sourcePolicy.id);
+  });
+
+  it("does not extend retained components when a policy renewal grants longer retention", async () => {
+    const input = labelledCatalogueImport("Retained Renewal Dossier");
+    input.sourcePolicy.retentionSeconds = 60;
+    input.records[0]!.document.facts.forEach((item) => { item.retrievedAt = BASE_TIME; });
+    input.records[0]!.catalogue!.priceReference!.retrievedOn = BASE_TIME;
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    const later = () => new Date(testClock().getTime() + 30_000);
+    input.idempotencyKey += "-longer-policy";
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.retentionSeconds = 120;
+    input.records[0]!.document.facts.forEach((item) => { item.retrievedAt = later().toISOString(); });
+    input.records[0]!.catalogue!.priceReference!.retrievedOn = later().toISOString();
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(input)).status, "published");
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    assert.ok(await caller(null, later).publishing.detail({ subjectId }));
+    const cutoff = () => new Date(testClock().getTime() + 60_000);
+    assert.equal(await caller(null, cutoff).publishing.detail({ subjectId }), null);
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: cutoff }, OPERATOR_TOKEN);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+  });
+
   it("holds mismatched existing applicability even when the catalogue block is omitted", async () => {
     const baseline = labelledCatalogueImport("Canonical Context Dossier");
     assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(baseline)).status, "published");

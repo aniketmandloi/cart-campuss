@@ -617,6 +617,11 @@ export async function applyOperatorImport(
         }),
       );
       statements.push(...catalogueIdentityStatements(deps.db, parsed, record, policyId));
+      if (!record.catalogue && context) {
+        statements.push(...cataloguePolicyStatements(deps.db, parsed.sourcePolicy, policyId));
+        statements.push(deps.db.update(catalogueApplicability).set({ sourcePolicyId: policyId })
+          .where(eq(catalogueApplicability.id, subjectId)));
+      }
     }
     statements.push(
       deps.db
@@ -950,6 +955,9 @@ function evaluateRecord(
   )) {
     return { externalId, code: "identity", message: "The reviewed document does not match the existing canonical applicability." };
   }
+  if (context && !policy.displayName && policy.id !== context.sourcePolicyId) {
+    return { externalId, code: "rights", message: "A new catalogue policy revision needs an explicit display name." };
+  }
   if (record.factualReview.outcome !== "passed" || !record.factualReview.reviewerRef) {
     return { externalId, code: "factual", message: "Factual review has not passed." };
   }
@@ -1044,6 +1052,7 @@ async function readCurrentProjection(db: Database): Promise<CurrentProjection> {
 function canonicalContexts(db: Database, subjectIds: string[]) {
   return db.select({
     id: catalogueApplicability.id,
+    sourcePolicyId: catalogueApplicability.sourcePolicyId,
     marketVariantId: catalogueApplicability.marketVariantId,
     modelYearId: catalogueApplicability.modelYearId,
     salesMarketId: catalogueApplicability.salesMarketId,
@@ -1222,7 +1231,13 @@ function upsertStaged(
         rightsReviewerRef: values.rightsReviewerRef,
         sourcePolicyId: values.sourcePolicyId,
         // A change to one component cannot renew unchanged facts, media, or private payload.
-        capturedAt: sql`least(${publishingStagedRecord.capturedAt}, cast(${values.capturedAt} as timestamptz))`,
+        capturedAt: sql`least(${publishingStagedRecord.capturedAt}, cast(${values.capturedAt} as timestamptz),
+          (select case when prior_policy.suspended then '-infinity'::timestamptz else
+            least(${publishingStagedRecord.capturedAt} + prior_policy.retention_seconds * interval '1 second',
+              coalesce(prior_policy.permission_expires_at, 'infinity'::timestamptz))
+            - ${parsed.sourcePolicy.retentionSeconds} * interval '1 second' end
+          from ${publishingSourcePolicy} as prior_policy
+          where prior_policy.id = ${publishingStagedRecord.sourcePolicyId}))`,
         updatedAt: values.updatedAt,
       },
     });
@@ -1441,35 +1456,7 @@ function catalogueIdentityStatements(
         )
         .limit(1),
     ),
-    db
-      .insert(catalogueSourcePolicy)
-      .values({
-        id: policyId,
-        name: displayName,
-        audience: "public",
-        permitsPublicCatalogue: true,
-        rightsReview: "reviewed",
-        attribution: parsed.sourcePolicy.attribution,
-        internalNote: "",
-      })
-      .onConflictDoNothing({ target: catalogueSourcePolicy.id }),
-    db.insert(catalogueSourcePolicy).select(
-      db
-        .select()
-        .from(catalogueSourcePolicy)
-        .where(
-          and(
-            eq(catalogueSourcePolicy.id, policyId),
-            sql`${catalogueSourcePolicy.name} is distinct from ${displayName}
-              or ${catalogueSourcePolicy.audience} is distinct from 'public'
-              or ${catalogueSourcePolicy.permitsPublicCatalogue} is distinct from true
-              or ${catalogueSourcePolicy.rightsReview} is distinct from 'reviewed'
-              or ${catalogueSourcePolicy.attribution} is distinct from ${parsed.sourcePolicy.attribution}
-              or ${catalogueSourcePolicy.internalNote} is distinct from ''`,
-          ),
-        )
-        .limit(1),
-    ),
+    ...cataloguePolicyStatements(db, parsed.sourcePolicy, policyId),
     db
       .insert(catalogueApplicability)
       .values({
@@ -1481,7 +1468,10 @@ function catalogueIdentityStatements(
         publicationStatus: "published",
         synthetic: false,
       })
-      .onConflictDoNothing({ target: catalogueApplicability.id }),
+      .onConflictDoUpdate({
+        target: catalogueApplicability.id,
+        set: { sourcePolicyId: policyId },
+      }),
     db.insert(catalogueApplicability).select(
       db
         .select()
@@ -1492,7 +1482,6 @@ function catalogueIdentityStatements(
             sql`${catalogueApplicability.marketVariantId} is distinct from ${catalogue.marketVariant.id}
               or ${catalogueApplicability.modelYearId} is distinct from ${catalogue.modelYear.id}
               or ${catalogueApplicability.salesMarketId} is distinct from ${catalogue.salesMarket.id}
-              or ${catalogueApplicability.sourcePolicyId} is distinct from ${policyId}
               or ${catalogueApplicability.publicationStatus} is distinct from 'published'
               or ${catalogueApplicability.synthetic} is distinct from false`,
           ),
@@ -1527,6 +1516,42 @@ function catalogueIdentityStatements(
     );
   }
   return statements;
+}
+
+function cataloguePolicyStatements(db: Database, policy: SourcePolicyInput, policyId: string): BatchItem<"pg">[] {
+  const displayName = policy.displayName;
+  if (!displayName) return [];
+  return [
+    db
+      .insert(catalogueSourcePolicy)
+      .values({
+        id: policyId,
+        name: displayName,
+        audience: "public",
+        permitsPublicCatalogue: true,
+        rightsReview: "reviewed",
+        attribution: policy.attribution,
+        internalNote: "",
+      })
+      .onConflictDoNothing({ target: catalogueSourcePolicy.id }),
+    db.insert(catalogueSourcePolicy).select(
+      db
+        .select()
+        .from(catalogueSourcePolicy)
+        .where(
+          and(
+            eq(catalogueSourcePolicy.id, policyId),
+            sql`${catalogueSourcePolicy.name} is distinct from ${displayName}
+              or ${catalogueSourcePolicy.audience} is distinct from 'public'
+              or ${catalogueSourcePolicy.permitsPublicCatalogue} is distinct from true
+              or ${catalogueSourcePolicy.rightsReview} is distinct from 'reviewed'
+              or ${catalogueSourcePolicy.attribution} is distinct from ${policy.attribution}
+              or ${catalogueSourcePolicy.internalNote} is distinct from ''`,
+          ),
+        )
+        .limit(1),
+    ),
+  ];
 }
 
 function asPublicPrice(value: unknown): PublishingPriceReference | null {
