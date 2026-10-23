@@ -9,6 +9,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.mjs",
     "operator": "tsx src/operator-command.ts",
+    "test": "tsx --test test/publishing.integration.test.ts",
     "env:generate": "varlock codegen"
   },
   "dependencies": {
