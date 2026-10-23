@@ -70,3 +70,11 @@ _Avoid_: Average finance amount
 **TakeHomeIncomeScenario**:
 A suggested monthly income under explicit car-cost and existing-commitment budget ratios. It is not a lender's salary requirement or credit decision.
 _Avoid_: Salary required, loan eligibility
+
+**SourcePolicy**:
+The reviewed permission for one source: which fields and places may be shown, the attribution, whether an image may be used, how long a copy may be kept, what derivatives and aggregations are forbidden, how often the source must be refreshed, when the permission expires, and what a takedown or deletion requires. Fact permission and image permission are separate. Public reuse stays denied until that particular use is reviewed.
+_Avoid_: Contract, blanket licence, public URL
+
+**Public projection**:
+The visitor-visible catalogue assertions that have passed identity resolution, factual review, and rights review together. A new projection replaces what visitors can see only as a whole.
+_Avoid_: Staging record, fixture, private preview
