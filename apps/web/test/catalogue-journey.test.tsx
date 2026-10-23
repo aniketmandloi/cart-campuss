@@ -2,14 +2,9 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { catalogueSearchStatement } from "@cart-campuss/api/catalogue";
 import { insertSyntheticPreviewFixture } from "@cart-campuss/api/catalogue-fixture";
 import { createCatalogueContextFromClient } from "@cart-campuss/api/catalogue-runtime";
-import {
-  explainQuery,
-  openIsolatedCatalogueDatabase,
-  runPsql,
-} from "@cart-campuss/api/psql-client";
+import { openIsolatedCatalogueDatabase, runPsql } from "@cart-campuss/api/psql-client";
 import { appRouter } from "@cart-campuss/api/routers/index";
 
 import { CatalogueDetailView, CatalogueSearchView } from "../src/catalogue/views";
@@ -32,13 +27,11 @@ describe(
     let publicCaller: ReturnType<typeof appRouter.createCaller>;
     let previewCaller: ReturnType<typeof appRouter.createCaller>;
     let schema = "";
-    let client: ReturnType<typeof openIsolatedCatalogueDatabase>["client"] | undefined;
     let closeDatabase: (() => void) | undefined;
 
     before(async () => {
       const isolated = openIsolatedCatalogueDatabase({ databaseUrl, psql });
       schema = isolated.schema;
-      client = isolated.client;
       closeDatabase = isolated.close;
       try {
         const preview = createCatalogueContextFromClient(isolated.client, true);
@@ -226,27 +219,6 @@ order by case when normalized_name = 'rank probe' then 0 else 1 end,
         ["app_f_order", "app_é_order"].sort(),
       );
       assert.equal(found.hits.length, 2);
-    });
-
-    test("the name index can serve the prefix predicate", () => {
-      if (!client) throw new Error("The isolated catalogue database is not open.");
-      const preview = createCatalogueContextFromClient(client, true);
-      const statement = catalogueSearchStatement(preview.db, preview.access, "kestrel");
-      const plan = explainQuery({
-        databaseUrl,
-        psql,
-        schema,
-        sql: statement.sql,
-        params: statement.params,
-      });
-      assert.match(plan, /catalogue_alias_name_idx/);
-      const listed = runPsql({
-        databaseUrl,
-        psql,
-        schema,
-        sql: `select indexdef from pg_indexes where schemaname = '${schema}' and indexname = 'catalogue_alias_name_idx'`,
-      });
-      assert.match(listed, /text_pattern_ops/);
     });
   },
 );

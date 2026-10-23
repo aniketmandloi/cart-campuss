@@ -59,6 +59,14 @@ pnpm --filter server build
 
 The native workspace is part of `pnpm check-types`. This slice does not add a native catalogue screen.
 
+The name-index plan is not part of `pnpm test`. Run it separately. It creates a unique schema, explains the prefix search, checks that `catalogue_alias_name_idx` uses `text_pattern_ops`, and drops only that schema:
+
+```bash
+CATALOGUE_TEST_DATABASE_URL='postgres://127.0.0.1:5432/catalogue' PSQL="$(command -v psql)" pnpm db:diagnose-search
+```
+
+`DATABASE_URL` is used when `CATALOGUE_TEST_DATABASE_URL` is empty. The database must be on localhost. The diagnostic does not drop `public`.
+
 ## What you should see
 
 1. With no web `DATABASE_URL`, `/` says the catalogue database is not configured and names no car.

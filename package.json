@@ -18,6 +18,7 @@
     "db:generate": "turbo run db:generate -F @cart-campuss/db --",
     "db:migrate": "turbo run db:migrate -F @cart-campuss/db --",
     "db:seed-fixture": "tsx packages/db/src/seed-fixture.ts",
+    "db:diagnose-search": "tsx packages/api/src/diagnose-catalogue-search.ts",
     "test": "tsx --tsconfig apps/web/tsconfig.json --test apps/web/test/*.test.tsx",
     "deploy:setup": "pnpm dlx vercel link",
     "dev:vercel": "pnpm dlx vercel dev -L",

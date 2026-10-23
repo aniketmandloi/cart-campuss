@@ -128,6 +128,7 @@ cart-campuss/
 - `pnpm run db:generate`: Generate a Drizzle migration from the schema
 - `pnpm run db:migrate`: Apply the reviewed catalogue migration
 - `pnpm run db:seed-fixture`: Insert the synthetic preview fixture through `psql`
+- `pnpm run db:diagnose-search`: Explain the catalogue name index in a throwaway schema. Not part of `pnpm test`
 - `pnpm run db:studio`: Open database studio UI
 - `pnpm run deploy:setup`: Link this repo to a Vercel project (first-time setup)
 - `pnpm run dev:vercel`: Run the Vercel Services dev environment locally
