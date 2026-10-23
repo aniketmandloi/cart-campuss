@@ -223,6 +223,11 @@ export const cataloguePriceReference = pgTable(
     observedOn: text("observed_on").notNull(),
     reviewStatus: text("review_status").notNull(),
     publicationStatus: text("publication_status").notNull(),
+    sourceTitle: text("source_title").notNull(),
+    sourceUrl: text("source_url"),
+    sourceIdentifier: text("source_identifier"),
+    retrievedOn: text("retrieved_on").notNull(),
+    reviewedOn: text("reviewed_on"),
   },
   (table) => [
     check(
@@ -244,6 +249,18 @@ export const cataloguePriceReference = pgTable(
     check(
       "catalogue_price_reference_safe_integer",
       sql`${table.amountMinor} between -9007199254740991 and 9007199254740991`,
+    ),
+    check(
+      "catalogue_price_reference_identified_source",
+      sql`length(btrim(${table.sourceTitle})) > 0 and ((${table.sourceUrl} is not null and length(btrim(${table.sourceUrl})) > 0) or (${table.sourceIdentifier} is not null and length(btrim(${table.sourceIdentifier})) > 0))`,
+    ),
+    check(
+      "catalogue_price_reference_retrieved",
+      sql`length(btrim(${table.retrievedOn})) > 0`,
+    ),
+    check(
+      "catalogue_price_reference_review_date",
+      sql`(${table.reviewStatus} = 'reviewed' and ${table.reviewedOn} is not null and length(btrim(${table.reviewedOn})) > 0) or ${table.reviewStatus} = 'unreviewed'`,
     ),
     index("catalogue_price_reference_applicability_idx").on(table.applicabilityId),
   ],

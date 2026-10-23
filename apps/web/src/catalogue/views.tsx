@@ -145,9 +145,17 @@ function Dossier({ page }: { page: Extract<CatalogueCarPage, { availability: "vi
             </p>
             <p>{priceReference.basis}</p>
             <p>Tax inclusivity: {priceReference.taxInclusivity}</p>
+            <p>Source: {sourceText(priceReference.sourceTitle, priceReference.sourceUrl)}</p>
+            {priceReference.sourceIdentifier ? (
+              <p>Source identifier: {priceReference.sourceIdentifier}</p>
+            ) : null}
             <p>Observed {priceReference.observedOn}</p>
+            <p>Retrieved {priceReference.retrievedOn}</p>
             <p>Review: {priceReference.reviewStatus}</p>
+            {priceReference.reviewedOn ? <p>Reviewed {priceReference.reviewedOn}</p> : null}
             <p>Source policy: {priceReference.policyName}</p>
+            <p>Audience: {priceReference.policyAudience}</p>
+            <p>{priceReference.policyAttribution}</p>
           </>
         ) : (
           <p>No reviewed price reference.</p>

@@ -93,8 +93,15 @@ test("a sourced page shows the source, an explicit unknown, a conflict, and a pr
       taxInclusivity: "unspecified",
       salesMarketName: "Probe market",
       observedOn: "2026-10-22",
+      retrievedOn: "2026-10-23",
+      reviewedOn: "2026-10-23",
       reviewStatus: "reviewed",
+      sourceTitle: "Reviewed public probe price sheet",
+      sourceUrl: "https://example.invalid/harbor-probe-price",
+      sourceIdentifier: null,
       policyName: "Reviewed public policy",
+      policyAudience: "public",
+      policyAttribution: "Reviewed public probe attribution.",
     },
   };
   const html = renderToStaticMarkup(<CatalogueDetailView state={{ kind: "page", page }} />);
@@ -103,6 +110,10 @@ test("a sourced page shows the source, an explicit unknown, a conflict, and a pr
   assert.match(html, /Reviewed public probe dossier/);
   assert.match(html, /₹1,000\.00/);
   assert.match(html, /100000 INR minor units/);
+  assert.match(html, /Reviewed public probe price sheet/);
+  assert.match(html, /href="https:\/\/example\.invalid\/harbor-probe-price"/);
+  assert.match(html, /Source policy: Reviewed public policy/);
+  assert.doesNotMatch(html, /Source: Reviewed public policy/);
   assert.match(html, /Not a listing/);
   assert.match(html, /No market data/);
   assert.match(html, /Not the calendar build year/);

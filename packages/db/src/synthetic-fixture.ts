@@ -315,6 +315,11 @@ export async function insertSyntheticPreviewFixture(db: Database) {
       observedOn: "2026-10-22",
       reviewStatus: "reviewed",
       publicationStatus: "fixture",
+      sourceTitle: "Synthetic fixture price sheet",
+      sourceUrl: null,
+      sourceIdentifier: "fixture-price-kestrel-2026",
+      retrievedOn: "2026-10-23",
+      reviewedOn: "2026-10-23",
     })
     .onConflictDoNothing();
 }

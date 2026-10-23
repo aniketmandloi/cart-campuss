@@ -113,6 +113,9 @@ describe(
       assert.match(detail, /reviewed/);
       assert.match(detail, /₹1,000\.00/);
       assert.match(detail, /100000 INR minor units/);
+      assert.match(detail, /Reviewed public probe price sheet/);
+      assert.match(detail, /href="https:\/\/example\.invalid\/harbor-probe-price"/);
+      assert.match(detail, /Source policy: Reviewed public policy/);
       assert.match(detail, /Not a listing/);
       assert.match(detail, /No market data/);
       assert.match(detail, /Not the calendar build year/);
@@ -169,6 +172,8 @@ describe(
         "The synthetic fixture keeps 100 N·m as the curated torque.",
         "₹4,24,242.42",
         "42424242 INR minor units",
+        "Synthetic fixture price sheet",
+        "Source identifier: fixture-price-kestrel-2026",
         "official price reference",
         "unspecified",
         "Not a listing",
@@ -309,9 +314,11 @@ insert into catalogue_sourced_fact (
 );
 insert into catalogue_price_reference (
   id, applicability_id, source_policy_id, sales_market_id, amount_minor, currency, minor_unit_exponent, basis,
-  tax_inclusivity, observed_on, review_status, publication_status
+  tax_inclusivity, observed_on, review_status, publication_status, source_title, source_url, source_identifier,
+  retrieved_on, reviewed_on
 ) values (
   'price_harbor_probe', 'app_harbor_probe', 'policy_public_probe', 'mkt_probe', 100000, 'INR', 2, 'official price reference',
-  'unspecified', '2026-10-22', 'reviewed', 'published'
+  'unspecified', '2026-10-22', 'reviewed', 'published', 'Reviewed public probe price sheet',
+  'https://example.invalid/harbor-probe-price', null, '2026-10-23', '2026-10-23'
 );
 `;

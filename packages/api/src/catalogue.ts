@@ -76,8 +76,15 @@ export type CataloguePriceReference = {
   taxInclusivity: string;
   salesMarketName: string;
   observedOn: string;
+  retrievedOn: string;
+  reviewedOn: string | null;
   reviewStatus: string;
+  sourceTitle: string;
+  sourceUrl: string | null;
+  sourceIdentifier: string | null;
   policyName: string;
+  policyAudience: string;
+  policyAttribution: string;
 };
 
 export type CataloguePolicy = {
@@ -551,8 +558,15 @@ async function readPrices(
       basis: cataloguePriceReference.basis,
       taxInclusivity: cataloguePriceReference.taxInclusivity,
       observedOn: cataloguePriceReference.observedOn,
+      retrievedOn: cataloguePriceReference.retrievedOn,
+      reviewedOn: cataloguePriceReference.reviewedOn,
       reviewStatus: cataloguePriceReference.reviewStatus,
+      sourceTitle: cataloguePriceReference.sourceTitle,
+      sourceUrl: cataloguePriceReference.sourceUrl,
+      sourceIdentifier: cataloguePriceReference.sourceIdentifier,
       policyName: catalogueSourcePolicy.name,
+      policyAudience: catalogueSourcePolicy.audience,
+      policyAttribution: catalogueSourcePolicy.attribution,
       salesMarketName: catalogueSalesMarket.name,
     })
     .from(cataloguePriceReference)
@@ -583,8 +597,15 @@ async function readPrices(
         taxInclusivity: row.taxInclusivity,
         salesMarketName: row.salesMarketName,
         observedOn: row.observedOn,
+        retrievedOn: row.retrievedOn,
+        reviewedOn: row.reviewedOn,
         reviewStatus: row.reviewStatus,
+        sourceTitle: row.sourceTitle,
+        sourceUrl: row.sourceUrl,
+        sourceIdentifier: row.sourceIdentifier,
         policyName: row.policyName,
+        policyAudience: row.policyAudience,
+        policyAttribution: row.policyAttribution,
       },
     ];
   });

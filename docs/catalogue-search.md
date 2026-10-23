@@ -26,10 +26,12 @@ Apply the reviewed migration on Neon, which is the driver Drizzle Kit uses:
 pnpm db:migrate
 ```
 
-That command runs Drizzle Kit against `DATABASE_URL` and does not print the connection string. The Neon driver speaks WebSocket, so a local Postgres URL is refused. For a local database, apply the same reviewed file with `psql` after removing Drizzle's statement markers:
+That command runs Drizzle Kit against `DATABASE_URL` and does not print the connection string. The Neon driver speaks WebSocket, so a local Postgres URL is refused. For a local database, apply the reviewed files in order with `psql` after removing Drizzle's statement markers. Do this before seeding. The price migration adds required source columns, so it expects a price table with no rows yet:
 
 ```bash
-sed 's/--> statement-breakpoint//g' packages/db/src/migrations/20261023083647_catalogue_search/migration.sql | psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f -
+for file in packages/db/src/migrations/*/migration.sql; do
+  sed 's/--> statement-breakpoint//g' "$file" | psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f -
+done
 ```
 
 Load the labelled synthetic fixture with `psql` (local PostgreSQL or a Postgres connection string):
@@ -61,6 +63,6 @@ The native workspace is part of `pnpm check-types`. This slice does not add a na
 
 1. With no web `DATABASE_URL`, `/` says the catalogue database is not configured and names no car.
 2. With the flag false, searching the fixture name says no published record matches. Opening `/cars/sample-hatch/series-one` says it is not in the public catalogue and does not print the fixture brand, price, or internal note.
-3. With the flag true, the same search returns one synthetic result. The overview lists the market, model year, and variant and does not show specifications. The selected URL shows the source, raw value, normalized value, unit, measurement standard, review, policy, an explicit unknown, the conflicting torque beside the curated value, the price reference in minor units, “Not a listing.”, “No market data”, and the model-year convention. There is no photograph and no `<img>`.
+3. With the flag true, the same search returns one synthetic result. The overview lists the market, model year, and variant and does not show specifications. The selected URL shows the source, raw value, normalized value, unit, measurement standard, review, policy, an explicit unknown, the conflicting torque beside the curated value, and the price reference in minor units. The price names its source sheet and source identifier separately from the source policy, and says “Not a listing.” The page also says “No market data” and states the model-year convention. There is no photograph and no `<img>`.
 4. The price figure is the only sport-accent (`#c6f24e`) text. The Search button is the white inverted action, with black text. The name field is graphite. The ground is black. Type is the self-hosted Inter file, with the SIL license linked from the footer.
 5. Keyboard: the skip link appears on focus, then the name field, Search, and result links show a white focus outline. At 200% zoom the page stays one column and the fact table scrolls inside its region. Reduced motion does not change the page, because it does not animate.
