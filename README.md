@@ -38,6 +38,8 @@ This project uses PostgreSQL with Drizzle ORM.
 pnpm run db:push
 ```
 
+Reviewed catalogue publishing uses a migration instead of `db:push`. See [docs/publishing-setup.md](docs/publishing-setup.md) for the operator credential, the migrate command, and the import command.
+
 Then, run the development server:
 
 ```bash

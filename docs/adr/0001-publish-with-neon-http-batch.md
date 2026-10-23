@@ -1,0 +1,3 @@
+# Publish the public projection with a Neon HTTP batch
+
+The starter database client is Drizzle on the Neon HTTP driver. That driver's `transaction()` method throws, so publication cannot use an interactive Drizzle transaction. A publication's writes run through Drizzle `batch()`, which the Neon client submits as one Postgres transaction. If any statement fails, Postgres rolls the batch back and the previous projection pointer stays where it is. Interactive transactions would need the WebSocket driver and a WebSocket package this workspace does not depend on. The integration test keeps this client and only points its HTTP endpoint at a temporary Postgres cluster.

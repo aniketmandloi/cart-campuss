@@ -1,0 +1,51 @@
+import { appRouter } from "@cart-campuss/api/routers/index";
+import type { Database } from "@cart-campuss/db";
+import { trpcServer } from "@hono/trpc-server";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
+
+import { createContext } from "./context";
+
+export type AppDeps = {
+  db: Database;
+  operatorToken: string | null;
+  corsOrigin: string;
+  log?: boolean;
+};
+
+export function createApp(deps: AppDeps) {
+  const app = new Hono();
+
+  if (deps.log !== false) {
+    app.use(logger());
+  }
+  app.use(
+    "/*",
+    cors({
+      origin: deps.corsOrigin,
+      allowMethods: ["GET", "POST", "OPTIONS"],
+    }),
+  );
+
+  app.use(
+    "/api/trpc/*",
+    trpcServer({
+      endpoint: "/api/trpc",
+      router: appRouter,
+      createContext: (_opts, context) => {
+        return createContext({
+          context,
+          db: deps.db,
+          operatorToken: deps.operatorToken,
+        });
+      },
+    }),
+  );
+
+  app.get("/", (c) => {
+    return c.text("OK");
+  });
+
+  return app;
+}
