@@ -1,23 +1,25 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import localFont from "next/font/local";
 
 import "../index.css";
 import Header from "@/components/header";
 import Providers from "@/components/providers";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+const inter = localFont({
+  src: "../fonts/InterVariable.woff2",
+  variable: "--font-inter",
+  display: "swap",
+  weight: "100 900",
+  fallback: ["sans-serif"],
+  adjustFontFallback: false,
 });
 
 export const metadata: Metadata = {
-  title: "cart-campuss",
-  description: "cart-campuss",
+  title: {
+    default: "Cart Campuss",
+    template: "%s · Cart Campuss",
+  },
+  description: "Find a car and read its sourced details.",
 };
 
 export default function RootLayout({
@@ -26,12 +28,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en" className={`${inter.variable} dark`}>
+      <body className="antialiased">
         <Providers>
-          <div className="grid grid-rows-[auto_1fr] h-svh">
+          <div className="flex min-h-svh flex-col">
+            <a className="skip-link" href="#catalogue">
+              Skip to catalogue
+            </a>
             <Header />
-            {children}
+            <div className="flex-1">{children}</div>
+            <footer className="px-4 py-6 text-sm text-muted-foreground">
+              <a href="/fonts/Inter-OFL.txt" className="inline-flex min-h-11 items-center">
+                Inter typeface, SIL Open Font License 1.1
+              </a>
+              <p>Copyright 2020 The Inter Project Authors.</p>
+            </footer>
           </div>
         </Providers>
       </body>
