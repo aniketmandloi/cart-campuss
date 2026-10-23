@@ -1140,13 +1140,30 @@ function factLeaksIdentifier(fact: ImportRecord["document"]["facts"][number]): b
 
 function textLeaksIdentifier(values: string[]): boolean {
   return values.some((value) => {
-    if (containsForbiddenIdentifier(value)) return true;
+    if (containsForbiddenIdentifier(value) || containsForbiddenQuery(value)) return true;
     try {
-      return containsForbiddenIdentifier(decodeURIComponent(value.replaceAll("+", " ")));
+      const decoded = decodeURIComponent(value.replaceAll("+", " "));
+      return containsForbiddenIdentifier(decoded) || containsForbiddenQuery(decoded);
     } catch {
+      // Malformed escapes must not bypass the independently decoded URL query checks above.
       return false;
     }
   });
+}
+
+function containsForbiddenQuery(value: string): boolean {
+  for (const match of value.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
+    let url: URL;
+    try {
+      url = new URL(match[0]);
+    } catch {
+      return true;
+    }
+    for (const [key, entry] of url.searchParams) {
+      if (forbiddenProperty(key) && entry.trim().length > 0) return true;
+    }
+  }
+  return false;
 }
 
 function forbiddenProperty(value: string): boolean {
@@ -1259,7 +1276,7 @@ function asPublicFacts(value: unknown): PublicFact[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const fact = publicFactSchema.safeParse(item);
-    return fact.success ? [fact.data] : [];
+    return fact.success && !factLeaksIdentifier(fact.data) ? [fact.data] : [];
   });
 }
 
@@ -1267,7 +1284,8 @@ function asPublicMedia(value: unknown): PublicMedia[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const media = publicMediaSchema.safeParse(item);
-    return media.success ? [media.data] : [];
+    return media.success && !textLeaksIdentifier([media.data.sourceUrl, media.data.altText, media.data.credit])
+      ? [media.data] : [];
   });
 }
 

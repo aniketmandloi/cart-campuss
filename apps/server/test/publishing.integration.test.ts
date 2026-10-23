@@ -656,6 +656,65 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal((await caller(null).publishing.detail({ subjectId: valid.records[0]!.document.canonicalSubjectId }))?.facts.length, 3);
   });
 
+  it("withholds normalized contact query keys across source URLs, media, and encoded metadata links", async () => {
+    const keys = ["phone_number", "phoneNumber", "mobile_number", "contact_phone", "phone%5Fnumber", "%70honeNumber", "CONTACT.PHONE"];
+    for (const [index, key] of keys.entries()) {
+      for (const target of ["fact", "media", "metadata"] as const) {
+        const input = reviewedImport(`Contact Query ${target} ${index} Coupe`);
+        const url = `https://example.test/?${key}=9876543210`;
+        if (target === "fact") input.records[0]!.document.facts[0]!.sourceUrl = url;
+        else if (target === "media") input.records[0]!.document.media[0]!.sourceUrl = url;
+        else input.sourcePolicy.attribution = `Source: ${encodeURIComponent(url)}`;
+        const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
+        assert.equal(result.status, "held", `${target}: ${key}`);
+        assert.equal(result.rejection?.code, "rights");
+        assert.equal(await caller(null).publishing.detail({ subjectId: input.records[0]!.document.canonicalSubjectId }), null);
+        assert.deepEqual(await caller(null).publishing.search({ q: input.records[0]!.document.displayName }), []);
+      }
+    }
+    const valid = reviewedImport("Safe Query Specifications Coupe");
+    const safeUrl = "https://example.test/?seller_price=9876543210&power=204%20PS&battery=77%20kWh";
+    valid.records[0]!.document.facts[0]!.sourceUrl = safeUrl;
+    valid.records[0]!.document.media[0]!.sourceUrl = safeUrl;
+    valid.sourcePolicy.attribution = `Source: ${encodeURIComponent(safeUrl)}`;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(valid)).status, "published");
+    const detail = await caller(null).publishing.detail({ subjectId: valid.records[0]!.document.canonicalSubjectId });
+    assert.equal(detail?.facts[0]?.sourceUrl, safeUrl);
+    assert.equal(detail?.media[0]?.sourceUrl, safeUrl);
+  });
+
+  it("screens contact query parameters even when another parameter has malformed percent encoding", async () => {
+    for (const target of ["fact", "media", "metadata"] as const) {
+      const input = reviewedImport(`Malformed Contact Query ${target} Coupe`);
+      const url = "https://example.test/?phone=98765+43210&discount=50%";
+      if (target === "fact") input.records[0]!.document.facts[0]!.sourceUrl = url;
+      else if (target === "media") input.records[0]!.document.media[0]!.sourceUrl = url;
+      else input.sourcePolicy.attribution = `Source: ${url}`;
+      const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
+      assert.equal(result.status, "held", target);
+      assert.equal(result.rejection?.code, "rights");
+    }
+  });
+
+  it("filters legacy contact links from facts and media while retaining safe sourced facts", async () => {
+    const input = reviewedImport("Legacy Contact Query Coupe");
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    const detail = await caller(null).publishing.detail({ subjectId });
+    assert.ok(detail);
+    for (const url of ["https://example.test/?phone_number=9876543210", "https://example.test/?phone=98765+43210&discount=50%"]) {
+      await db.update(publishingPublishedAssertion).set({
+        facts: [...detail.facts, { ...detail.facts[0], property: "torque", sourceUrl: url }],
+        media: detail.media.map((item) => ({ ...item, sourceUrl: url })),
+      }).where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}`);
+      const legacy = await caller(null).publishing.detail({ subjectId });
+      assert.equal(legacy?.facts.length, 1);
+      assert.equal(legacy?.facts[0]?.property, "power");
+      assert.deepEqual(legacy?.media, []);
+      assert.equal((await caller(null).publishing.search({ q: input.records[0]!.document.displayName })).length, 1);
+    }
+  });
+
   it("rejects unsafe fact and media source URLs before staging and filters unsafe legacy URLs on reads", async () => {
     for (const [index, url] of ["javascript:alert(1)", "data:text/html,unsafe", "file:///private/source"].entries()) {
       for (const target of ["fact", "media"] as const) {
