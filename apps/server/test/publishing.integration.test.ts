@@ -620,6 +620,36 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     );
   });
 
+  it("withholds domestic contacts and common UK plates across public prose, metadata, and encoded URLs", async () => {
+    const cases: Array<(input: ReviewedImport) => void> = [
+      (input) => { input.records[0]!.document.media[0]!.altText = "Ask the private seller on 98765 43210"; },
+      (input) => { input.records[0]!.document.media[0]!.altText = "Call 98765 43210"; },
+      (input) => { input.sourcePolicy.attribution = "Seller phone: 09876543210"; },
+      (input) => { input.records[0]!.document.facts[0]!.standard = "Contact 9876543210"; },
+      (input) => { input.records[0]!.document.facts[0]!.sourceUrl = "https://example.test/?phone=%39%38%37%36%35%34%33%32%31%30"; },
+      (input) => { input.records[0]!.document.media[0]!.sourceUrl = "https://example.test/contact/98765%2043210"; },
+      (input) => { input.records[0]!.document.media[0]!.altText = "Vehicle AB12 CDE at the showroom"; },
+      (input) => { input.records[0]!.document.facts[0]!.sourceUrl = "https://example.test/vehicle/AB12%20CDE"; },
+      (input) => { input.records[0]!.document.media[0]!.sourceUrl = "https://example.test/vehicle/%41%42%31%32%43%44%45"; },
+    ];
+    for (const [index, change] of cases.entries()) {
+      const input = reviewedImport(`Domestic Privacy Case ${index} Coupe`);
+      change(input);
+      const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
+      assert.equal(result.status, "held", `privacy case ${index}`);
+      assert.equal(result.rejection?.code, "rights");
+      assert.equal(await caller(null).publishing.detail({ subjectId: input.records[0]!.document.canonicalSubjectId }), null);
+      assert.equal((await caller(null).publishing.search({ q: `Domestic Privacy Case ${index}` })).length, 0);
+    }
+    const valid = reviewedImport("Numeric Specifications Coupe");
+    valid.sourcePolicy.permittedFields.push("price", "productionYear");
+    valid.records[0]!.document.facts.push(fact(valid, "price", "9876543210"), fact(valid, "productionYear", "2026"));
+    valid.records[0]!.document.facts[1]!.unit = "INR";
+    valid.records[0]!.document.media[0]!.altText = "100 PS, INR 98,765,432.10, model years 2025 2026, WLTP Class 3";
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(valid)).status, "published");
+    assert.equal((await caller(null).publishing.detail({ subjectId: valid.records[0]!.document.canonicalSubjectId }))?.facts.length, 3);
+  });
+
   it("allows concurrent exact policy reuse and rejects a concurrent policy rewrite", async () => {
     const first = reviewedImport("Policy Race First Coupe");
     first.publish = false;

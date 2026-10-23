@@ -1084,15 +1084,20 @@ function normalizePropertyKey(value: string): string {
 
 const EMAIL_ADDRESS = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
 const INTERNATIONAL_PHONE = /(?:^|[^a-z0-9])\+\d(?:[\s().-]*\d){9,14}(?=$|[^0-9])/i;
+// Grouping or contact context distinguishes domestic contacts from numeric specifications.
+const DOMESTIC_PHONE = /(?:^|[^a-z0-9])(?:0[ .-]?)?[6-9]\d{4}[ .-]\d{5}(?=$|[^a-z0-9])/i;
+const CONTACT_PHONE = /(?:call|phone|mobile|telephone|contact|whatsapp|seller)(?:[^0-9]{0,40})\b0?\d(?:[\s().-]*\d){6,14}(?=$|[^0-9])/i;
 const TEL_URI = /(?:^|[^a-z0-9])tel:\+?\d{8,15}/i;
 const WHATSAPP_URI = /(?:^|[^a-z0-9])wa\.me\/\d{8,15}/i;
 const VIN_TOKEN = /(?:^|[^a-z0-9])[a-hj-npr-z0-9]{17}(?=$|[^a-z0-9])/i;
-const REGISTRATION_TOKEN = /^[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}$/;
+const REGISTRATION_TOKEN = /^(?:[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}|[A-HJ-PR-Y]{2}\d{2}[A-HJ-PR-Z]{3})$/;
 
 function containsForbiddenIdentifier(value: string): boolean {
   return (
     EMAIL_ADDRESS.test(value) ||
     INTERNATIONAL_PHONE.test(value) ||
+    DOMESTIC_PHONE.test(value) ||
+    CONTACT_PHONE.test(value) ||
     TEL_URI.test(value) ||
     WHATSAPP_URI.test(value) ||
     VIN_TOKEN.test(value) ||
