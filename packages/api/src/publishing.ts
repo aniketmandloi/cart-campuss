@@ -20,6 +20,50 @@ const IDENTITY_FACT_PROPERTIES = new Set([
   "modelYearLabel",
 ]);
 
+const FORBIDDEN_IDENTIFIER_MESSAGE =
+  "A full VIN, registration number, or private seller contact is not publishable.";
+
+/** Property names that stay forbidden even when a source allowlist names them. */
+const FORBIDDEN_PROPERTY_KEYS = new Set([
+  "vin",
+  "fullvin",
+  "vehicleidentificationnumber",
+  "vehicleidnumber",
+  "registration",
+  "registrationnumber",
+  "registrationno",
+  "regnumber",
+  "regno",
+  "vehicleregistration",
+  "vehicleregistrationnumber",
+  "licenseplate",
+  "licenceplate",
+  "licenseplatenumber",
+  "licenceplatenumber",
+  "numberplate",
+  "platenumber",
+  "vrn",
+  "phone",
+  "phonenumber",
+  "mobile",
+  "mobilenumber",
+  "telephone",
+  "tel",
+  "email",
+  "emailaddress",
+  "sellerphone",
+  "selleremail",
+  "sellercontact",
+  "privatecontact",
+  "privatephone",
+  "privateemail",
+  "contactphone",
+  "contactemail",
+  "contactnumber",
+  "whatsapp",
+  "whatsappnumber",
+]);
+
 const MINIMUM_OPERATOR_TOKEN_LENGTH = 32;
 
 export class PublishingRejected extends Error {
@@ -419,7 +463,9 @@ export async function applyOperatorImport(
   if (status === "published") {
     const generationId = randomId();
     const nextGeneration = current.maxGeneration + 1;
-    const replaced = new Set(publishable.map((record) => record.externalId));
+    const replaced = new Set(
+      publishable.map((record) => sourceKey(parsed.providerKey, record.externalId)),
+    );
     statements.push(
       deps.db.insert(publishingProjectionGeneration).values({
         id: generationId,
@@ -429,7 +475,7 @@ export async function applyOperatorImport(
       }),
     );
     for (const assertion of current.assertions) {
-      if (replaced.has(assertion.externalId)) continue;
+      if (replaced.has(sourceKey(assertion.providerKey, assertion.externalId))) continue;
       statements.push(
         deps.db.insert(publishingPublishedAssertion).values({
           ...assertion,
@@ -599,6 +645,12 @@ function evaluateRecord(
   }
   if (!policy.permittedFields.includes("displayName")) {
     return { externalId, code: "rights", message: "The display name is not a permitted field." };
+  }
+  if (!policy.permittedFields.includes("salesMarket")) {
+    return { externalId, code: "rights", message: "The sales market is not a permitted field." };
+  }
+  if (publicationLeaksIdentifier(record, policy)) {
+    return { externalId, code: "rights", message: FORBIDDEN_IDENTIFIER_MESSAGE };
   }
   const specification = record.document.facts.filter((fact) => !IDENTITY_FACT_PROPERTIES.has(fact.property));
   if (specification.length === 0) {
@@ -802,6 +854,7 @@ function publicAssertion(
   const facts = record.document.facts
     .filter((fact) => !IDENTITY_FACT_PROPERTIES.has(fact.property))
     .filter((fact) => policy.permittedFields.includes(fact.property))
+    .filter((fact) => !factLeaksIdentifier(fact))
     .map((fact) => ({
       property: fact.property,
       rawValue: fact.rawValue,
@@ -820,13 +873,15 @@ function publicAssertion(
     }));
   const media =
     policy.imagePermission === "permitted"
-      ? record.document.media.map((item) => ({
-          sourceUrl: item.sourceUrl,
-          credit: item.credit,
-          altText: item.altText,
-          sourcePolicyId: policyId,
-          rightsReviewerRef,
-        }))
+      ? record.document.media
+          .filter((item) => !textLeaksIdentifier([item.sourceUrl, item.altText, item.credit]))
+          .map((item) => ({
+            sourceUrl: item.sourceUrl,
+            credit: item.credit,
+            altText: item.altText,
+            sourcePolicyId: policyId,
+            rightsReviewerRef,
+          }))
       : [];
   const observedAt = facts
     .map((fact) => fact.observedAt)
@@ -846,7 +901,7 @@ function publicAssertion(
     canonicalSubjectId: record.document.canonicalSubjectId,
     displayName: record.document.displayName,
     aliases: policy.permittedFields.includes("alias") ? record.document.aliases : [],
-    salesMarket: record.document.salesMarket,
+    salesMarket: policy.permittedFields.includes("salesMarket") ? record.document.salesMarket : "",
     modelYearLabel: policy.permittedFields.includes("modelYearLabel") ? record.document.modelYearLabel : null,
     facts,
     media,
@@ -857,6 +912,77 @@ function publicAssertion(
     observedAt,
     reviewedAt,
   };
+}
+
+function sourceKey(providerKey: string, externalId: string): string {
+  return `${providerKey}\0${externalId}`;
+}
+
+function publicationLeaksIdentifier(record: ImportRecord, policy: SourcePolicyInput): boolean {
+  if (policy.permittedFields.some((field) => forbiddenProperty(field))) return true;
+  if (record.document.facts.some((fact) => factLeaksIdentifier(fact))) return true;
+  if (
+    record.document.media.some((item) => textLeaksIdentifier([item.sourceUrl, item.altText, item.credit]))
+  ) {
+    return true;
+  }
+  return textLeaksIdentifier([
+    record.document.displayName,
+    record.document.salesMarket,
+    record.document.modelYearLabel ?? "",
+    policy.attribution,
+    ...record.document.aliases,
+  ]);
+}
+
+function factLeaksIdentifier(fact: ImportRecord["document"]["facts"][number]): boolean {
+  return (
+    forbiddenProperty(fact.property) ||
+    textLeaksIdentifier([fact.property, fact.rawValue, fact.normalizedValue ?? "", fact.sourceUrl ?? ""])
+  );
+}
+
+function textLeaksIdentifier(values: string[]): boolean {
+  return values.some((value) => containsForbiddenIdentifier(value));
+}
+
+function forbiddenProperty(value: string): boolean {
+  return FORBIDDEN_PROPERTY_KEYS.has(normalizePropertyKey(value));
+}
+
+function normalizePropertyKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+const EMAIL_ADDRESS = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i;
+const INTERNATIONAL_PHONE = /(?:^|[^a-z0-9])\+\d(?:[\s().-]*\d){9,14}(?=$|[^0-9])/i;
+const TEL_URI = /(?:^|[^a-z0-9])tel:\+?\d{8,15}/i;
+const WHATSAPP_URI = /(?:^|[^a-z0-9])wa\.me\/\d{8,15}/i;
+const VIN_TOKEN = /(?:^|[^a-z0-9])[a-hj-npr-z0-9]{17}(?=$|[^a-z0-9])/i;
+const REGISTRATION_TOKEN = /^[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}$/;
+
+function containsForbiddenIdentifier(value: string): boolean {
+  return (
+    EMAIL_ADDRESS.test(value) ||
+    INTERNATIONAL_PHONE.test(value) ||
+    TEL_URI.test(value) ||
+    WHATSAPP_URI.test(value) ||
+    VIN_TOKEN.test(value) ||
+    containsRegistrationNumber(value)
+  );
+}
+
+function containsRegistrationNumber(value: string): boolean {
+  const tokens = value.toUpperCase().split(/[^A-Z0-9]+/).filter((token) => token.length > 0);
+  for (let start = 0; start < tokens.length; start += 1) {
+    let joined = "";
+    for (let end = start; end < tokens.length && end < start + 4; end += 1) {
+      joined += tokens[end] ?? "";
+      if (joined.length > 11) break;
+      if (REGISTRATION_TOKEN.test(joined)) return true;
+    }
+  }
+  return false;
 }
 
 function tokensMatch(expected: string, presented: string): boolean {

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { PublishingRejected, runOperatorCommand } from "@cart-campuss/api/publishing";
+import { PublishingRejected, operatorImportSchema, runOperatorCommand } from "@cart-campuss/api/publishing";
+import { z } from "zod";
 import { appRouter } from "@cart-campuss/api/routers/index";
 import { commitNeonHttpBatch, type Database } from "@cart-campuss/db";
 import {
@@ -400,6 +401,148 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(visitorText(result).includes(MARKERS.contract), false);
     assert.equal(visitorText(result).includes(MARKERS.payload), false);
   });
+
+  it("keeps both providers public when they share an external id", async () => {
+    const providerA = reviewedImport("Provider A Coupe");
+    providerA.providerKey = "provider-a";
+    providerA.sourcePolicy.providerKey = "provider-a";
+    const recordA = providerA.records[0];
+    assert.ok(recordA);
+    recordA.externalId = "123";
+    recordA.document.canonicalSubjectId = "subject-provider-a-123";
+    recordA.identity.canonicalSubjectId = "subject-provider-a-123";
+    const factA = recordA.document.facts[0];
+    assert.ok(factA);
+    factA.providerKey = "provider-a";
+
+    const providerB = reviewedImport("Provider B Coupe");
+    providerB.providerKey = "provider-b";
+    providerB.sourcePolicy.providerKey = "provider-b";
+    const recordB = providerB.records[0];
+    assert.ok(recordB);
+    recordB.externalId = "123";
+    recordB.document.canonicalSubjectId = "subject-provider-b-123";
+    recordB.identity.canonicalSubjectId = "subject-provider-b-123";
+    const factB = recordB.document.facts[0];
+    assert.ok(factB);
+    factB.providerKey = "provider-b";
+
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(providerA)).status, "published");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(providerB)).status, "published");
+
+    const first = await caller(null).publishing.detail({ subjectId: "subject-provider-a-123" });
+    const second = await caller(null).publishing.detail({ subjectId: "subject-provider-b-123" });
+    assert.equal(first?.displayName, "Provider A Coupe");
+    assert.equal(second?.displayName, "Provider B Coupe");
+    assert.equal(first?.facts[0]?.providerKey, "provider-a");
+    assert.equal(second?.facts[0]?.providerKey, "provider-b");
+    assert.equal((await caller(null).publishing.search({ q: "Provider A Coupe" })).length, 1);
+    assert.equal((await caller(null).publishing.search({ q: "Provider B Coupe" })).length, 1);
+  });
+
+  it("does not publish a sales market the source policy does not allow", async () => {
+    const input = reviewedImport("Market Field Withheld Coupe");
+    input.sourcePolicy.permittedFields = ["displayName", "power"];
+    const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
+    assert.equal(result.status, "held");
+    assert.equal(result.rejection?.code, "rights");
+    assert.equal((await caller(null).publishing.search({ q: "Market Field Withheld Coupe" })).length, 0);
+    assert.equal(
+      await caller(null).publishing.detail({ subjectId: "subject-market-field-withheld-coupe" }),
+      null,
+    );
+  });
+
+  it("withholds VINs, registration numbers, and private contacts from the public projection", async () => {
+    const leaks: Array<{ name: string; marker: string; apply: (input: ReviewedImport) => void }> = [
+      {
+        name: "Allowed Vin Field Coupe",
+        marker: "1HGCM82633A004352",
+        apply: (input) => {
+          input.sourcePolicy.permittedFields = [...input.sourcePolicy.permittedFields, "vin"];
+          input.records[0]?.document.facts.push(fact(input, "vin", "1HGCM82633A004352"));
+        },
+      },
+      {
+        name: "Vin Alias Coupe",
+        marker: "WVWZZZ3CZWE123456",
+        apply: (input) => {
+          input.records[0]?.document.facts.push(
+            fact(input, "vehicle_identification_number", "WVWZZZ3CZWE123456"),
+          );
+        },
+      },
+      {
+        name: "Plate Alias Coupe",
+        marker: "MH01AB1234",
+        apply: (input) => {
+          input.sourcePolicy.permittedFields = [...input.sourcePolicy.permittedFields, "licence_plate"];
+          input.records[0]?.document.facts.push(fact(input, "licence_plate", "MH-01-AB-1234"));
+        },
+      },
+      {
+        name: "Seller Email Coupe",
+        marker: "private.seller@example.test",
+        apply: (input) => {
+          input.records[0]?.document.facts.push(fact(input, "sellerEmail", "private.seller@example.test"));
+        },
+      },
+      {
+        name: "Title Registration Coupe",
+        marker: "DL8CAF5031",
+        apply: (input) => {
+          const record = input.records[0];
+          assert.ok(record);
+          record.document.displayName = "Title Registration Coupe DL8CAF5031";
+        },
+      },
+      {
+        name: "Source Url Vin Coupe",
+        marker: "JH4KA4650MC000000",
+        apply: (input) => {
+          const sourced = input.records[0]?.document.facts[0];
+          assert.ok(sourced);
+          sourced.sourceUrl = "https://example.test/vehicles/JH4KA4650MC000000";
+        },
+      },
+      {
+        name: "Alt Phone Coupe",
+        marker: "+919876543210",
+        apply: (input) => {
+          const image = input.records[0]?.document.media[0];
+          assert.ok(image);
+          image.altText = "Ask the seller on +91 98765 43210";
+        },
+      },
+    ];
+
+    for (const leak of leaks) {
+      const input = reviewedImport(leak.name);
+      leak.apply(input);
+      const result = await caller(OPERATOR_TOKEN).publishing.submit(input);
+      assert.equal(result.status, "held", leak.name);
+      assert.equal(result.rejection?.code, "rights", leak.name);
+      assert.equal((await caller(null).publishing.search({ q: leak.name })).length, 0, leak.name);
+      assert.equal((await caller(null).publishing.search({ q: leak.marker })).length, 0, leak.name);
+      const detail = await caller(null).publishing.detail({
+        subjectId: `subject-${leak.name.toLowerCase().replaceAll(" ", "-")}`,
+      });
+      assert.equal(detail, null, leak.name);
+    }
+
+    const lot = reviewedImport("Published Lot Coupe");
+    lot.sourcePolicy.permittedFields = [...lot.sourcePolicy.permittedFields, "lotId"];
+    lot.records[0]?.document.facts.push(fact(lot, "lotId", "LOT-2026-0142"));
+    const published = await caller(OPERATOR_TOKEN).publishing.submit(lot);
+    assert.equal(published.status, "published");
+    const detail = await caller(null).publishing.detail({ subjectId: "subject-published-lot-coupe" });
+    assert.equal(
+      detail?.facts.some((item) => item.property === "lotId" && item.rawValue === "LOT-2026-0142"),
+      true,
+    );
+    assert.equal(visitorText(detail).includes("1HGCM82633A004352"), false);
+    assert.equal(visitorText(detail).includes("private.seller@example.test"), false);
+  });
 });
 
 function caller(token: string | null) {
@@ -410,72 +553,40 @@ function caller(token: string | null) {
   });
 }
 
-function reviewedImport(name: string): {
-  idempotencyKey: string;
-  providerKey: string;
-  publish: boolean;
-  sourcePolicy: {
-    providerKey: string;
-    factPermission?: "denied" | "permitted";
-    imagePermission?: "denied" | "permitted";
+type OperatorImportInput = z.input<typeof operatorImportSchema>;
+type InputRecord = NonNullable<OperatorImportInput["records"]>[number];
+type InputFact = NonNullable<NonNullable<InputRecord["document"]["facts"]>[number]>;
+type InputMedia = NonNullable<NonNullable<InputRecord["document"]["media"]>[number]>;
+type ReviewedRecord = Omit<InputRecord, "privatePayload" | "document"> & {
+  privatePayload: { marker: string };
+  document: Omit<InputRecord["document"], "aliases" | "facts" | "media"> & {
+    aliases: string[];
+    facts: InputFact[];
+    media: InputMedia[];
+  };
+};
+type ReviewedImport = Omit<OperatorImportInput, "records" | "sourcePolicy"> & {
+  sourcePolicy: Omit<OperatorImportInput["sourcePolicy"], "permittedFields" | "permittedGeographies"> & {
     permittedFields: string[];
     permittedGeographies: string[];
-    attribution: string;
-    retentionSeconds: number;
-    derivativeRestriction: string;
-    aggregationRestriction: string;
-    refreshIntervalSeconds: number;
-    permissionExpiresAt: string | null;
-    takedownObligation: string;
-    deletionObligation: string;
-    contractText: string | null;
-    suspended: boolean;
-    reviewerRef: string | null;
-    reviewedAt: string | null;
   };
-  records: Array<{
-    externalId: string;
-    provenance: "manual" | "seed" | "import" | "fixture";
-    privatePayload: { marker: string };
-    document: {
-      displayName: string;
-      aliases: string[];
-      canonicalSubjectId: string;
-      salesMarket: string;
-      modelYearLabel: string | null;
-      facts: Array<{
-        property: string;
-        rawValue: string;
-        normalizedValue: string | null;
-        state: "known" | "unknown";
-        unknownReason: string | null;
-        unit: string | null;
-        standard: string | null;
-        sourceUrl: string | null;
-        providerKey: string;
-        observedAt: string | null;
-        retrievedAt: string;
-      }>;
-      media: Array<{ sourceUrl: string; credit: string; altText: string }>;
-    };
-    identity: {
-      outcome: "pending" | "certain" | "uncertain";
-      canonicalSubjectId: string | null;
-      reviewerRef: string | null;
-      note: string;
-    };
-    factualReview: {
-      outcome: "pending" | "passed" | "failed";
-      reviewerRef: string | null;
-      reviewedAt: string | null;
-    };
-    rightsReview: {
-      outcome: "pending" | "passed" | "failed";
-      reviewerRef: string | null;
-      reviewedAt: string | null;
-    };
-  }>;
-} {
+  records: ReviewedRecord[];
+};
+
+function fact(input: ReviewedImport, property: string, rawValue: string): InputFact {
+  const template = input.records[0]?.document.facts[0];
+  assert.ok(template);
+  return {
+    ...template,
+    property,
+    rawValue,
+    normalizedValue: rawValue,
+    unit: null,
+    standard: null,
+  };
+}
+
+function reviewedImport(name: string): ReviewedImport {
   const slug = name.toLowerCase().replaceAll(" ", "-");
   return {
     idempotencyKey: `import-${slug}`,
