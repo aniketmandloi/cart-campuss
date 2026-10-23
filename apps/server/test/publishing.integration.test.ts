@@ -650,6 +650,40 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal((await caller(null).publishing.detail({ subjectId: valid.records[0]!.document.canonicalSubjectId }))?.facts.length, 3);
   });
 
+  it("rejects unsafe fact and media source URLs before staging and filters unsafe legacy URLs on reads", async () => {
+    for (const [index, url] of ["javascript:alert(1)", "data:text/html,unsafe", "file:///private/source"].entries()) {
+      for (const target of ["fact", "media"] as const) {
+        const input = reviewedImport(`Unsafe Url ${target} ${index} Coupe`);
+        const record = input.records[0]!;
+        if (target === "fact") record.document.facts[0]!.sourceUrl = url;
+        else record.document.media[0]!.sourceUrl = url;
+        await assert.rejects(() => caller(OPERATOR_TOKEN).publishing.submit(input), /sourceUrl/);
+        assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === record.externalId), false);
+        assert.equal(await caller(null).publishing.detail({ subjectId: record.document.canonicalSubjectId }), null);
+      }
+    }
+    for (const scheme of ["https", "http"]) {
+      const input = reviewedImport(`Safe ${scheme} Url Coupe`);
+      input.records[0]!.document.facts[0]!.sourceUrl = `${scheme}://example.test/source`;
+      input.records[0]!.document.media[0]!.sourceUrl = `${scheme}://example.test/image`;
+      assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+      const subjectId = input.records[0]!.document.canonicalSubjectId;
+      const detail = await caller(null).publishing.detail({ subjectId });
+      assert.equal(detail?.facts[0]?.sourceUrl, `${scheme}://example.test/source`);
+      assert.equal(detail?.media[0]?.sourceUrl, `${scheme}://example.test/image`);
+      assert.ok(detail);
+      for (const url of ["javascript:alert(1)", "data:text/html,unsafe", "file:///private/source"]) {
+        await db.update(publishingPublishedAssertion).set({
+          facts: detail.facts.map((item) => ({ ...item, sourceUrl: url })),
+          media: detail.media.map((item) => ({ ...item, sourceUrl: url })),
+        }).where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}`);
+        const legacy = await caller(null).publishing.detail({ subjectId });
+        assert.deepEqual(legacy?.facts, []);
+        assert.deepEqual(legacy?.media, []);
+      }
+    }
+  });
+
   it("allows concurrent exact policy reuse and rejects a concurrent policy rewrite", async () => {
     const first = reviewedImport("Policy Race First Coupe");
     first.publish = false;

@@ -149,6 +149,8 @@ export type OperatorResult = {
   };
 };
 
+const sourceUrlSchema = z.url({ protocol: /^https?$/ });
+
 const sourcedFactSchema = z
   .object({
     property: z.string().trim().min(1),
@@ -158,7 +160,7 @@ const sourcedFactSchema = z
     unknownReason: z.string().min(1).nullable(),
     unit: z.string().min(1).nullable(),
     standard: z.string().min(1).nullable(),
-    sourceUrl: z.url().nullable(),
+    sourceUrl: sourceUrlSchema.nullable(),
     providerKey: z.string().trim().min(1),
     observedAt: z.iso.datetime().nullable(),
     retrievedAt: z.iso.datetime(),
@@ -173,7 +175,7 @@ const sourcedFactSchema = z
   });
 
 const mediaSchema = z.object({
-  sourceUrl: z.url(),
+  sourceUrl: sourceUrlSchema,
   credit: z.string().trim().min(1),
   altText: z.string().trim().min(1),
 });
@@ -1204,7 +1206,7 @@ const publicFactSchema = z.object({
   unknownReason: z.string().nullable(),
   unit: z.string().nullable(),
   standard: z.string().nullable(),
-  sourceUrl: z.string().nullable(),
+  sourceUrl: sourceUrlSchema.nullable(),
   providerKey: z.string(),
   observedAt: z.string().nullable(),
   retrievedAt: z.string(),
@@ -1214,7 +1216,7 @@ const publicFactSchema = z.object({
 });
 
 const publicMediaSchema = z.object({
-  sourceUrl: z.string(),
+  sourceUrl: sourceUrlSchema,
   credit: z.string(),
   altText: z.string(),
   sourcePolicyId: z.string(),
