@@ -1036,10 +1036,14 @@ function publicationLeaksIdentifier(record: ImportRecord, policy: SourcePolicyIn
     return true;
   }
   return textLeaksIdentifier([
+    record.document.canonicalSubjectId,
     record.document.displayName,
     record.document.salesMarket,
     record.document.modelYearLabel ?? "",
     policy.attribution,
+    policy.providerKey,
+    record.factualReview.reviewerRef ?? "",
+    record.rightsReview.reviewerRef ?? "",
     ...record.document.aliases,
   ]);
 }
@@ -1047,12 +1051,27 @@ function publicationLeaksIdentifier(record: ImportRecord, policy: SourcePolicyIn
 function factLeaksIdentifier(fact: ImportRecord["document"]["facts"][number]): boolean {
   return (
     forbiddenProperty(fact.property) ||
-    textLeaksIdentifier([fact.property, fact.rawValue, fact.normalizedValue ?? "", fact.sourceUrl ?? ""])
+    textLeaksIdentifier([
+      fact.property,
+      fact.rawValue,
+      fact.normalizedValue ?? "",
+      fact.unknownReason ?? "",
+      fact.unit ?? "",
+      fact.standard ?? "",
+      fact.sourceUrl ?? "",
+    ])
   );
 }
 
 function textLeaksIdentifier(values: string[]): boolean {
-  return values.some((value) => containsForbiddenIdentifier(value));
+  return values.some((value) => {
+    if (containsForbiddenIdentifier(value)) return true;
+    try {
+      return containsForbiddenIdentifier(decodeURIComponent(value));
+    } catch {
+      return false;
+    }
+  });
 }
 
 function forbiddenProperty(value: string): boolean {

@@ -512,6 +512,40 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
         },
       },
       {
+        name: "Normalized Vin Coupe",
+        marker: "1HGCM82633A004352",
+        apply: (input) => { input.records[0]!.document.facts[0]!.normalizedValue = "1HGCM82633A004352"; },
+      },
+      {
+        name: "Raw Vin Coupe",
+        marker: "1HGCM82633A004352",
+        apply: (input) => { input.records[0]!.document.facts[0]!.rawValue = "1HGCM82633A004352"; },
+      },
+      {
+        name: "Metadata Seller Email Coupe",
+        marker: "private.seller@example.test",
+        apply: (input) => {
+          const sourced = input.records[0]!.document.facts[0]!;
+          sourced.state = "unknown";
+          sourced.unknownReason = "Contact private.seller@example.test";
+        },
+      },
+      {
+        name: "Encoded Media Vin Coupe",
+        marker: "1HGCM82633A004352",
+        apply: (input) => {
+          input.records[0]!.document.media[0]!.sourceUrl = "https://example.test/vehicles/%31%48%47%43%4D%38%32%36%33%33%41%30%30%34%33%35%32";
+        },
+      },
+      {
+        name: "Canonical Vin Coupe",
+        marker: "1HGCM82633A004352",
+        apply: (input) => {
+          input.records[0]!.document.canonicalSubjectId = "1HGCM82633A004352";
+          input.records[0]!.identity.canonicalSubjectId = "1HGCM82633A004352";
+        },
+      },
+      {
         name: "Alt Phone Coupe",
         marker: "+919876543210",
         apply: (input) => {
