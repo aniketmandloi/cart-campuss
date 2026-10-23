@@ -65,6 +65,8 @@ Exit 0 means the import was staged, published, or replayed. Exit 2 means it was 
 
 The JSON file has `idempotencyKey`, `providerKey`, `sourcePolicy`, `records`, and `publish`. Fact and image permissions default to `denied`. A record is published only when `publish` is true and every record in the file has a certain identity, a passed factual review, a passed rights review, a reviewed unexpired policy, a permitted fact, a permitted sales-market geography, attribution, the display name among the permitted fields, and at least one sourced fact that is not only a name. `provenance: "fixture"` never enters the public projection. The same idempotency key with the same file replays without a second public record. The same key with a different file is rejected.
 
+A SourcePolicy ID identifies an immutable reviewed revision. Exact content can be reused by other imports, including concurrent imports. Changing its provider, permissions, reviewer, or other terms requires a new policy ID; staged and held imports cannot rewrite a live revision.
+
 The HTTP mutation is `publishing.submit`. It accepts the same JSON and requires `Authorization: Bearer` matching `OPERATOR_TOKEN`. A token inside the JSON does not authorize the call. `publishing.search` and `publishing.detail` are anonymous reads of the current projection.
 
 ## Integration test

@@ -48,7 +48,9 @@ function asTrpcError(error: unknown): TRPCError {
     const code =
       error.code === "unauthorized"
         ? "UNAUTHORIZED"
-        : error.code === "validation" || error.code === "idempotency-conflict"
+        : error.code === "validation" ||
+            error.code === "idempotency-conflict" ||
+            error.code === "policy-immutable"
           ? "BAD_REQUEST"
           : "PRECONDITION_FAILED";
     return new TRPCError({ code, message: `${error.code}: ${error.message}` });

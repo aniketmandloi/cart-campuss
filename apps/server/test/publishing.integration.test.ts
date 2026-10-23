@@ -544,6 +544,77 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(visitorText(detail).includes("private.seller@example.test"), false);
   });
 
+  it("keeps reviewed policy revisions immutable across staged, held, and published imports", async () => {
+    const input = reviewedImport("Immutable Policy Coupe");
+    input.sourcePolicy.id = crypto.randomUUID();
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const before = await caller(null).publishing.detail({ subjectId: "subject-immutable-policy-coupe" });
+    assert.ok(before);
+
+    for (const change of ["provider", "permissions", "reviewer"] as const) {
+      for (const mode of ["staged", "held", "published"] as const) {
+        const changed = structuredClone(input);
+        changed.idempotencyKey += `-${change}-${mode}`;
+        changed.publish = mode !== "staged";
+        if (mode === "held") changed.records[0]!.identity.outcome = "uncertain";
+        if (change === "provider") {
+          changed.providerKey = "other-provider";
+          changed.sourcePolicy.providerKey = "other-provider";
+          changed.records[0]!.document.facts[0]!.providerKey = "other-provider";
+        }
+        if (change === "permissions") changed.sourcePolicy.permittedFields.push("torque");
+        if (change === "reviewer") changed.sourcePolicy.reviewerRef = "other-policy-reviewer";
+        await assert.rejects(() => caller(OPERATOR_TOKEN).publishing.submit(changed), /policy-immutable/);
+        assert.deepEqual(
+          await caller(null).publishing.detail({ subjectId: "subject-immutable-policy-coupe" }),
+          before,
+        );
+      }
+    }
+    const reuse = structuredClone(input);
+    reuse.idempotencyKey += "-exact-reuse";
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(reuse)).status, "published");
+    assert.equal(
+      (await caller(null).publishing.detail({ subjectId: "subject-immutable-policy-coupe" }))?.sourcePolicyId,
+      input.sourcePolicy.id,
+    );
+  });
+
+  it("allows concurrent exact policy reuse and rejects a concurrent policy rewrite", async () => {
+    const first = reviewedImport("Policy Race First Coupe");
+    first.publish = false;
+    first.sourcePolicy.id = crypto.randomUUID();
+    const second = reviewedImport("Policy Race Second Coupe");
+    second.publish = false;
+    second.sourcePolicy = structuredClone(first.sourcePolicy);
+    second.sourcePolicy.reviewerRef = "different-reviewer";
+    const results = await Promise.allSettled([
+      caller(OPERATOR_TOKEN).publishing.submit(first),
+      caller(OPERATOR_TOKEN).publishing.submit(second),
+    ]);
+    assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+    const failure = results.find((result) => result.status === "rejected");
+    assert.ok(failure && failure.status === "rejected");
+    assert.match(String(failure.reason), /policy-immutable/);
+    const policies = await db.select().from(publishingSourcePolicy);
+    const stored = policies.find((policy) => policy.id === first.sourcePolicy.id);
+    assert.ok(stored);
+    const winner = stored.reviewerRef === first.sourcePolicy.reviewerRef ? first : second;
+    const staged = await db.select().from(publishingStagedRecord);
+    assert.equal(staged.filter((record) => record.sourcePolicyId === stored.id).length, 1);
+    assert.equal(staged.find((record) => record.sourcePolicyId === stored.id)?.externalId, winner.records[0]!.externalId);
+
+    const exact = structuredClone(winner);
+    exact.idempotencyKey += "-exact";
+    const another = structuredClone(exact);
+    another.idempotencyKey += "-another";
+    const reused = await Promise.all([
+      caller(OPERATOR_TOKEN).publishing.submit(exact),
+      caller(OPERATOR_TOKEN).publishing.submit(another),
+    ]);
+    assert.deepEqual(reused.map((result) => result.status), ["staged", "staged"]);
+  });
+
   it("returns a replay when identical imports are submitted together", async () => {
     const input = reviewedImport("Concurrent Replay Coupe");
     const [first, second] = await Promise.all([

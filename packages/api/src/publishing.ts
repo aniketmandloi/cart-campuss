@@ -78,6 +78,7 @@ export class PublishingRejected extends Error {
     | "expired"
     | "suspended"
     | "idempotency-conflict"
+    | "policy-immutable"
     | "partial";
 
   constructor(code: PublishingRejected["code"], message: string) {
@@ -427,10 +428,14 @@ export async function applyOperatorImport(
   });
 
   const policyId = parsed.sourcePolicy.id ?? randomId();
+  if (await storedPolicyDiffers(deps.db, policyId, parsed.sourcePolicy)) {
+    throw new PublishingRejected("policy-immutable", "A reviewed source policy cannot be changed.");
+  }
   const batchId = randomId();
   const createdAt = now.toISOString();
   const statements: BatchItem<"pg">[] = [
-    upsertPolicy(deps.db, parsed, policyId, createdAt),
+    insertPolicy(deps.db, parsed, policyId, createdAt),
+    rejectPolicyRewrite(deps.db, parsed.sourcePolicy, policyId),
     deps.db.insert(publishingImportBatch).values({
       id: batchId,
       idempotencyKey: parsed.idempotencyKey,
@@ -491,6 +496,9 @@ export async function applyOperatorImport(
   } catch (error) {
     const raced = await readIdempotentReplay(deps.db, parsed.idempotencyKey, payloadHash);
     if (raced) return raced;
+    if (await storedPolicyDiffers(deps.db, policyId, parsed.sourcePolicy)) {
+      throw new PublishingRejected("policy-immutable", "A reviewed source policy cannot be changed.");
+    }
     const secrets = [
       deps.operatorToken ?? "",
       parsed.sourcePolicy.contractText ?? "",
@@ -732,54 +740,84 @@ async function readCurrentProjection(db: Database): Promise<CurrentProjection> {
   };
 }
 
-function upsertPolicy(db: Database, parsed: OperatorImport, policyId: string, createdAt: string) {
+function insertPolicy(db: Database, parsed: OperatorImport, policyId: string, createdAt: string) {
   const policy = parsed.sourcePolicy;
-  const values = {
-    id: policyId,
-    providerKey: policy.providerKey,
-    factPermission: policy.factPermission,
-    imagePermission: policy.imagePermission,
-    permittedFields: policy.permittedFields,
-    permittedGeographies: policy.permittedGeographies,
-    attribution: policy.attribution,
-    retentionSeconds: policy.retentionSeconds,
-    derivativeRestriction: policy.derivativeRestriction,
-    aggregationRestriction: policy.aggregationRestriction,
-    refreshIntervalSeconds: policy.refreshIntervalSeconds,
-    permissionExpiresAt: policy.permissionExpiresAt,
-    takedownObligation: policy.takedownObligation,
-    deletionObligation: policy.deletionObligation,
-    contractText: policy.contractText,
-    suspended: policy.suspended,
-    reviewerRef: policy.reviewerRef,
-    reviewedAt: policy.reviewedAt,
-    createdAt,
-  };
   return db
     .insert(publishingSourcePolicy)
-    .values(values)
-    .onConflictDoUpdate({
-      target: publishingSourcePolicy.id,
-      set: {
-        providerKey: values.providerKey,
-        factPermission: values.factPermission,
-        imagePermission: values.imagePermission,
-        permittedFields: values.permittedFields,
-        permittedGeographies: values.permittedGeographies,
-        attribution: values.attribution,
-        retentionSeconds: values.retentionSeconds,
-        derivativeRestriction: values.derivativeRestriction,
-        aggregationRestriction: values.aggregationRestriction,
-        refreshIntervalSeconds: values.refreshIntervalSeconds,
-        permissionExpiresAt: values.permissionExpiresAt,
-        takedownObligation: values.takedownObligation,
-        deletionObligation: values.deletionObligation,
-        contractText: values.contractText,
-        suspended: values.suspended,
-        reviewerRef: values.reviewerRef,
-        reviewedAt: values.reviewedAt,
-      },
-    });
+    .values({
+      id: policyId,
+      providerKey: policy.providerKey,
+      factPermission: policy.factPermission,
+      imagePermission: policy.imagePermission,
+      permittedFields: policy.permittedFields,
+      permittedGeographies: policy.permittedGeographies,
+      attribution: policy.attribution,
+      retentionSeconds: policy.retentionSeconds,
+      derivativeRestriction: policy.derivativeRestriction,
+      aggregationRestriction: policy.aggregationRestriction,
+      refreshIntervalSeconds: policy.refreshIntervalSeconds,
+      permissionExpiresAt: policy.permissionExpiresAt,
+      takedownObligation: policy.takedownObligation,
+      deletionObligation: policy.deletionObligation,
+      contractText: policy.contractText,
+      suspended: policy.suspended,
+      reviewerRef: policy.reviewerRef,
+      reviewedAt: policy.reviewedAt,
+      createdAt,
+    })
+    .onConflictDoNothing({ target: publishingSourcePolicy.id });
+}
+
+/** A conflicting insert aborts the batch if a concurrent import won with different policy content. */
+function rejectPolicyRewrite(db: Database, policy: SourcePolicyInput, policyId: string) {
+  return db.insert(publishingSourcePolicy).select(
+    db.select().from(publishingSourcePolicy).where(
+      and(eq(publishingSourcePolicy.id, policyId), policyDiffers(policy)),
+    ),
+  );
+}
+
+async function storedPolicyDiffers(
+  db: Database,
+  policyId: string,
+  policy: SourcePolicyInput,
+): Promise<boolean> {
+  const [existing] = await db
+    .select({ id: publishingSourcePolicy.id })
+    .from(publishingSourcePolicy)
+    .where(and(eq(publishingSourcePolicy.id, policyId), policyDiffers(policy)))
+    .limit(1);
+  return existing !== undefined;
+}
+
+function policyDiffers(policy: SourcePolicyInput) {
+  const fields = JSON.stringify(policy.permittedFields);
+  const geographies = JSON.stringify(policy.permittedGeographies);
+  return sql`(
+  ${publishingSourcePolicy.providerKey} is distinct from ${policy.providerKey}
+  or ${publishingSourcePolicy.factPermission} is distinct from ${policy.factPermission}
+  or ${publishingSourcePolicy.imagePermission} is distinct from ${policy.imagePermission}
+  or not (
+    ${publishingSourcePolicy.permittedFields} @> cast(${fields} as jsonb)
+    and cast(${fields} as jsonb) @> ${publishingSourcePolicy.permittedFields}
+  )
+  or not (
+    ${publishingSourcePolicy.permittedGeographies} @> cast(${geographies} as jsonb)
+    and cast(${geographies} as jsonb) @> ${publishingSourcePolicy.permittedGeographies}
+  )
+  or ${publishingSourcePolicy.attribution} is distinct from ${policy.attribution}
+  or ${publishingSourcePolicy.retentionSeconds} is distinct from ${policy.retentionSeconds}
+  or ${publishingSourcePolicy.derivativeRestriction} is distinct from ${policy.derivativeRestriction}
+  or ${publishingSourcePolicy.aggregationRestriction} is distinct from ${policy.aggregationRestriction}
+  or ${publishingSourcePolicy.refreshIntervalSeconds} is distinct from ${policy.refreshIntervalSeconds}
+  or ${publishingSourcePolicy.permissionExpiresAt} is distinct from cast(${policy.permissionExpiresAt} as timestamptz)
+  or ${publishingSourcePolicy.takedownObligation} is distinct from ${policy.takedownObligation}
+  or ${publishingSourcePolicy.deletionObligation} is distinct from ${policy.deletionObligation}
+  or ${publishingSourcePolicy.contractText} is distinct from ${policy.contractText}
+  or ${publishingSourcePolicy.suspended} is distinct from ${policy.suspended}
+  or ${publishingSourcePolicy.reviewerRef} is distinct from ${policy.reviewerRef}
+  or ${publishingSourcePolicy.reviewedAt} is distinct from cast(${policy.reviewedAt} as timestamptz)
+  )`;
 }
 
 async function stagedStatements(
