@@ -809,6 +809,53 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === stricter.records[0]!.externalId), false);
   });
 
+  it("keeps public media on the staged capture deadline when newly retrieved facts are published", async () => {
+    for (const changePayload of [false, true]) {
+      const input = reviewedImport(`Staged Media Deadline ${changePayload} Coupe`);
+      input.publish = false;
+      input.sourcePolicy.id = crypto.randomUUID();
+      input.sourcePolicy.retentionSeconds = 60;
+      input.records[0]!.document.facts[0]!.retrievedAt = BASE_TIME;
+      assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "staged");
+
+      const later = () => new Date(testClock().getTime() + 30_000);
+      input.idempotencyKey += "-publish";
+      input.publish = true;
+      input.records[0]!.document.facts[0]!.retrievedAt = later().toISOString();
+      if (changePayload) input.records[0]!.privatePayload.marker += "-corrected";
+      assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(input)).status, "published");
+      const subjectId = input.records[0]!.document.canonicalSubjectId;
+      assert.equal((await caller(null, later).publishing.detail({ subjectId }))?.media.length, 1);
+
+      const cutoff = () => new Date(testClock().getTime() + 60_000);
+      assert.equal(await caller(null, cutoff).publishing.detail({ subjectId }), null);
+      assert.deepEqual(await caller(null, cutoff).publishing.search({ q: input.records[0]!.document.displayName }), []);
+      await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: cutoff }, OPERATOR_TOKEN);
+      assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+      assert.equal((await db.select().from(publishingPublishedAssertion)).some((row) => row.externalId === input.records[0]!.externalId), false);
+    }
+  });
+
+  it("rolls back a publication whose preserved staged capture is already due", async () => {
+    const input = reviewedImport("Preserved Capture Atomic Coupe");
+    input.publish = false;
+    input.sourcePolicy.retentionSeconds = 60;
+    input.records[0]!.document.facts[0]!.retrievedAt = BASE_TIME;
+    await caller(OPERATOR_TOKEN).publishing.submit(input);
+    const before = await db.select().from(publishingProjectionPointer);
+    const cutoff = () => new Date(testClock().getTime() + 60_000);
+    input.publish = true;
+    input.idempotencyKey += "-publish";
+    input.records[0]!.document.facts[0]!.retrievedAt = cutoff().toISOString();
+    input.records[0]!.privatePayload.marker += "-corrected";
+    await assert.rejects(() => caller(OPERATOR_TOKEN, cutoff).publishing.submit(input), /did not commit/);
+    assert.deepEqual(await db.select().from(publishingProjectionPointer), before);
+    assert.equal(await caller(null, cutoff).publishing.detail({ subjectId: input.records[0]!.document.canonicalSubjectId }), null);
+    const staged = (await db.select().from(publishingStagedRecord)).find((row) => row.externalId === input.records[0]!.externalId);
+    assert.equal(new Date(staged!.capturedAt).toISOString(), BASE_TIME);
+    assert.equal(visitorText(staged!.privatePayload).includes("-corrected"), false);
+  });
+
   it("withholds existing assertions when their policy is suspended", async () => {
     const input = reviewedImport("Read Suspension Coupe");
     input.sourcePolicy.id = crypto.randomUUID();

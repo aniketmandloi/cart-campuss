@@ -505,9 +505,14 @@ export async function applyOperatorImport(
     }
     for (const record of publishable) {
       statements.push(
-        deps.db.insert(publishingPublishedAssertion).values(
-          publicAssertion(record, parsed.sourcePolicy, policyId, generationId, createdAt),
-        ),
+        deps.db.insert(publishingPublishedAssertion).values({
+          ...publicAssertion(record, parsed.sourcePolicy, policyId, generationId, createdAt),
+          capturedAt: sql`(select ${publishingStagedRecord.capturedAt}
+            from ${publishingStagedRecord}
+            where ${publishingStagedRecord.batchId} = ${batchId}
+              and ${publishingStagedRecord.providerKey} = ${parsed.providerKey}
+              and ${publishingStagedRecord.externalId} = ${record.externalId})`,
+        }),
       );
     }
     statements.push(
@@ -1014,11 +1019,8 @@ function upsertStaged(
         rightsOutcome: values.rightsOutcome,
         rightsReviewerRef: values.rightsReviewerRef,
         sourcePolicyId: values.sourcePolicyId,
-        capturedAt: sql`case
-          when ${publishingStagedRecord.document} = cast(${JSON.stringify(values.document)} as jsonb)
-            or ${publishingStagedRecord.privatePayload} = cast(${JSON.stringify(values.privatePayload)} as jsonb)
-          then least(${publishingStagedRecord.capturedAt}, cast(${values.capturedAt} as timestamptz))
-          else cast(${values.capturedAt} as timestamptz) end`,
+        // A change to one component cannot renew unchanged facts, media, or private payload.
+        capturedAt: sql`least(${publishingStagedRecord.capturedAt}, cast(${values.capturedAt} as timestamptz))`,
         updatedAt: values.updatedAt,
       },
     });
@@ -1091,7 +1093,6 @@ function publicAssertion(
     sourcePolicyId: policyId,
     factualReviewerRef,
     rightsReviewerRef,
-    capturedAt: sourceCapturedAt(record, publishedAt),
     observedAt,
     reviewedAt,
   };
