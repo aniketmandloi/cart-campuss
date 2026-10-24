@@ -408,6 +408,31 @@ describe("recheck, expiry, and withdrawal", { timeout: 120_000 }, () => {
     assert.doesNotMatch(html, /Active as last observed/);
   });
 
+  it("shows a republished listing as ended when that end is confirmed", async () => {
+    const input = catalogueImport("Ended Lot");
+    const record = input.records[0];
+    assert.ok(record);
+    record.document.listings = [listing("lot-ended", "Ended asking card", "active")];
+    assert.equal((await caller().publishing.submit(input)).status, "published");
+    await runScheduledRecheck(deps(), OPERATOR_TOKEN, null);
+
+    const revised = structuredClone(input);
+    revised.idempotencyKey = "recheck-ended-lot-confirmed";
+    revised.sourcePolicy.id = crypto.randomUUID();
+    const revisedRecord = revised.records[0];
+    assert.ok(revisedRecord?.document.listings?.[0]);
+    revisedRecord.document.listings[0].lifecycle = "ended";
+    revisedRecord.document.listings[0].observedAt = "2026-10-22T06:00:00.000Z";
+    assert.equal((await caller().publishing.submit(revised)).status, "published");
+    const checked = await runScheduledRecheck(deps(), OPERATOR_TOKEN, null);
+    const feed = checked.targets.find((target) => target.targetKey === "lot-ended");
+    assert.equal(feed?.lifecycle, "ended");
+    assert.equal(feed?.observedAt, "2026-10-22T06:00:00.000Z");
+    const html = await renderCar("ended lot");
+    assert.match(html, /Ended\. Last observed 2026-10-22T06:00:00\.000Z/);
+    assert.doesNotMatch(html, /Active as last observed/);
+  });
+
   it("rejects an unauthorised recheck", async () => {
     await assert.rejects(() => runScheduledRecheck(deps(), undefined, null), PublishingRejected);
   });

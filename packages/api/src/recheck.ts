@@ -159,17 +159,8 @@ export async function runScheduledRecheck(
       const key = targetKey(draft);
       const current = byKey.get(key);
       if (current) {
-        if (current.intervalSeconds !== draft.intervalSeconds) {
-          const anchor =
-            parseInstant(current.lastReviewedAt) ??
-            parseInstant(current.lastSuccessfulProviderSyncAt) ??
-            parseInstant(draft.lastReviewedAt);
-          byKey.set(key, {
-            ...current,
-            intervalSeconds: draft.intervalSeconds,
-            nextRecheckAt: anchor ? addSeconds(anchor, draft.intervalSeconds) : current.nextRecheckAt,
-          });
-        }
+        const revised = reconcilePublishedTarget(current, draft);
+        if (revised !== current) byKey.set(key, revised);
         continue;
       }
       const missed = reported.has(key) ? null : markMissed(draft, now);
@@ -321,6 +312,30 @@ export async function withdrawPublishedContent(
       "The withdrawal did not commit, and the previous public projection was left unchanged.",
     );
   }
+}
+
+function reconcilePublishedTarget(current: TargetDraft, draft: TargetDraft): TargetDraft {
+  const intervalChanged = current.intervalSeconds !== draft.intervalSeconds;
+  const publishedChanged =
+    current.lifecycle !== draft.lifecycle ||
+    current.observedAt !== draft.observedAt ||
+    current.fetchedAt !== draft.fetchedAt;
+  if (!intervalChanged && !publishedChanged) return current;
+  const anchor =
+    parseInstant(current.lastReviewedAt) ??
+    parseInstant(current.lastSuccessfulProviderSyncAt) ??
+    parseInstant(draft.lastReviewedAt);
+  const confirmedEnd = draft.lifecycle === "ended" && current.lifecycle !== "ended";
+  return {
+    ...current,
+    intervalSeconds: draft.intervalSeconds,
+    nextRecheckAt: intervalChanged && anchor ? addSeconds(anchor, draft.intervalSeconds) : current.nextRecheckAt,
+    lifecycle: draft.lifecycle,
+    observedAt: draft.observedAt,
+    fetchedAt: draft.fetchedAt,
+    publicValue: draft.publicValue,
+    providerOutcome: confirmedEnd ? "succeeded" : current.providerOutcome,
+  };
 }
 
 function dropUnpermittedSnapshots(db: Database, ids: string[], now: Date) {
