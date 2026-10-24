@@ -163,6 +163,16 @@
   }
 }
 
+.link-draw {
+  background: linear-gradient(currentColor, currentColor) 0 100% / 0 1px no-repeat;
+  transition: background-size 360ms var(--ease-out);
+}
+
+.link-draw:hover,
+.link-draw[aria-current="true"] {
+  background-size: 100% 1px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
