@@ -462,7 +462,7 @@ function FactRecord({ fact }: { fact: CatalogueFact }) {
     <div className="flex flex-col gap-1 border-b border-border py-3 text-sm">
       <h4 className="font-medium">{fact.property}</h4>
       <FactState fact={fact} />
-      {fact.state === "known" && fact.curatedReason ? <p>{fact.curatedReason}</p> : null}
+      {fact.curatedReason ? <p>{fact.curatedReason}</p> : null}
       {fact.state === "known" || fact.state === "unknown" ? (
         <>
           <p>
@@ -556,6 +556,8 @@ function ConflictReading({ conflict }: { conflict: CatalogueAssertion }) {
       <p>Retrieved {conflict.retrievedOn}</p>
       <p>Review: {conflict.reviewStatus}</p>
       {conflict.reviewedOn ? <p>Reviewed {conflict.reviewedOn}</p> : null}
+      {conflict.factualReviewerRef ? <p>Factual reviewer: {conflict.factualReviewerRef}</p> : null}
+      {conflict.rightsReviewerRef ? <p>Rights reviewer: {conflict.rightsReviewerRef}</p> : null}
     </>
   );
 }

@@ -1273,18 +1273,37 @@ function projectionMatchesIdentity(
 
 function projectionFacts(projection: PublicDetail, policy: CataloguePolicy): CatalogueFact[] {
   return projection.facts.map((fact) => {
-    const unknown = fact.state === "unknown";
+    const valued = fact.state === "known";
     return {
       property: fact.property,
-      state: unknown ? "unknown" : "known",
-      rawValue: unknown ? null : fact.rawValue,
-      normalizedValue: unknown ? null : fact.normalizedValue,
-      unit: unknown ? null : fact.unit,
-      measurementStandard: unknown ? null : fact.standard,
-      unknownReason: unknown ? fact.unknownReason : null,
-      freshness: "current",
-      curatedReason: null,
-      conflict: null,
+      state: factState(fact.state),
+      rawValue: valued && fact.rawValue ? fact.rawValue : null,
+      normalizedValue: valued ? fact.normalizedValue : null,
+      unit: valued ? fact.unit : null,
+      measurementStandard: valued ? fact.standard : null,
+      unknownReason: valued ? null : fact.unknownReason,
+      freshness: factFreshness(fact.freshness),
+      curatedReason: fact.curatedReason,
+      conflict:
+        fact.conflict && (fact.state === "known" || fact.state === "unknown")
+          ? {
+              rawValue: fact.conflict.rawValue,
+              normalizedValue: fact.conflict.normalizedValue,
+              unit: fact.conflict.unit,
+              measurementStandard: fact.conflict.standard,
+              sourceTitle: fact.conflict.sourceTitle ?? "",
+              sourceUrl: fact.conflict.sourceUrl,
+              observedOn: fact.conflict.observedAt,
+              retrievedOn: fact.conflict.retrievedAt,
+              reviewedOn: projection.reviewedAt,
+              reviewStatus: "reviewed",
+              policyName: policy.name,
+              policyAudience: policy.audience,
+              policyAttribution: policy.attribution,
+              factualReviewerRef: fact.conflict.factualReviewerRef,
+              rightsReviewerRef: fact.conflict.rightsReviewerRef,
+            }
+          : null,
       sourceTitle: fact.sourceTitle ?? "",
       sourceUrl: fact.sourceUrl,
       observedOn: fact.observedAt,

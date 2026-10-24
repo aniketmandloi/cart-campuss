@@ -122,14 +122,30 @@ export type PublishingDeps = {
   now?: () => Date;
 };
 
+export type PublicFactConflict = {
+  rawValue: string;
+  normalizedValue: string | null;
+  unit: string | null;
+  standard: string | null;
+  sourceUrl: string | null;
+  sourceTitle: string | null;
+  observedAt: string | null;
+  retrievedAt: string;
+  factualReviewerRef: string;
+  rightsReviewerRef: string;
+};
+
 export type PublicFact = {
   property: string;
   rawValue: string;
   normalizedValue: string | null;
-  state: "known" | "unknown";
+  state: "known" | "unknown" | "not-applicable" | "withheld";
   unknownReason: string | null;
   unit: string | null;
   standard: string | null;
+  freshness: "current" | "stale" | "not-checked";
+  curatedReason: string | null;
+  conflict: PublicFactConflict | null;
   sourceUrl: string | null;
   sourceTitle: string | null;
   providerKey: string;
@@ -191,15 +207,31 @@ export type OperatorResult = {
 
 const sourceUrlSchema = z.url({ protocol: /^https?$/ });
 
+const factConflictSchema = z.object({
+  rawValue: z.string().min(1),
+  normalizedValue: z.string().min(1).nullable(),
+  unit: z.string().min(1).nullable(),
+  standard: z.string().min(1).nullable(),
+  sourceUrl: sourceUrlSchema.nullable(),
+  sourceTitle: z.string().trim().min(1).nullable(),
+  observedAt: z.iso.datetime().nullable(),
+  retrievedAt: z.iso.datetime(),
+  factualReviewerRef: z.string().trim().min(1),
+  rightsReviewerRef: z.string().trim().min(1),
+});
+
 const sourcedFactSchema = z
   .object({
     property: z.string().trim().min(1),
-    rawValue: z.string().min(1),
+    rawValue: z.string(),
     normalizedValue: z.string().min(1).nullable(),
-    state: z.enum(["known", "unknown"]),
+    state: z.enum(["known", "unknown", "not-applicable", "withheld"]),
     unknownReason: z.string().min(1).nullable(),
     unit: z.string().min(1).nullable(),
     standard: z.string().min(1).nullable(),
+    freshness: z.enum(["current", "stale", "not-checked"]).default("current"),
+    curatedReason: z.string().trim().min(1).nullable().default(null),
+    conflict: factConflictSchema.nullable().default(null),
     sourceUrl: sourceUrlSchema.nullable(),
     sourceTitle: z.string().trim().min(1).nullable().default(null),
     providerKey: z.string().trim().min(1),
@@ -207,11 +239,20 @@ const sourcedFactSchema = z
     retrievedAt: z.iso.datetime(),
   })
   .superRefine((fact, ctx) => {
-    if (fact.state === "unknown" && !fact.unknownReason) {
-      ctx.addIssue({ code: "custom", path: ["unknownReason"] });
+    if (fact.state === "known" && fact.rawValue.trim().length === 0) {
+      ctx.addIssue({ code: "custom", path: ["rawValue"] });
     }
     if (fact.state === "known" && fact.unknownReason) {
       ctx.addIssue({ code: "custom", path: ["unknownReason"] });
+    }
+    if (fact.state !== "known" && !fact.unknownReason) {
+      ctx.addIssue({ code: "custom", path: ["unknownReason"] });
+    }
+    if ((fact.state === "not-applicable" || fact.state === "withheld") && fact.conflict) {
+      ctx.addIssue({ code: "custom", path: ["conflict"] });
+    }
+    if (fact.conflict && !fact.curatedReason) {
+      ctx.addIssue({ code: "custom", path: ["curatedReason"] });
     }
   });
 
@@ -1577,23 +1618,7 @@ function publicAssertion(
     .filter((fact) => !IDENTITY_FACT_PROPERTIES.has(fact.property))
     .filter((fact) => policy.permittedFields.includes(fact.property))
     .filter((fact) => !factLeaksIdentifier(fact))
-    .map((fact) => ({
-      property: fact.property,
-      rawValue: fact.rawValue,
-      normalizedValue: fact.normalizedValue,
-      state: fact.state,
-      unknownReason: fact.unknownReason,
-      unit: fact.unit,
-      standard: fact.standard,
-      sourceUrl: fact.sourceUrl,
-      sourceTitle: fact.sourceTitle,
-      providerKey: fact.providerKey,
-      observedAt: fact.observedAt,
-      retrievedAt: fact.retrievedAt,
-      sourcePolicyId: policyId,
-      factualReviewerRef,
-      rightsReviewerRef,
-    }));
+    .map((fact) => presentFact(fact, policyId, factualReviewerRef, rightsReviewerRef));
   const media = record.document.media.flatMap((item) => {
     const governing = governingPolicy(policy, policyId, item.sourcePolicyId, componentPolicies);
     if (!governing || governing.policy.imagePermission !== "permitted") return [];
@@ -2172,6 +2197,17 @@ function factLeaksIdentifier(fact: {
   unknownReason?: string | null;
   unit?: string | null;
   standard?: string | null;
+  curatedReason?: string | null;
+  conflict?: {
+    rawValue: string;
+    normalizedValue?: string | null;
+    unit?: string | null;
+    standard?: string | null;
+    sourceUrl?: string | null;
+    sourceTitle?: string | null;
+    factualReviewerRef?: string;
+    rightsReviewerRef?: string;
+  } | null;
   sourceUrl?: string | null;
   sourceTitle?: string | null;
   providerKey?: string;
@@ -2188,6 +2224,15 @@ function factLeaksIdentifier(fact: {
       fact.unknownReason ?? "",
       fact.unit ?? "",
       fact.standard ?? "",
+      fact.curatedReason ?? "",
+      fact.conflict?.rawValue ?? "",
+      fact.conflict?.normalizedValue ?? "",
+      fact.conflict?.unit ?? "",
+      fact.conflict?.standard ?? "",
+      fact.conflict?.sourceUrl ?? "",
+      fact.conflict?.sourceTitle ?? "",
+      fact.conflict?.factualReviewerRef ?? "",
+      fact.conflict?.rightsReviewerRef ?? "",
       fact.sourceUrl ?? "",
       fact.sourceTitle ?? "",
       fact.providerKey ?? "",
@@ -2330,13 +2375,69 @@ function asStringArray(value: unknown): string[] {
   return [];
 }
 
+function presentFact(
+  fact: z.infer<typeof sourcedFactSchema>,
+  sourcePolicyId: string,
+  factualReviewerRef: string,
+  rightsReviewerRef: string,
+): PublicFact {
+  const valued = fact.state === "known";
+  const conflict =
+    fact.conflict && (fact.state === "known" || fact.state === "unknown")
+      ? {
+          rawValue: fact.conflict.rawValue,
+          normalizedValue: fact.conflict.normalizedValue,
+          unit: fact.conflict.unit,
+          standard: fact.conflict.standard,
+          sourceUrl: fact.conflict.sourceUrl,
+          sourceTitle: fact.conflict.sourceTitle,
+          observedAt: fact.conflict.observedAt,
+          retrievedAt: fact.conflict.retrievedAt,
+          factualReviewerRef: fact.conflict.factualReviewerRef,
+          rightsReviewerRef: fact.conflict.rightsReviewerRef,
+        }
+      : null;
+  return {
+    property: fact.property,
+    rawValue: valued ? fact.rawValue : "",
+    normalizedValue: valued ? fact.normalizedValue : null,
+    state: fact.state,
+    unknownReason: valued ? null : fact.unknownReason,
+    unit: valued ? fact.unit : null,
+    standard: valued ? fact.standard : null,
+    freshness: fact.freshness,
+    curatedReason: fact.curatedReason,
+    conflict,
+    sourceUrl: fact.sourceUrl,
+    sourceTitle: fact.sourceTitle,
+    providerKey: fact.providerKey,
+    observedAt: fact.observedAt,
+    retrievedAt: fact.retrievedAt,
+    sourcePolicyId,
+    factualReviewerRef,
+    rightsReviewerRef,
+  };
+}
+
 function asPublicFacts(value: unknown): PublicFact[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const fact = publicFactSchema.safeParse(item);
-    return fact.success && !IDENTITY_FACT_PROPERTIES.has(fact.data.property) && !factLeaksIdentifier(fact.data)
-      ? [{ ...fact.data, sourceTitle: fact.data.sourceTitle ?? null }] : [];
+    if (!fact.success || IDENTITY_FACT_PROPERTIES.has(fact.data.property) || factLeaksIdentifier(fact.data)) return [];
+    return [withoutHiddenMeasurements({ ...fact.data, sourceTitle: fact.data.sourceTitle ?? null })];
   });
+}
+
+function withoutHiddenMeasurements(fact: PublicFact): PublicFact {
+  if (fact.state === "known") return fact;
+  return {
+    ...fact,
+    rawValue: "",
+    normalizedValue: null,
+    unit: null,
+    standard: null,
+    conflict: fact.state === "unknown" ? fact.conflict : null,
+  };
 }
 
 function permittedPublicFacts(value: unknown, fields: string[]): PublicFact[] {
@@ -2464,17 +2565,33 @@ async function readComponentPolicies(db: Database, ids: string[]): Promise<Map<s
   return new Map(rows.map((row) => [row.id, row]));
 }
 
+const publicConflictSchema = z.object({
+  rawValue: z.string(),
+  normalizedValue: z.string().nullable(),
+  unit: z.string().nullable(),
+  standard: z.string().nullable(),
+  sourceUrl: sourceUrlSchema.nullable(),
+  sourceTitle: z.string().nullable(),
+  observedAt: z.string().nullable(),
+  retrievedAt: z.string(),
+  factualReviewerRef: z.string(),
+  rightsReviewerRef: z.string(),
+});
+
 const publicFactSchema = z.object({
   property: z.string(),
   rawValue: z.string(),
   normalizedValue: z.string().nullable(),
-  state: z.enum(["known", "unknown"]),
+  state: z.enum(["known", "unknown", "not-applicable", "withheld"]),
   unknownReason: z.string().nullable(),
   unit: z.string().nullable(),
   standard: z.string().nullable(),
-      sourceUrl: sourceUrlSchema.nullable(),
-      sourceTitle: z.string().nullable().optional(),
-      providerKey: z.string(),
+  freshness: z.enum(["current", "stale", "not-checked"]).default("current"),
+  curatedReason: z.string().nullable().default(null),
+  conflict: publicConflictSchema.nullable().default(null),
+  sourceUrl: sourceUrlSchema.nullable(),
+  sourceTitle: z.string().nullable().optional(),
+  providerKey: z.string(),
   observedAt: z.string().nullable(),
   retrievedAt: z.string(),
   sourcePolicyId: z.string(),

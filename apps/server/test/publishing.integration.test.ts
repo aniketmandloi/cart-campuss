@@ -2153,6 +2153,133 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     );
   });
 
+  it("publishes distinct fact states, freshness, and conflicts without leaking withheld values", async () => {
+    const secret = "SECRET-WITHHELD-77";
+    const input = labelledCatalogueImport("Evidence States Coupe");
+    input.sourcePolicy.permittedFields.push("length", "width", "range", "airbag");
+    const record = input.records[0];
+    assert.ok(record);
+    record.document.facts.push(
+      {
+        ...fact(input, "length", "hidden-length"),
+        state: "not-applicable",
+        rawValue: "hidden-length",
+        normalizedValue: null,
+        unknownReason: "Length does not apply to this labelled test record.",
+        unit: null,
+        standard: null,
+        sourceTitle: "Labeled test dossier",
+        freshness: "current",
+      },
+      {
+        ...fact(input, "width", secret),
+        state: "withheld",
+        normalizedValue: secret,
+        unknownReason: "The labelled test withholds this measurement.",
+        unit: "secret-unit",
+        standard: secret,
+        sourceTitle: "Labeled test dossier",
+        freshness: "current",
+      },
+      {
+        ...fact(input, "range", "400 km"),
+        state: "known",
+        normalizedValue: "400",
+        unknownReason: null,
+        unit: "km",
+        standard: "WLTP",
+        sourceTitle: "Labeled test dossier",
+        freshness: "stale",
+        curatedReason: "The labelled test keeps the brochure figure.",
+        conflict: {
+          rawValue: "380 km",
+          normalizedValue: "380",
+          unit: "km",
+          standard: "WLTP",
+          sourceUrl: "https://example.test/sources/evidence-states-range",
+          sourceTitle: "Labeled conflicting range note",
+          observedAt: "2026-10-22T00:00:00.000Z",
+          retrievedAt: "2026-10-22T00:00:00.000Z",
+          factualReviewerRef: "conflict-fact-reviewer",
+          rightsReviewerRef: "conflict-rights-reviewer",
+        },
+      },
+      {
+        ...fact(input, "airbag", "6"),
+        state: "known",
+        normalizedValue: "6",
+        unknownReason: null,
+        unit: null,
+        standard: null,
+        sourceTitle: "Labeled test dossier",
+        freshness: "not-checked",
+      },
+    );
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const subjectId = record.document.canonicalSubjectId;
+    const detail = await caller(null).publishing.detail({ subjectId });
+    assert.ok(detail);
+    const byProperty = new Map(detail.facts.map((item) => [item.property, item]));
+    assert.equal(byProperty.get("power")?.freshness, "current");
+    assert.equal(byProperty.get("torque")?.state, "unknown");
+    assert.equal(byProperty.get("torque")?.rawValue, "");
+    assert.equal(byProperty.get("torque")?.unit, null);
+    assert.equal(byProperty.get("length")?.state, "not-applicable");
+    assert.equal(byProperty.get("length")?.rawValue, "");
+    assert.equal(byProperty.get("width")?.state, "withheld");
+    assert.equal(byProperty.get("width")?.rawValue, "");
+    assert.equal(byProperty.get("width")?.normalizedValue, null);
+    assert.equal(byProperty.get("width")?.unit, null);
+    assert.equal(byProperty.get("width")?.standard, null);
+    assert.equal(byProperty.get("width")?.conflict, null);
+    assert.equal(byProperty.get("range")?.freshness, "stale");
+    assert.equal(byProperty.get("range")?.curatedReason, "The labelled test keeps the brochure figure.");
+    assert.equal(byProperty.get("range")?.conflict?.rawValue, "380 km");
+    assert.equal(byProperty.get("range")?.conflict?.factualReviewerRef, "conflict-fact-reviewer");
+    assert.equal(byProperty.get("airbag")?.freshness, "not-checked");
+    assert.equal(JSON.stringify(detail).includes(secret), false);
+    assert.equal(JSON.stringify(detail).includes("invented-unit"), false);
+    assert.equal(JSON.stringify(detail).includes("not-a-measurement"), false);
+
+    const page = await caller(null).catalogue.read({
+      modelSlug: "model-evidence-states-coupe",
+      generationSlug: "mark",
+      market: "mkt-labeled-in",
+      year: "year-labeled-2026",
+      variant: "var-evidence-states-coupe",
+    });
+    assert.equal(page.availability, "visible");
+    if (page.availability !== "visible") return;
+    assert.equal(page.facts.find((item) => item.property === "width")?.rawValue, null);
+    assert.equal(page.facts.find((item) => item.property === "range")?.conflict?.rawValue, "380 km");
+    const loaders = await importCatalogueLoaders();
+    const views = await importCatalogueViews();
+    const html = renderToStaticMarkup(
+      createElement(views.CatalogueDetailView, {
+        state: await loaders.loadCatalogueCarForContext(catalogueRuntime(), {
+          modelSlug: "model-evidence-states-coupe",
+          generationSlug: "mark",
+          market: "mkt-labeled-in",
+          year: "year-labeled-2026",
+          variant: "var-evidence-states-coupe",
+        }),
+      }),
+    );
+    assert.match(html, /100 PS/);
+    assert.match(html, /The labelled test does not include a measured torque/);
+    assert.match(html, /Not applicable/);
+    assert.match(html, /Withheld by rights/);
+    assert.match(html, /Stale\. Last reviewed/);
+    assert.match(html, /Not checked\. Last reviewed/);
+    assert.match(html, /Conflicting reading/);
+    assert.match(html, /380 km/);
+    assert.match(html, /The labelled test keeps the brochure figure/);
+    assert.match(html, /conflict-fact-reviewer/);
+    assert.match(html, /conflict-rights-reviewer/);
+    assert.doesNotMatch(html, new RegExp(secret));
+    assert.doesNotMatch(html, /invented-unit|not-a-measurement|hidden-length|secret-unit/);
+  });
+
 });
 
 function pauseNextBatch(database: Database) {
