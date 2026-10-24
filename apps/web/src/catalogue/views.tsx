@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import type {
   CatalogueAssertion,
@@ -35,18 +35,28 @@ type DossierPage = Extract<CatalogueCarPage, { availability: "visible" | "overvi
 
 export function CatalogueSearchView({ state }: { state: CatalogueSearchState }) {
   return (
-    <Frame>
-      <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-medium">Search the catalogue</h1>
-        <p className="max-w-xl text-sm text-muted-foreground">
+    <main id="catalogue" className="mx-auto flex w-full max-w-[1120px] flex-col gap-12 px-4 pt-12 pb-16 sm:pt-20">
+      <div className="flex max-w-3xl flex-col gap-5">
+        <p className="rise text-sm text-muted-foreground" style={stagger(0)}>
+          Sourced car records
+        </p>
+        <h1
+          className="rise text-5xl leading-[0.95] font-semibold tracking-[-0.045em] sm:text-7xl"
+          style={stagger(1)}
+        >
+          Search the catalogue
+        </h1>
+        <p className="rise max-w-xl text-base/relaxed text-muted-foreground" style={stagger(2)}>
           Search by the car name. A complete record names one market, one model year, and one
           variant, with the source beside each fact.
         </p>
       </div>
       {state.privatePreview ? <PreviewNotice /> : null}
-      <SearchForm query={state.query} />
-      <SearchStatus state={state} />
-    </Frame>
+      <div className="flex max-w-3xl flex-col gap-6">
+        <SearchForm query={state.query} />
+        <SearchStatus state={state} />
+      </div>
+    </main>
   );
 }
 
@@ -686,8 +696,8 @@ function Photograph({ image }: { image: CatalogueImage | null }) {
 
 function SearchForm({ query }: { query: string }) {
   return (
-    <form method="get" action="/" role="search" className="flex flex-col gap-3">
-      <label htmlFor="catalogue-query" className="text-sm">
+    <form method="get" action="/" role="search" className="rise flex flex-col gap-3" style={stagger(3)}>
+      <label htmlFor="catalogue-query" className="text-sm text-muted-foreground">
         Car name
       </label>
       <div className="flex flex-col gap-3 sm:flex-row">
@@ -698,11 +708,11 @@ function SearchForm({ query }: { query: string }) {
           maxLength={80}
           autoComplete="off"
           enterKeyHint="search"
-          className="min-h-11 w-full border border-border bg-card px-3 text-base text-foreground"
+          className="h-14 w-full border border-border bg-card px-4 text-lg text-foreground transition-colors duration-300 placeholder:text-muted-foreground focus:border-foreground"
         />
         <button
           type="submit"
-          className="min-h-11 rounded-full bg-primary px-5 text-sm font-medium text-primary-foreground hover:bg-primary/80"
+          className="h-14 bg-primary px-8 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-200 hover:bg-foreground/85 active:scale-[0.98]"
         >
           Search
         </button>
@@ -713,44 +723,62 @@ function SearchForm({ query }: { query: string }) {
 
 function SearchStatus({ state }: { state: CatalogueSearchState }) {
   if (state.kind === "unconfigured") {
-    return <p id="catalogue-results">The catalogue database is not configured.</p>;
+    return <p id="catalogue-results" className="text-muted-foreground">The catalogue database is not configured.</p>;
   }
   if (state.kind === "unavailable") {
-    return <p id="catalogue-results">The catalogue could not be read.</p>;
+    return <p id="catalogue-results" className="text-muted-foreground">The catalogue could not be read.</p>;
   }
   if (state.kind === "invalid") {
-    return <p id="catalogue-results">Use 80 characters or fewer.</p>;
+    return <p id="catalogue-results" className="text-muted-foreground">Use 80 characters or fewer.</p>;
   }
   if (state.kind === "idle") return null;
   if (state.result.hits.length === 0) {
-    return <p id="catalogue-results">No published record matches this search.</p>;
+    return <p id="catalogue-results" className="text-muted-foreground">No published record matches this search.</p>;
   }
   return (
-    <ul id="catalogue-results">
-      {state.result.hits.map((hit) => (
+    <ul id="catalogue-results" className="flex flex-col border-t border-border">
+      {state.result.hits.map((hit, index) => (
         <li
           key={`${hit.scope}-${hit.scope === "applicability" ? hit.applicabilityId : hit.scope === "generation" ? hit.generationId : hit.modelId}`}
-          className="border-b border-border py-3"
+          className="rise border-b border-border"
+          style={stagger(index + 4)}
         >
-          <TextLink href={hit.href}>
-            {hit.brandName} {hit.modelName}
-          </TextLink>
-          {hit.scope === "model" ? (
-            <p className="text-sm text-muted-foreground">No generation is selected.</p>
-          ) : hit.scope === "generation" ? (
-            <p className="text-sm text-muted-foreground">
-              {hit.generationName}. No variant is selected.
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              {hit.generationName} · {hit.salesMarketName} · model year {hit.modelYearLabel} ·{" "}
-              {hit.variantName}
-            </p>
-          )}
-          <p className="text-sm">
-            {hit.match === "exact" ? "Exact name" : "Name begins with the query"}
-          </p>
-          {hit.synthetic ? <p className="text-sm">Synthetic fixture</p> : null}
+          <a
+            href={hit.href}
+            className="group grid gap-3 py-5 transition-colors duration-300 hover:bg-card sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-4"
+          >
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="flex items-center gap-3 text-xl font-medium tracking-tight">
+                {hit.brandName} {hit.modelName}
+                <span
+                  aria-hidden="true"
+                  className="text-muted-foreground transition-transform duration-300 group-hover:translate-x-1 group-hover:text-foreground"
+                >
+                  →
+                </span>
+              </span>
+              {hit.scope === "model" ? (
+                <span className="text-sm text-muted-foreground">No generation is selected.</span>
+              ) : hit.scope === "generation" ? (
+                <span className="text-sm text-muted-foreground">
+                  {hit.generationName}. No variant is selected.
+                </span>
+              ) : (
+                <span className="text-sm text-muted-foreground">
+                  {hit.generationName} · {hit.salesMarketName} · model year {hit.modelYearLabel} ·{" "}
+                  {hit.variantName}
+                </span>
+              )}
+            </span>
+            <span className="flex flex-wrap gap-2 text-xs">
+              <span className="border border-border px-2 py-1 text-muted-foreground">
+                {hit.match === "exact" ? "Exact name" : "Name begins with the query"}
+              </span>
+              {hit.synthetic ? (
+                <span className="border border-stale px-2 py-1 text-stale">Synthetic fixture</span>
+              ) : null}
+            </span>
+          </a>
         </li>
       ))}
     </ul>
@@ -759,16 +787,22 @@ function SearchStatus({ state }: { state: CatalogueSearchState }) {
 
 function PreviewNotice() {
   return (
-    <p>Private preview. Synthetic records are labelled and stay out of the public catalogue.</p>
+    <p className="max-w-3xl border-l-2 border-stale pl-4 text-sm text-foreground">
+      Private preview. Synthetic records are labelled and stay out of the public catalogue.
+    </p>
   );
 }
 
 function Frame({ children }: { children: ReactNode }) {
   return (
-    <main id="catalogue" className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
+    <main id="catalogue" className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pt-12 pb-16 sm:pt-20">
       {children}
     </main>
   );
+}
+
+function stagger(index: number): CSSProperties {
+  return { "--i": index } as CSSProperties;
 }
 
 function TextLink({
