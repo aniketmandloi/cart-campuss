@@ -10,7 +10,11 @@ import { appRouter } from "@cart-campuss/api/routers/index";
 import { commitNeonHttpBatch, sql, type Database } from "@cart-campuss/db";
 import {
   catalogueApplicability,
+  catalogueBrand,
+  catalogueGeneration,
+  catalogueGenerationAlias,
   catalogueImage,
+  catalogueModel,
   cataloguePriceReference,
   catalogueProductionClaim,
   catalogueSourcePolicy,
@@ -1270,6 +1274,8 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal((await caller(null).catalogue.search({ q: "Removed Lookup Dossier" })).hits.length, 1);
     const initial = (await caller(null).catalogue.search({ q: "Current Identity Dossier" })).hits[0];
     assert.ok(initial);
+    assert.equal(initial.scope, "applicability");
+    if (initial.scope !== "applicability") return;
     const next = structuredClone(baseline);
     next.idempotencyKey += "-no-alias";
     next.sourcePolicy.id = crypto.randomUUID();
@@ -1618,6 +1624,8 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     await caller(OPERATOR_TOKEN).publishing.submit(input);
     const hit = (await caller(null).catalogue.search({ q: "Legacy Policy Metadata" })).hits[0];
     assert.ok(hit);
+    assert.equal(hit.scope, "applicability");
+    if (hit.scope !== "applicability") return;
     for (const value of privateValues) {
       await db.update(publishingSourcePolicy).set({ reviewerRef: value })
         .where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id}`);
@@ -2018,6 +2026,133 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     }
   });
 
+  it("reads an incomplete generation only from its approved projection", async () => {
+    await db.insert(catalogueSourcePolicy).values({
+      id: "policy-flag-generation",
+      name: "Flag generation policy",
+      audience: "public",
+      permitsPublicCatalogue: true,
+      rightsReview: "reviewed",
+      attribution: "Flag attribution",
+      internalNote: "",
+    });
+    await db.insert(catalogueBrand).values({
+      id: "brand-flag-generation",
+      name: "Flag Only Coupe",
+      slug: "brand-flag-generation",
+    });
+    await db.insert(catalogueModel).values({
+      id: "model-flag-generation",
+      brandId: "brand-flag-generation",
+      name: "Flag Only Coupe Model",
+      slug: "model-flag-generation",
+    });
+    await db.insert(catalogueGeneration).values({
+      id: "gen-flag-generation",
+      modelId: "model-flag-generation",
+      name: "Flag Only Shell",
+      slug: "shell",
+      publicationStatus: "published",
+      synthetic: false,
+      sourcePolicyId: "policy-flag-generation",
+    });
+    await db.insert(catalogueGenerationAlias).values({
+      id: "alias-flag-generation",
+      generationId: "gen-flag-generation",
+      normalizedName: "flag only shell",
+    });
+    assert.equal((await caller(null).catalogue.search({ q: "flag only shell" })).hits.length, 0);
+    assert.equal(
+      (await caller(null).catalogue.read({ modelSlug: "model-flag-generation", generationSlug: "shell" })).availability,
+      "not-in-public-catalogue",
+    );
+
+    const input = generationCatalogueImport("Scoped Shell Coupe");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const [stored] = await db
+      .select({ status: catalogueGeneration.publicationStatus })
+      .from(catalogueGeneration)
+      .where(sql`${catalogueGeneration.id} = 'gen-scoped-shell-coupe'`);
+    assert.equal(stored?.status, null);
+
+    const hits = (await caller(null).catalogue.search({ q: "scoped shell coupe shell" })).hits;
+    assert.equal(hits.length, 1);
+    const hit = hits[0];
+    assert.ok(hit);
+    assert.equal(hit.scope, "generation");
+    if (hit.scope !== "generation") return;
+    assert.equal(hit.applicabilityId, null);
+    assert.equal(hit.generationId, "gen-scoped-shell-coupe");
+    assert.equal(hit.modelId, "model-scoped-shell-coupe");
+    assert.equal(hit.href, "/cars/model-scoped-shell-coupe/shell");
+
+    const page = await caller(null).catalogue.read(catalogueReadInput(hit.href));
+    assert.equal(page.availability, "scoped");
+    if (page.availability !== "scoped") return;
+    assert.equal(page.scope, "generation");
+    assert.equal(page.identity.generationName, "Scoped Shell Coupe Shell");
+    assert.equal("modelYearLabel" in page.identity, false);
+    assert.equal(page.selector.markets.length, 0);
+    assert.equal(page.selector.years.length, 0);
+    assert.equal(page.selector.variants.length, 0);
+    assert.equal(page.facts.some((fact) => fact.rawValue === "100 PS"), true);
+    assert.equal(page.sections.map((section) => section.label).join(","), "Overview,Specs,Market,India cost,Sources");
+
+    const incompatible = await caller(null).catalogue.read({
+      ...catalogueReadInput(hit.href),
+      market: "mkt-labeled-in",
+      year: "year-labeled-2026",
+      variant: "var-scoped-shell-coupe",
+    });
+    assert.equal(incompatible.availability, "incompatible");
+
+    const loaders = await importCatalogueLoaders();
+    const views = await importCatalogueViews();
+    const html = renderToStaticMarkup(
+      createElement(views.CatalogueDetailView, {
+        state: await loaders.loadCatalogueCarForContext(catalogueRuntime(), catalogueReadInput(hit.href)),
+      }),
+    );
+    assert.match(html, /100 PS/);
+    assert.match(html, /No market, model year, or variant is part of this record/);
+    assert.match(html, /Comparison and finance wait until a market, model year, and variant are selected/);
+    assert.match(html, /Overview/);
+    assert.match(html, /Specs/);
+    assert.match(html, /India cost/);
+    assert.match(html, /Sources/);
+    assert.doesNotMatch(html, /Model year 2026|invented-unit|not-a-measurement/);
+
+    await db
+      .update(publishingSourcePolicy)
+      .set({ suspended: true })
+      .where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id}`);
+    assert.equal((await caller(null).catalogue.search({ q: "scoped shell coupe shell" })).hits.length, 0);
+    assert.equal(
+      (await caller(null).catalogue.read(catalogueReadInput(hit.href))).availability,
+      "not-in-public-catalogue",
+    );
+
+    await db
+      .update(catalogueGeneration)
+      .set({ publicationStatus: "published", sourcePolicyId: input.sourcePolicy.id })
+      .where(sql`${catalogueGeneration.id} = 'gen-scoped-shell-coupe'`);
+    assert.equal((await caller(null).catalogue.search({ q: "scoped shell coupe shell" })).hits.length, 0);
+    assert.equal(
+      (await caller(null).catalogue.read(catalogueReadInput(hit.href))).availability,
+      "not-in-public-catalogue",
+    );
+
+    await db
+      .update(publishingSourcePolicy)
+      .set({ suspended: false, permissionExpiresAt: "2020-01-01T00:00:00.000Z" })
+      .where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id}`);
+    assert.equal((await caller(null).catalogue.search({ q: "scoped shell coupe shell" })).hits.length, 0);
+    assert.equal(
+      (await caller(null).catalogue.read(catalogueReadInput(hit.href))).availability,
+      "not-in-public-catalogue",
+    );
+  });
+
 });
 
 function pauseNextBatch(database: Database) {
@@ -2167,6 +2302,27 @@ function reviewedImport(name: string): ReviewedImport {
       },
     ],
   };
+}
+
+function generationCatalogueImport(name: string): ReviewedImport {
+  const input = labelledCatalogueImport(name);
+  const slug = name.toLowerCase().replaceAll(" ", "-");
+  const generationId = `gen-${slug}`;
+  input.sourcePolicy.permittedFields = ["displayName", "alias", "power", "torque", "brand", "model", "generation"];
+  const record = input.records[0];
+  assert.ok(record);
+  record.document.canonicalSubjectId = generationId;
+  record.document.modelYearLabel = null;
+  record.document.aliases = [`${name} shell alias`];
+  record.identity.canonicalSubjectId = generationId;
+  record.catalogue = undefined;
+  record.generationCatalogue = {
+    brand: { id: `brand-${slug}`, name, slug: `brand-${slug}` },
+    model: { id: `model-${slug}`, name: `${name} Model`, slug: `model-${slug}` },
+    generation: { id: generationId, name: `${name} Shell`, slug: "shell" },
+    aliases: [{ kind: "generation", name: `${name} Shell` }],
+  };
+  return input;
 }
 
 function visitorText(value: unknown): string {

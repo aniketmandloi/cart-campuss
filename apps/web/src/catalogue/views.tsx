@@ -31,7 +31,7 @@ export type CatalogueDetailState =
   | { kind: "redirect"; location: string }
   | { kind: "page"; page: CatalogueCarPage };
 
-type DossierPage = Extract<CatalogueCarPage, { availability: "visible" | "overview" | "incompatible" }>;
+type DossierPage = Extract<CatalogueCarPage, { availability: "visible" | "overview" | "incompatible" | "scoped" }>;
 
 export function CatalogueSearchView({ state }: { state: CatalogueSearchState }) {
   return (
@@ -103,6 +103,7 @@ export function CatalogueDetailView({ state }: { state: CatalogueDetailState }) 
 
 function DossierPageView({ page }: { page: DossierPage }) {
   const selected = page.availability === "visible";
+  const scoped = page.availability === "scoped";
   const cost = page.sections.find((section) => section.id === "cost");
   return (
     <main id="catalogue" className="mx-auto w-full max-w-[1120px] px-4 py-8">
@@ -115,6 +116,7 @@ function DossierPageView({ page }: { page: DossierPage }) {
             <p className="text-sm text-muted-foreground">{page.identity.brandName}</p>
             <h1 className="text-2xl font-medium">{page.identity.modelName}</h1>
             <p>{page.identity.generationName}</p>
+            {scoped ? <p>No market, model year, or variant is part of this record.</p> : null}
             {page.aliases.map((alias) => (
               <p key={alias}>Also called {alias}</p>
             ))}
@@ -130,7 +132,9 @@ function DossierPageView({ page }: { page: DossierPage }) {
           </header>
           <Photograph image={page.image} />
           {selected ? <SelectedIdentity page={page} /> : null}
-          {selected ? <QuickFacts facts={page.facts} /> : null}
+          {page.availability === "visible" || page.availability === "scoped" ? (
+            <QuickFacts facts={page.facts} />
+          ) : null}
           {cost ? (
             <a
               href={cost.href}
@@ -335,14 +339,15 @@ function CostSection({ page }: { page: DossierPage }) {
 }
 
 function SpecsSection({ page }: { page: DossierPage }) {
-  const facts = page.availability === "visible" ? page.facts : [];
-  const claims = page.availability === "visible" ? page.productionClaims : [];
+  const evidenced = page.availability === "visible" || page.availability === "scoped";
+  const facts = evidenced ? page.facts : [];
+  const claims = evidenced ? page.productionClaims : [];
   return (
     <section id="specs" className="flex flex-col gap-6" aria-labelledby="specs-heading">
       <h2 id="specs-heading" className="text-base font-medium">
         Specs
       </h2>
-      {page.availability === "visible" ? (
+      {evidenced ? (
         <>
           {groupFacts(facts).map((group) => (
             <FactGroup key={group.id} label={group.label} facts={group.facts} />
@@ -647,7 +652,7 @@ function SearchStatus({ state }: { state: CatalogueSearchState }) {
   return (
     <ul id="catalogue-results">
       {state.result.hits.map((hit) => (
-        <li key={`${hit.scope}-${hit.applicabilityId}`} className="border-b border-border py-3">
+        <li key={`${hit.scope}-${hit.scope === "applicability" ? hit.applicabilityId : hit.generationId}`} className="border-b border-border py-3">
           <TextLink href={hit.href}>
             {hit.brandName} {hit.modelName}
           </TextLink>

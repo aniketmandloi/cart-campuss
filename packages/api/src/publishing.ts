@@ -1,6 +1,7 @@
 import {
   catalogueAlias,
   catalogueApplicability,
+  catalogueGenerationAlias,
   catalogueBrand,
   catalogueGeneration,
   catalogueMarketVariant,
@@ -174,6 +175,7 @@ export type PublicDetail = PublicSearchHit & {
   media: PublicMedia[];
   productionClaims: PublicProductionClaim[];
   priceReference: PublishingPriceReference | null;
+  identityScope: "applicability" | "generation" | "model";
 };
 
 export type OperatorResult = {
@@ -334,6 +336,26 @@ const catalogueIdentitySchema = z.object({
   priceReference: priceReferenceSchema.nullable().default(null),
 });
 
+const generationCatalogueSchema = z
+  .object({
+    brand: z.object({ id: catalogueIdSchema, name: catalogueNameSchema, slug: catalogueSlugSchema }),
+    model: z.object({ id: catalogueIdSchema, name: catalogueNameSchema, slug: catalogueSlugSchema }),
+    generation: z.object({
+      id: catalogueIdSchema,
+      name: catalogueNameSchema,
+      slug: catalogueSlugSchema,
+    }),
+    aliases: z
+      .array(
+        z.object({
+          kind: z.enum(["brand", "model", "generation", "alias"]),
+          name: catalogueNameSchema,
+        }),
+      )
+      .default([]),
+  })
+  .strict();
+
 const recordSchema = z.object({
   externalId: z.string().trim().min(1),
   provenance: z.enum(["manual", "seed", "import", "fixture"]),
@@ -349,6 +371,7 @@ const recordSchema = z.object({
     productionClaims: z.array(productionClaimSchema).default([]),
   }),
   catalogue: catalogueIdentitySchema.optional(),
+  generationCatalogue: generationCatalogueSchema.optional(),
   identity: z.object({
     outcome: z.enum(["pending", "certain", "uncertain"]),
     canonicalSubjectId: z.string().trim().min(1).nullable().default(null),
@@ -510,6 +533,7 @@ export async function readPublishedCatalogueDetail(
       reviewedAt: publishingPublishedAssertion.reviewedAt,
       publishedAt: publishingProjectionGeneration.publishedAt,
       priceReference: publishingPublishedAssertion.priceReference,
+      identityScope: publishingPublishedAssertion.identityScope,
       imagePermission: publishingSourcePolicy.imagePermission,
       factPermission: publishingSourcePolicy.factPermission,
       policySuspended: publishingSourcePolicy.suspended,
@@ -617,6 +641,7 @@ export async function readPublishedCatalogueDetail(
     media,
     productionClaims,
     priceReference: row.permittedFields.includes("priceReference") ? asPublicPrice(row.priceReference) : null,
+    identityScope: row.identityScope === "generation" || row.identityScope === "model" ? row.identityScope : "applicability",
   };
 }
 
@@ -901,11 +926,23 @@ function sourceCopyDue(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
 function publicPolicyAllows(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
   return sql`(
     ${publishingSourcePolicy.factPermission} = 'permitted'
-    and ${publishingSourcePolicy.permittedFields} @> '["displayName", "salesMarket"]'::jsonb
-    and ${publishingSourcePolicy.permittedGeographies} @> jsonb_build_array(${publishingPublishedAssertion.salesMarket})
     and ${publishingSourcePolicy.reviewerRef} is not null
     and ${publishingSourcePolicy.reviewedAt} is not null
     and not coalesce(${sourceCopyDue(capturedAt, now)}, false)
+    and (
+      (
+        ${publishingPublishedAssertion.identityScope} = 'applicability'
+        and ${publishingSourcePolicy.permittedFields} @> '["displayName", "salesMarket"]'::jsonb
+        and ${publishingSourcePolicy.permittedGeographies} @> jsonb_build_array(${publishingPublishedAssertion.salesMarket})
+      )
+      or (
+        ${publishingPublishedAssertion.identityScope} in ('generation', 'model')
+        and ${publishingSourcePolicy.permittedFields} @> '["displayName"]'::jsonb
+        and jsonb_typeof(${publishingPublishedAssertion.rightsGeographies}) = 'array'
+        and jsonb_array_length(${publishingPublishedAssertion.rightsGeographies}) > 0
+        and ${publishingSourcePolicy.permittedGeographies} @> ${publishingPublishedAssertion.rightsGeographies}
+      )
+    )
   )`;
 }
 
@@ -922,6 +959,28 @@ export function currentProjectionCovers(subjectId: SQLWrapper, now: Date): SQL {
     where ${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}
       and ${publicPolicyAllows(assertionCapturedAt(), now)}
       and ${publishingSourcePolicy.permittedFields} @> cast(${JSON.stringify(CATALOGUE_IDENTITY_FIELDS)} as jsonb)
+  )`;
+}
+
+/** A Model or Generation shell is public only while its own reviewed projection still permits it. */
+export function currentScopedProjectionCovers(
+  subjectId: SQLWrapper,
+  scope: "generation" | "model",
+  now: Date,
+): SQL {
+  const fields = scope === "generation" ? ["brand", "model", "generation"] : ["brand", "model"];
+  return sql`exists (
+    select 1
+    from ${publishingPublishedAssertion}
+    inner join ${publishingProjectionPointer}
+      on ${publishingPublishedAssertion.generationId} = ${publishingProjectionPointer.generationId}
+      and ${publishingProjectionPointer.id} = 1
+    inner join ${publishingSourcePolicy}
+      on ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
+    where ${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}
+      and ${publishingPublishedAssertion.identityScope} = ${scope}
+      and ${publicPolicyAllows(assertionCapturedAt(), now)}
+      and ${publishingSourcePolicy.permittedFields} @> cast(${JSON.stringify(fields)} as jsonb)
   )`;
 }
 
@@ -1019,12 +1078,41 @@ function assertComponentPolicyRef(parsed: OperatorImport, sourcePolicyId: string
   }
 }
 
+type GenerationCatalogue = z.infer<typeof generationCatalogueSchema>;
+
+function assertSourcedFactTitles(policy: SourcePolicyInput, record: ImportRecord): void {
+  for (const fact of record.document.facts) {
+    if (IDENTITY_FACT_PROPERTIES.has(fact.property)) continue;
+    if (!policy.permittedFields.includes(fact.property)) continue;
+    if (!fact.sourceTitle) {
+      throw new PublishingRejected("validation", "A catalogue fact needs a source title.");
+    }
+  }
+}
+
 function assertCatalogueContext(policy: SourcePolicyInput, record: ImportRecord): void {
   const catalogue = record.catalogue;
-  if (!catalogue) return;
+  if (!catalogue && !record.generationCatalogue) return;
   if (!policy.displayName) {
     throw new PublishingRejected("validation", "A catalogue record needs a source policy display name.");
   }
+  if (catalogue && record.generationCatalogue) {
+    throw new PublishingRejected("validation", "A record is either an applicability or a scoped generation.");
+  }
+  if (record.generationCatalogue) {
+    if (!catalogueIdSchema.safeParse(record.document.canonicalSubjectId).success) {
+      throw new PublishingRejected("validation", "The canonical subject id is not a catalogue generation id.");
+    }
+    if (record.document.canonicalSubjectId !== record.generationCatalogue.generation.id) {
+      throw new PublishingRejected("validation", "A scoped generation uses the generation id as its canonical subject.");
+    }
+    if (record.document.modelYearLabel !== null) {
+      throw new PublishingRejected("validation", "A scoped generation does not include a model year.");
+    }
+    assertSourcedFactTitles(policy, record);
+    return;
+  }
+  if (!catalogue) return;
   if (!catalogueIdSchema.safeParse(record.document.canonicalSubjectId).success) {
     throw new PublishingRejected("validation", "The canonical subject id is not a catalogue applicability id.");
   }
@@ -1034,13 +1122,7 @@ function assertCatalogueContext(policy: SourcePolicyInput, record: ImportRecord)
   if (record.document.modelYearLabel !== catalogue.modelYear.label) {
     throw new PublishingRejected("validation", "The catalogue model year does not match the record.");
   }
-  for (const fact of record.document.facts) {
-    if (IDENTITY_FACT_PROPERTIES.has(fact.property)) continue;
-    if (!policy.permittedFields.includes(fact.property)) continue;
-    if (!fact.sourceTitle) {
-      throw new PublishingRejected("validation", "A catalogue fact needs a source title.");
-    }
-  }
+  assertSourcedFactTitles(policy, record);
 }
 
 function collectFailures(parsed: OperatorImport, current: CurrentProjection, contexts: CanonicalContext[], now: Date): GateFailure[] {
@@ -1107,7 +1189,11 @@ function evaluateRecord(
   }
   const context = contexts.find((item) => item.id === subjectId);
   const catalogue = record.catalogue;
-  if (context && (
+  if (record.generationCatalogue) {
+    if (context) {
+      return { externalId, code: "identity", message: "That subject is already an applicability record." };
+    }
+  } else if (context && (
     context.synthetic || context.providerKey !== parsed.providerKey ||
     context.countryCode !== record.document.salesMarket ||
     context.modelYearLabel !== record.document.modelYearLabel ||
@@ -1149,10 +1235,12 @@ function evaluateRecord(
   if (!policy.permittedFields.includes("displayName")) {
     return { externalId, code: "rights", message: "The display name is not a permitted field." };
   }
-  if (!policy.permittedFields.includes("salesMarket")) {
+  const generationOnly = Boolean(record.generationCatalogue);
+  if (!generationOnly && !policy.permittedFields.includes("salesMarket")) {
     return { externalId, code: "rights", message: "The sales market is not a permitted field." };
   }
-  if (record.catalogue && CATALOGUE_IDENTITY_FIELDS.some((field) => !policy.permittedFields.includes(field))) {
+  const identityFields = generationOnly ? ["brand", "model", "generation"] : CATALOGUE_IDENTITY_FIELDS;
+  if ((record.catalogue || record.generationCatalogue) && identityFields.some((field) => !policy.permittedFields.includes(field))) {
     return { externalId, code: "rights", message: "A catalogue identity component is not a permitted field." };
   }
   if (publicationLeaksIdentifier(record, policy)) {
@@ -1566,6 +1654,7 @@ function publicAssertion(
       },
     ];
   });
+  const generationOnly = Boolean(record.generationCatalogue);
   const observedAt = facts
     .map((fact) => fact.observedAt)
     .filter((value): value is string => value !== null)
@@ -1584,10 +1673,15 @@ function publicAssertion(
     canonicalSubjectId: record.document.canonicalSubjectId,
     displayName: record.document.displayName,
     aliases: policy.permittedFields.includes("alias")
-      ? [...new Set([...record.document.aliases, ...(record.catalogue?.aliases.map((alias) => alias.name) ?? [])])]
+      ? [...new Set([
+          ...record.document.aliases,
+          ...((record.catalogue ?? record.generationCatalogue)?.aliases.map((alias) => alias.name) ?? []),
+        ])]
       : [],
-    salesMarket: policy.permittedFields.includes("salesMarket") ? record.document.salesMarket : "",
-    modelYearLabel: policy.permittedFields.includes("modelYearLabel") ? record.document.modelYearLabel : null,
+    salesMarket: generationOnly || policy.permittedFields.includes("salesMarket") ? record.document.salesMarket : "",
+    modelYearLabel: generationOnly ? null : policy.permittedFields.includes("modelYearLabel") ? record.document.modelYearLabel : null,
+    identityScope: generationOnly ? "generation" : "applicability",
+    rightsGeographies: generationOnly ? [record.document.salesMarket] : [],
     facts,
     media,
     productionClaims,
@@ -1597,7 +1691,10 @@ function publicAssertion(
     rightsReviewerRef,
     observedAt,
     reviewedAt,
-    priceReference: policy.permittedFields.includes("priceReference") ? record.catalogue?.priceReference ?? null : null,
+    priceReference:
+      !generationOnly && policy.permittedFields.includes("priceReference")
+        ? record.catalogue?.priceReference ?? null
+        : null,
   };
 }
 
@@ -1609,6 +1706,9 @@ function catalogueIdentityStatements(
 ): BatchItem<"pg">[] {
   const catalogue = record.catalogue;
   const displayName = parsed.sourcePolicy.displayName;
+  if (record.generationCatalogue && displayName) {
+    return generationCatalogueStatements(db, parsed, record, policyId, record.generationCatalogue);
+  }
   if (!catalogue || !displayName) return [];
   const subjectId = record.document.canonicalSubjectId;
   const statements: BatchItem<"pg">[] = [
@@ -1783,6 +1883,113 @@ function catalogueIdentityStatements(
   return [...statements, ...catalogueAliasStatements(db, subjectId, aliasRows)];
 }
 
+function generationCatalogueStatements(
+  db: Database,
+  parsed: OperatorImport,
+  record: ImportRecord,
+  policyId: string,
+  catalogue: GenerationCatalogue,
+): BatchItem<"pg">[] {
+  const statements: BatchItem<"pg">[] = [
+    db
+      .insert(catalogueBrand)
+      .values({ id: catalogue.brand.id, name: catalogue.brand.name, slug: catalogue.brand.slug })
+      .onConflictDoNothing({ target: catalogueBrand.id }),
+    db.insert(catalogueBrand).select(
+      db
+        .select()
+        .from(catalogueBrand)
+        .where(
+          and(
+            eq(catalogueBrand.id, catalogue.brand.id),
+            sql`${catalogueBrand.name} is distinct from ${catalogue.brand.name}
+              or ${catalogueBrand.slug} is distinct from ${catalogue.brand.slug}`,
+          ),
+        )
+        .limit(1),
+    ),
+    db
+      .insert(catalogueModel)
+      .values({
+        id: catalogue.model.id,
+        brandId: catalogue.brand.id,
+        name: catalogue.model.name,
+        slug: catalogue.model.slug,
+      })
+      .onConflictDoNothing({ target: catalogueModel.id }),
+    db.insert(catalogueModel).select(
+      db
+        .select()
+        .from(catalogueModel)
+        .where(
+          and(
+            eq(catalogueModel.id, catalogue.model.id),
+            sql`${catalogueModel.brandId} is distinct from ${catalogue.brand.id}
+              or ${catalogueModel.name} is distinct from ${catalogue.model.name}
+              or ${catalogueModel.slug} is distinct from ${catalogue.model.slug}`,
+          ),
+        )
+        .limit(1),
+    ),
+    db
+      .insert(catalogueGeneration)
+      .values({
+        id: catalogue.generation.id,
+        modelId: catalogue.model.id,
+        name: catalogue.generation.name,
+        slug: catalogue.generation.slug,
+      })
+      .onConflictDoNothing({ target: catalogueGeneration.id }),
+    db.insert(catalogueGeneration).select(
+      db
+        .select()
+        .from(catalogueGeneration)
+        .where(
+          and(
+            eq(catalogueGeneration.id, catalogue.generation.id),
+            sql`${catalogueGeneration.modelId} is distinct from ${catalogue.model.id}
+              or ${catalogueGeneration.name} is distinct from ${catalogue.generation.name}
+              or ${catalogueGeneration.slug} is distinct from ${catalogue.generation.slug}`,
+          ),
+        )
+        .limit(1),
+    ),
+    ...cataloguePolicyStatements(db, parsed.sourcePolicy, policyId),
+  ];
+  const names = [
+    catalogue.brand.name,
+    catalogue.model.name,
+    catalogue.generation.name,
+    ...(parsed.sourcePolicy.permittedFields.includes("alias")
+      ? [...catalogue.aliases.map((alias) => alias.name), ...record.document.aliases]
+      : []),
+  ];
+  return [...statements, ...generationAliasStatements(db, catalogue.generation.id, names)];
+}
+
+function generationAliasStatements(db: Database, generationId: string, names: string[]): BatchItem<"pg">[] {
+  const seen = new Set<string>();
+  const statements: BatchItem<"pg">[] = [];
+  for (const name of names) {
+    const normalized = normalizeCatalogueQuery(name);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    statements.push(
+      db
+        .insert(catalogueGenerationAlias)
+        .values({
+          id: randomId(),
+          generationId,
+          normalizedName: normalized,
+        })
+        .onConflictDoNothing({
+          target: [catalogueGenerationAlias.generationId, catalogueGenerationAlias.normalizedName],
+        }),
+    );
+  }
+  return statements;
+}
+
 function catalogueAliasStatements(db: Database, subjectId: string, aliases: Array<{ kind: string; name: string }>): BatchItem<"pg">[] {
   const seen = new Set<string>();
   const statements: BatchItem<"pg">[] = [];
@@ -1910,6 +2117,21 @@ function publicationLeaksIdentifier(record: ImportRecord, policy: SourcePolicyIn
 }
 
 function catalogueIdentityText(record: ImportRecord): string[] {
+  const generation = record.generationCatalogue;
+  if (generation) {
+    return [
+      generation.brand.id,
+      generation.brand.name,
+      generation.brand.slug,
+      generation.model.id,
+      generation.model.name,
+      generation.model.slug,
+      generation.generation.id,
+      generation.generation.name,
+      generation.generation.slug,
+      ...generation.aliases.flatMap((alias) => [alias.kind, alias.name]),
+    ];
+  }
   const catalogue = record.catalogue;
   if (!catalogue) return [];
   const price = catalogue.priceReference;

@@ -232,7 +232,7 @@ order by case when normalized_name = 'rank probe' then 0 else 1 end,
         if (!expected.includes(id)) expected.push(id);
       }
       assert.deepEqual(
-        found.hits.map((hit) => hit.applicabilityId),
+        found.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])),
         expected,
       );
       assert.deepEqual(
@@ -245,14 +245,15 @@ order by case when normalized_name = 'rank probe' then 0 else 1 end,
     test("private preview keeps markets, states, production, and redirects distinct", async () => {
       const found = await previewCaller.catalogue.search({ q: "lumen twin" });
       assert.deepEqual(
-        found.hits.map((hit) => hit.applicabilityId).sort(),
+        found.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])).sort(),
         ["app_lumen_in_2024_base", "app_lumen_jp_2024_base"].sort(),
       );
       assert.deepEqual(
-        found.hits.map((hit) => hit.variantName),
+        found.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.variantName] : [])),
         ["Base", "Base"],
       );
-      assert.notEqual(found.hits[0]?.variantId, found.hits[1]?.variantId);
+      const variants = found.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.variantId] : []));
+      assert.notEqual(variants[0], variants[1]);
 
       const overview = await previewCaller.catalogue.read({
         modelSlug: "twin-coupe",

@@ -197,6 +197,8 @@ export const publishingPublishedAssertion = pgTable(
     observedAt: timestamp("observed_at", { withTimezone: true, mode: "string" }),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true, mode: "string" }).notNull(),
     priceReference: jsonb("price_reference").$type<PublishingPriceReference | null>(),
+    identityScope: text("identity_scope").notNull().default("applicability"),
+    rightsGeographies: jsonb("rights_geographies").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   },
   (table) => [
     unique("publishing_published_provider_external").on(
@@ -209,6 +211,10 @@ export const publishingPublishedAssertion = pgTable(
       table.canonicalSubjectId,
     ),
     index("publishing_published_subject").on(table.canonicalSubjectId),
+    check(
+      "publishing_published_assertion_identity_scope",
+      sql`${table.identityScope} in ('applicability', 'generation', 'model')`,
+    ),
   ],
 );
 
