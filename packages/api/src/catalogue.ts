@@ -1264,9 +1264,18 @@ async function searchBareGenerations(
     );
   const occupiedIds = new Set(occupied.map((row) => row.generationId));
   const seen = new Set<string>();
+  const approvedNames = new Map<string, PublicDetail | null>();
   const hits: CatalogueSearchHit[] = [];
   for (const row of rows) {
     if (occupiedIds.has(row.generationId) || seen.has(row.generationId)) continue;
+    if (!row.synthetic && !await currentScopedNameApproved(
+      db,
+      row.generationId,
+      row.normalizedName,
+      [row.brandName, row.modelName, row.generationName],
+      now,
+      approvedNames,
+    )) continue;
     seen.add(row.generationId);
     hits.push({
       scope: "generation",
@@ -1348,9 +1357,18 @@ async function searchBareModels(
     ...applicabilityRows.map((row) => row.modelId),
   ]);
   const seen = new Set<string>();
+  const approvedNames = new Map<string, PublicDetail | null>();
   const hits: CatalogueSearchHit[] = [];
   for (const row of rows) {
     if (occupied.has(row.modelId) || seen.has(row.modelId)) continue;
+    if (!await currentScopedNameApproved(
+      db,
+      row.modelId,
+      row.normalizedName,
+      [row.brandName, row.modelName],
+      now,
+      approvedNames,
+    )) continue;
     seen.add(row.modelId);
     hits.push({
       scope: "model",
@@ -1366,6 +1384,24 @@ async function searchBareModels(
     });
   }
   return hits;
+}
+
+async function currentScopedNameApproved(
+  db: Database,
+  subjectId: string,
+  normalizedName: string,
+  canonicalNames: string[],
+  now: Date,
+  cache: Map<string, PublicDetail | null>,
+): Promise<boolean> {
+  if (!cache.has(subjectId)) {
+    cache.set(subjectId, await readPublishedCatalogueDetail(db, subjectId, () => now));
+  }
+  const projection = cache.get(subjectId);
+  if (!projection) return false;
+  if (canonicalNames.some((name) => normalizeCatalogueQuery(name) === normalizedName)) return true;
+  return projection.permittedFields.includes("alias") &&
+    projection.aliases.some((alias) => normalizeCatalogueQuery(alias) === normalizedName);
 }
 
 function selfVisibleGenerationSql(access: CatalogueAccess, now: Date): SQL {

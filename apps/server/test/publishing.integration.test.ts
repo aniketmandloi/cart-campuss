@@ -15,6 +15,7 @@ import {
   catalogueGenerationAlias,
   catalogueImage,
   catalogueModel,
+  catalogueModelAlias,
   cataloguePriceReference,
   catalogueProductionClaim,
   catalogueSourcePolicy,
@@ -2778,6 +2779,42 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
       (await caller(null).catalogue.readModel({ modelSlug: "model-model-shell-coupe" })).availability,
       "not-in-public-catalogue",
     );
+  });
+
+  it("matches model and generation aliases only while the current assertion permits them", async () => {
+    const model = modelCatalogueImport("Alias Rights Model");
+    model.records[0]!.document.aliases = ["Zephyr Lookup"];
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(model)).status, "published");
+    assert.equal((await caller(null).catalogue.search({ q: "Zephyr Lookup" })).hits[0]?.scope, "model");
+    assert.equal((await caller(null).catalogue.search({ q: "zeph" })).hits[0]?.modelId, "model-alias-rights-model");
+    assert.equal((await caller(null).catalogue.search({ q: "Alias Rights Model Model" })).hits[0]?.scope, "model");
+
+    const modelRevoked = structuredClone(model);
+    modelRevoked.idempotencyKey += "-no-alias";
+    modelRevoked.sourcePolicy.id = crypto.randomUUID();
+    modelRevoked.sourcePolicy.permittedFields = modelRevoked.sourcePolicy.permittedFields.filter((field) => field !== "alias");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(modelRevoked)).status, "published");
+    assert.equal((await caller(null).catalogue.search({ q: "Zephyr Lookup" })).hits.length, 0);
+    assert.equal((await caller(null).catalogue.search({ q: "zeph" })).hits.length, 0);
+    assert.equal((await caller(null).catalogue.search({ q: "Alias Rights Model Model" })).hits[0]?.modelId, "model-alias-rights-model");
+    assert.equal((await db.select().from(catalogueModelAlias).where(sql`${catalogueModelAlias.normalizedName} = 'zephyr lookup'`)).length, 1);
+
+    const generation = generationCatalogueImport("Alias Rights Generation");
+    generation.records[0]!.document.aliases = ["Zephyr Generation"];
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(generation)).status, "published");
+    assert.equal((await caller(null).catalogue.search({ q: "Zephyr Generation" })).hits[0]?.scope, "generation");
+    assert.equal((await caller(null).catalogue.search({ q: "zephyr g" })).hits[0]?.generationId, "gen-alias-rights-generation");
+    assert.equal((await caller(null).catalogue.search({ q: "Alias Rights Generation Shell" })).hits[0]?.scope, "generation");
+
+    const generationRevoked = structuredClone(generation);
+    generationRevoked.idempotencyKey += "-no-alias";
+    generationRevoked.sourcePolicy.id = crypto.randomUUID();
+    generationRevoked.sourcePolicy.permittedFields = generationRevoked.sourcePolicy.permittedFields.filter((field) => field !== "alias");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(generationRevoked)).status, "published");
+    assert.equal((await caller(null).catalogue.search({ q: "Zephyr Generation" })).hits.length, 0);
+    assert.equal((await caller(null).catalogue.search({ q: "zephyr g" })).hits.length, 0);
+    assert.equal((await caller(null).catalogue.search({ q: "Alias Rights Generation Shell" })).hits[0]?.generationId, "gen-alias-rights-generation");
+    assert.equal((await db.select().from(catalogueGenerationAlias).where(sql`${catalogueGenerationAlias.normalizedName} = 'zephyr generation'`)).length, 1);
   });
 
 });
