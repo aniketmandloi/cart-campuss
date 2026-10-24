@@ -12,7 +12,7 @@ There are no new environment variables. Use the server and web variables in [pub
 | `/cars/{modelSlug}/{generationSlug}` | A scoped Generation, or the context selector when an applicability exists. |
 | `?market=&year=&variant=` | One applicability on the generation route. A contextless link does not pick a trim. |
 | `?section=` | `overview`, `specs`, `market`, `cost`, or `sources`. All five stay in the HTML. |
-| `?registration=` | Page context only. It is not copied into the correction issue. |
+| `?registration=` | Page context only. Section links may keep it. The correction issue omits it, including on a model page, along with finance inputs. |
 
 A renamed slug redirects with the query preserved. An incompatible market, year, or variant does not select another car.
 

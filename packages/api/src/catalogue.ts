@@ -664,7 +664,6 @@ export async function readCatalogueModel(
   const pagePath = catalogueModelHref({
     modelSlug: located.modelSlug,
     section,
-    registration: requested.registration,
   });
   return {
     availability: "scoped",

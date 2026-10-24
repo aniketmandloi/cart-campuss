@@ -2817,6 +2817,46 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal((await db.select().from(catalogueGenerationAlias).where(sql`${catalogueGenerationAlias.normalizedName} = 'zephyr generation'`)).length, 1);
   });
 
+  it("leaves registration and finance noise out of a model correction", async () => {
+    const input = modelCatalogueImport("Correction Model");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const page = await caller(null).catalogue.readModel({
+      modelSlug: "model-correction-model",
+      section: "cost",
+      registration: "reg_mh",
+    });
+    assert.equal(page.availability, "scoped");
+    if (page.availability !== "scoped" || page.scope !== "model") return;
+    const issue = new URL(page.correctionHref);
+    const body = issue.searchParams.get("body") ?? "";
+    assert.match(body, /Page: \/cars\/model-correction-model\?section=cost$/m);
+    assert.match(body, /Generation: not selected/);
+    assert.doesNotMatch(body, /reg_mh|registration|income|emi|finance/i);
+    assert.equal(page.sections.some((section) => section.href.includes("registration=reg_mh")), true);
+    assert.equal(page.context.registration, "reg_mh");
+
+    const loaders = await importCatalogueLoaders();
+    const views = await importCatalogueViews();
+    const html = renderToStaticMarkup(
+      createElement(views.CatalogueDetailView, {
+        state: await loaders.loadCatalogueModelForContext(catalogueRuntime(), {
+          modelSlug: "model-correction-model",
+          section: "cost",
+          registration: "reg_mh",
+        }),
+      }),
+    );
+    assert.match(html, /Registration jurisdiction: reg_mh/);
+    assert.match(html, /Comparison and finance wait/);
+    const href = html.match(/href="(https:\/\/github.com\/aniketmandloi\/cart-campuss\/issues\/new[^"]*)"/);
+    assert.ok(href?.[1]);
+    const rendered = new URL(href[1].replaceAll("&amp;", "&"));
+    const renderedBody = rendered.searchParams.get("body") ?? "";
+    assert.match(renderedBody, /Page: \/cars\/model-correction-model\?section=cost$/m);
+    assert.doesNotMatch(renderedBody, /reg_mh|registration|income|emi|finance/i);
+    assert.match(html, /registration=reg_mh#cost/);
+  });
+
 });
 
 function pauseNextBatch(database: Database) {
