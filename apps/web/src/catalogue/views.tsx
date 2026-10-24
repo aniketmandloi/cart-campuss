@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 
 import type {
   CatalogueAssertion,
@@ -35,18 +35,28 @@ type DossierPage = Extract<CatalogueCarPage, { availability: "visible" | "overvi
 
 export function CatalogueSearchView({ state }: { state: CatalogueSearchState }) {
   return (
-    <Frame>
-      <div className="flex flex-col gap-2">
-        <h1 className="text-3xl font-medium">Search the catalogue</h1>
-        <p className="max-w-xl text-sm text-muted-foreground">
+    <main id="catalogue" className="mx-auto flex w-full max-w-[1120px] flex-col gap-12 px-4 pt-12 pb-16 sm:pt-20">
+      <div className="flex max-w-3xl flex-col gap-5">
+        <p className="rise text-sm text-muted-foreground" style={stagger(0)}>
+          Sourced car records
+        </p>
+        <h1
+          className="rise text-5xl leading-[0.95] font-semibold tracking-[-0.045em] sm:text-7xl"
+          style={stagger(1)}
+        >
+          Search the catalogue
+        </h1>
+        <p className="rise max-w-xl text-base/relaxed text-muted-foreground" style={stagger(2)}>
           Search by the car name. A complete record names one market, one model year, and one
           variant, with the source beside each fact.
         </p>
       </div>
       {state.privatePreview ? <PreviewNotice /> : null}
-      <SearchForm query={state.query} />
-      <SearchStatus state={state} />
-    </Frame>
+      <div className="flex max-w-3xl flex-col gap-6">
+        <SearchForm query={state.query} />
+        <SearchStatus state={state} />
+      </div>
+    </main>
   );
 }
 
@@ -105,16 +115,27 @@ function DossierPageView({ page }: { page: DossierPage }) {
   const selected = page.availability === "visible";
   const cost = page.sections.find((section) => section.id === "cost");
   return (
-    <main id="catalogue" className="mx-auto w-full max-w-[1120px] px-4 py-8">
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="flex min-w-0 flex-col gap-8">
+    <main id="catalogue" className="mx-auto w-full max-w-[1120px] px-4 pt-8 pb-20 sm:pt-12">
+      <div className="grid gap-x-12 gap-y-14 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-w-0 flex-col gap-12">
           {page.privatePreview ? <PreviewNotice /> : null}
           {page.synthetic ? <p>Synthetic fixture. Not a manufacturer publication.</p> : null}
           <TextLink href="/">Search the catalogue</TextLink>
-          <header className="flex flex-col gap-2">
-            <p className="text-sm text-muted-foreground">{page.identity.brandName}</p>
-            <h1 className="text-2xl font-medium">{page.identity.modelName}</h1>
-            {"generationName" in page.identity ? <p>{page.identity.generationName}</p> : null}
+          <header className="flex flex-col gap-5">
+            <p className="rise text-sm text-muted-foreground" style={stagger(0)}>
+              {page.identity.brandName}
+            </p>
+            <h1
+              className="rise text-5xl leading-[0.92] font-semibold tracking-[-0.045em] text-balance sm:text-7xl"
+              style={stagger(1)}
+            >
+              {page.identity.modelName}
+            </h1>
+            {"generationName" in page.identity ? (
+              <p className="rise text-lg text-muted-foreground" style={stagger(2)}>
+                {page.identity.generationName}
+              </p>
+            ) : null}
             {page.availability === "scoped" ? (
               <p>
                 {page.scope === "model"
@@ -143,9 +164,10 @@ function DossierPageView({ page }: { page: DossierPage }) {
           {cost ? (
             <a
               href={cost.href}
-              className="inline-flex min-h-11 items-center bg-primary px-5 text-sm font-medium text-primary-foreground lg:hidden"
+              className="flex h-14 items-center justify-between bg-primary px-5 text-base font-medium text-primary-foreground transition-transform duration-200 active:scale-[0.99] lg:hidden"
             >
               Estimate India cost
+              <span aria-hidden="true">↓</span>
             </a>
           ) : null}
           <ApplicabilitySelector page={page} />
@@ -157,7 +179,7 @@ function DossierPageView({ page }: { page: DossierPage }) {
           ) : null}
         </div>
         <CostSection page={page} />
-        <div className="flex min-w-0 flex-col gap-8">
+        <div className="flex min-w-0 flex-col gap-14 lg:col-start-1 lg:row-start-2">
           <SpecsSection page={page} />
           <MarketSection page={page} />
           <SourcesSection page={page} />
@@ -174,12 +196,12 @@ function SelectedIdentity({
 }) {
   const body = page.facts.find((fact) => fact.property === "Body" && fact.state === "known");
   return (
-    <section className="flex flex-col gap-2" aria-labelledby="model-year">
-      <h2 id="model-year" className="text-base font-medium">
+    <section className="rise-on-scroll flex flex-col gap-4 border-t border-border pt-8" aria-labelledby="model-year">
+      <h2 id="model-year" className="text-2xl font-semibold tracking-tight">
         Model year {page.identity.modelYearLabel}
       </h2>
       <p>{page.identity.modelYearConvention}</p>
-      <p>
+      <p className="text-muted-foreground">
         {page.identity.variantName} · {page.identity.salesMarketName}
       </p>
       {body?.rawValue ? <p>{body.rawValue}</p> : null}
@@ -189,23 +211,23 @@ function SelectedIdentity({
 
 function QuickFacts({ facts }: { facts: CatalogueFact[] }) {
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="quick-facts">
-      <h2 id="quick-facts" className="text-base font-medium">
+    <section className="rise-on-scroll flex flex-col gap-4" aria-labelledby="quick-facts">
+      <h2 id="quick-facts" className="text-2xl font-semibold tracking-tight">
         Quick facts
       </h2>
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+      <dl className="grid grid-cols-2 gap-px border border-border bg-border sm:grid-cols-3">
         {quickFactSlots(facts).map((slot) => (
-          <div key={slot.label} className="min-w-0">
+          <div key={slot.label} className="min-w-0 bg-background p-4">
             <dt className="text-sm text-muted-foreground">{slot.label}</dt>
-            <dd className="text-sm">
+            <dd className="mt-2 text-base">
               {slot.facts.length === 0 ? (
                 <Blank />
               ) : (
                 slot.facts.map((fact) => (
-                  <div key={`${fact.property}-${fact.measurementStandard ?? fact.rawValue ?? fact.state}`}>
+                  <Rail key={`${fact.property}-${fact.measurementStandard ?? fact.rawValue ?? fact.state}`} freshness={fact.freshness}>
                     <FactState fact={fact} />
                     <ReviewState freshness={fact.freshness} reviewedOn={fact.reviewedOn} />
-                  </div>
+                  </Rail>
                 ))
               )}
             </dd>
@@ -218,8 +240,8 @@ function QuickFacts({ facts }: { facts: CatalogueFact[] }) {
 
 function ApplicabilitySelector({ page }: { page: DossierPage }) {
   return (
-    <section id="overview" className="flex flex-col gap-4" aria-labelledby="catalogue-selection">
-      <h2 id="catalogue-selection" className="text-base font-medium">
+    <section id="overview" className="rise-on-scroll flex flex-col gap-6 scroll-mt-28" aria-labelledby="catalogue-selection">
+      <h2 id="catalogue-selection" className="text-2xl font-semibold tracking-tight">
         Overview
       </h2>
       {page.availability === "incompatible" ? (
@@ -233,16 +255,18 @@ function ApplicabilitySelector({ page }: { page: DossierPage }) {
       ) : (
         <p>Choose another market, model year, or variant to read that record.</p>
       )}
-      <SelectorGroup label="Generation" links={page.selector.generations} />
-      <SelectorGroup label="Sales market" links={page.selector.markets} />
-      <SelectorGroup label="Model year" links={page.selector.years} />
-      <SelectorGroup label="Market variant" links={page.selector.variants} />
+      <div className="grid gap-6 sm:grid-cols-2">
+        <SelectorGroup label="Generation" links={page.selector.generations} />
+        <SelectorGroup label="Sales market" links={page.selector.markets} />
+        <SelectorGroup label="Model year" links={page.selector.years} />
+        <SelectorGroup label="Market variant" links={page.selector.variants} />
+      </div>
       {page.selector.records.length > 0 ? (
-        <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">Records</h3>
-          <ul>
+        <div className="flex flex-col gap-3">
+          <h3 className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">Records</h3>
+          <ul className="flex flex-col border-t border-border">
             {page.selector.records.map((record) => (
-              <li key={record.href} className="border-b border-border py-2">
+              <li key={record.href} className="border-b border-border py-3">
                 <RecordLink record={record} />
               </li>
             ))}
@@ -260,14 +284,18 @@ function ApplicabilitySelector({ page }: { page: DossierPage }) {
 function SelectorGroup({ label, links }: { label: string; links: DossierLink[] }) {
   if (links.length === 0) return null;
   return (
-    <div className="flex flex-col gap-1">
-      <h3 className="text-sm font-medium">{label}</h3>
-      <ul>
+    <div className="flex flex-col gap-3">
+      <h3 className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">{label}</h3>
+      <ul className="flex flex-wrap gap-2">
         {links.map((link) => (
           <li key={link.href}>
-            <TextLink href={link.href} current={link.current}>
+            <a
+              href={link.href}
+              aria-current={link.current ? "true" : undefined}
+              className="inline-flex min-h-11 items-center border border-border px-4 text-sm transition-colors duration-200 hover:border-foreground aria-[current=true]:border-foreground aria-[current=true]:bg-foreground aria-[current=true]:text-background"
+            >
               {link.label}
-            </TextLink>
+            </a>
           </li>
         ))}
       </ul>
@@ -288,8 +316,11 @@ function RecordLink({ record }: { record: DossierRecordLink }) {
 
 function SectionNav({ page }: { page: DossierPage }) {
   return (
-    <nav aria-label="Dossier sections">
-      <ul className="flex flex-wrap gap-x-4">
+    <nav
+      aria-label="Dossier sections"
+      className="sticky top-14 z-10 -mx-4 overflow-x-auto border-y border-border bg-background/85 px-4 backdrop-blur-md"
+    >
+      <ul className="flex gap-6 whitespace-nowrap">
         {page.sections.map((section) => (
           <li key={section.id}>
             <TextLink href={section.href} current={section.current}>
@@ -305,41 +336,47 @@ function SectionNav({ page }: { page: DossierPage }) {
 function CostSection({ page }: { page: DossierPage }) {
   const price = page.availability === "visible" ? page.priceReference : null;
   return (
-    <section id="cost" className="flex min-w-0 flex-col gap-2 lg:row-span-2" aria-labelledby="india-cost">
-      <h2 id="india-cost" className="text-base font-medium">
+    <section
+      id="cost"
+      className="rise-on-scroll flex min-w-0 scroll-mt-28 flex-col gap-6 border border-border bg-card p-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
+      aria-labelledby="india-cost"
+    >
+      <h2 id="india-cost" className="text-2xl font-semibold tracking-tight">
         India cost
       </h2>
       {page.availability === "incompatible" ? (
         <p>This market, model year, and variant are not a record of this car.</p>
       ) : page.availability === "visible" ? (
         <>
-          <h3 id="price-reference" className="text-base font-medium">
+          <h3 id="price-reference" className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
             Price reference
           </h3>
           {price ? (
             <>
-              <p className="text-2xl font-medium tabular-nums leading-none text-[var(--data)]">
+              <p className="text-5xl leading-none font-semibold tracking-tight text-data tabular-nums">
                 {price.displayAmount}
               </p>
-              <p className="text-sm text-muted-foreground">
-                {price.amountMinor} {price.currency} minor units, exponent {price.minorUnitExponent}
-              </p>
-              <p>{price.basis}</p>
-              <p>Tax inclusivity: {price.taxInclusivity}</p>
-              <p>Source: {sourceText(price.sourceTitle, price.sourceUrl)}</p>
-              {price.sourceIdentifier ? <p>Source identifier: {price.sourceIdentifier}</p> : null}
-              <p>Observed {price.observedOn}</p>
-              <p>Retrieved {price.retrievedOn}</p>
-              {price.fetchedAt ? <p>Fetched {price.fetchedAt}</p> : null}
-              {price.lastSuccessfulProviderSyncAt ? (
-                <p>Last provider sync {price.lastSuccessfulProviderSyncAt}</p>
-              ) : null}
-              <p>Review: {price.reviewStatus}</p>
-              <ReviewState freshness={price.freshness} reviewedOn={price.reviewedOn} />
-              {price.nextRecheckAt ? <p>Next recheck {price.nextRecheckAt}</p> : null}
-              <p>Source policy: {price.policyName}</p>
-              <p>Audience: {price.policyAudience}</p>
-              <p className="break-words">{price.policyAttribution}</p>
+              <div className="flex flex-col gap-2 border-t border-border pt-5 text-sm text-muted-foreground">
+                <p>
+                  {price.amountMinor} {price.currency} minor units, exponent {price.minorUnitExponent}
+                </p>
+                <p>{price.basis}</p>
+                <p>Tax inclusivity: {price.taxInclusivity}</p>
+                <p>Source: {sourceText(price.sourceTitle, price.sourceUrl)}</p>
+                {price.sourceIdentifier ? <p>Source identifier: {price.sourceIdentifier}</p> : null}
+                <p>Observed {price.observedOn}</p>
+                <p>Retrieved {price.retrievedOn}</p>
+                {price.fetchedAt ? <p>Fetched {price.fetchedAt}</p> : null}
+                {price.lastSuccessfulProviderSyncAt ? (
+                  <p>Last provider sync {price.lastSuccessfulProviderSyncAt}</p>
+                ) : null}
+                <p>Review: {price.reviewStatus}</p>
+                <ReviewState freshness={price.freshness} reviewedOn={price.reviewedOn} />
+                {price.nextRecheckAt ? <p>Next recheck {price.nextRecheckAt}</p> : null}
+                <p>Source policy: {price.policyName}</p>
+                <p>Audience: {price.policyAudience}</p>
+                <p className="break-words">{price.policyAttribution}</p>
+              </div>
             </>
           ) : (
             <p>No reviewed price reference.</p>
@@ -359,8 +396,8 @@ function SpecsSection({ page }: { page: DossierPage }) {
   const facts = evidenced ? page.facts : [];
   const claims = evidenced ? page.productionClaims : [];
   return (
-    <section id="specs" className="flex flex-col gap-6" aria-labelledby="specs-heading">
-      <h2 id="specs-heading" className="text-base font-medium">
+    <section id="specs" className="rise-on-scroll flex scroll-mt-28 flex-col gap-10" aria-labelledby="specs-heading">
+      <h2 id="specs-heading" className="text-2xl font-semibold tracking-tight">
         Specs
       </h2>
       {evidenced ? (
@@ -382,8 +419,8 @@ function SpecsSection({ page }: { page: DossierPage }) {
 
 function FactGroup({ label, facts }: { label: string; facts: CatalogueFact[] }) {
   return (
-    <section className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">{label}</h3>
+    <section className="flex flex-col">
+      <h3 className="pb-3 text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">{label}</h3>
       {facts.length === 0 ? <p><Blank /></p> : facts.map((fact, index) => (
         <FactRecord key={`${fact.property}-${index}`} fact={fact} />
       ))}
@@ -393,8 +430,8 @@ function FactGroup({ label, facts }: { label: string; facts: CatalogueFact[] }) 
 
 function ProductionHistory({ claims }: { claims: CatalogueProductionClaim[] }) {
   return (
-    <section id="production-history" className="flex flex-col gap-3" aria-labelledby="production-heading">
-      <h3 id="production-heading" className="text-sm font-medium">
+    <section id="production-history" className="flex flex-col gap-4" aria-labelledby="production-heading">
+      <h3 id="production-heading" className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
         Production history
       </h3>
       {claims.length === 0 ? (
@@ -429,8 +466,8 @@ function ProductionHistory({ claims }: { claims: CatalogueProductionClaim[] }) {
 function SeparateCounts({ facts }: { facts: CatalogueFact[] }) {
   if (facts.length === 0) return null;
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="separate-counts">
-      <h3 id="separate-counts" className="text-sm font-medium">
+    <section className="flex flex-col gap-4" aria-labelledby="separate-counts">
+      <h3 id="separate-counts" className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
         Sales, registrations, and exports
       </h3>
       <p>These counts are not production.</p>
@@ -446,11 +483,11 @@ function MarketSection({ page }: { page: DossierPage }) {
   const listings = page.availability === "visible" ? (page.marketListings ?? []) : [];
   const label = page.availability === "visible" ? page.marketLabel : "No market data";
   return (
-    <section id="market" className="flex flex-col gap-2" aria-labelledby="market-heading">
-      <h2 id="market-heading" className="text-base font-medium">
+    <section id="market" className="rise-on-scroll flex scroll-mt-28 flex-col gap-4" aria-labelledby="market-heading">
+      <h2 id="market-heading" className="text-2xl font-semibold tracking-tight">
         Market
       </h2>
-      <h3 id="market-data" className="text-base font-medium">
+      <h3 id="market-data" className="text-lg font-medium">
         {label}
       </h3>
       {directory.length === 0 && listings.length === 0 ? (
@@ -459,9 +496,9 @@ function MarketSection({ page }: { page: DossierPage }) {
         </p>
       ) : null}
       {directory.map((entry) => (
-        <div key={entry.url} className="flex flex-col gap-1 text-sm">
+        <div key={entry.url} className="flex flex-col gap-1 border-b border-border py-4 text-sm">
           <p>{entry.title}</p>
-          <a className="break-all" href={entry.url} rel="noreferrer noopener" target="_blank">
+          <a className="link-draw break-all" href={entry.url} rel="noreferrer noopener" target="_blank">
             {entry.url}
           </a>
           <ReviewState freshness={entry.freshness} reviewedOn={entry.lastReviewedAt} />
@@ -472,9 +509,9 @@ function MarketSection({ page }: { page: DossierPage }) {
         </div>
       ))}
       {listings.map((listing) => (
-        <div key={listing.url} className="flex flex-col gap-1 text-sm">
+        <div key={listing.url} className="flex flex-col gap-1 border-b border-border py-4 text-sm">
           <p>{listing.title}</p>
-          <a className="break-all" href={listing.url} rel="noreferrer noopener" target="_blank">
+          <a className="link-draw break-all" href={listing.url} rel="noreferrer noopener" target="_blank">
             {listing.url}
           </a>
           <p>{listing.priceType}</p>
@@ -519,13 +556,13 @@ function ListingState({
 
 function SourcesSection({ page }: { page: DossierPage }) {
   return (
-    <section id="sources" className="flex flex-col gap-3" aria-labelledby="sources-heading">
-      <h2 id="sources-heading" className="text-base font-medium">
+    <section id="sources" className="rise-on-scroll flex scroll-mt-28 flex-col gap-6" aria-labelledby="sources-heading">
+      <h2 id="sources-heading" className="text-2xl font-semibold tracking-tight">
         Sources
       </h2>
       <PolicyBlock policy={page.policy} />
       <p>
-        <a href={page.correctionHref} className="inline-flex min-h-11 items-center break-words">
+        <a href={page.correctionHref} className="link-draw inline-flex min-h-11 items-center break-words">
           Report a correction
         </a>
       </p>
@@ -535,40 +572,44 @@ function SourcesSection({ page }: { page: DossierPage }) {
 
 function FactRecord({ fact }: { fact: CatalogueFact }) {
   return (
-    <div className="flex flex-col gap-1 border-b border-border py-3 text-sm">
+    <div
+      className={`grid gap-x-8 gap-y-3 border-b border-l-2 py-5 pl-4 text-sm sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] ${RAIL_TONE[fact.freshness ?? "current"]}`}
+    >
       <h4 className="font-medium">{fact.property}</h4>
-      <FactState fact={fact} />
-      {fact.curatedReason ? <p>{fact.curatedReason}</p> : null}
-      {fact.state === "known" || fact.state === "unknown" ? (
-        <>
-          <p>
-            Normalized: <MaybeValue value={fact.state === "known" ? fact.normalizedValue : null} />
-          </p>
-          <p>
-            Unit: <MaybeValue value={fact.state === "known" ? fact.unit : null} />
-          </p>
-          <p>
-            Standard:{" "}
-            <MaybeValue value={fact.state === "known" ? fact.measurementStandard : null} />
-          </p>
-        </>
-      ) : null}
-      <p className="break-words">{sourceText(fact.sourceTitle, fact.sourceUrl)}</p>
-      <p>{fact.policyName}</p>
-      <p>Audience: {fact.policyAudience}</p>
-      <p className="break-words">{fact.policyAttribution}</p>
-      <p>Retrieved {fact.retrievedOn}</p>
-      {fact.observedOn ? <p>Observed {fact.observedOn}</p> : null}
-      {fact.fetchedAt ? <p>Fetched {fact.fetchedAt}</p> : null}
-      {fact.lastSuccessfulProviderSyncAt ? (
-        <p>Last provider sync {fact.lastSuccessfulProviderSyncAt}</p>
-      ) : null}
-      <p>{fact.reviewStatus}</p>
-      <ReviewState freshness={fact.freshness} reviewedOn={fact.reviewedOn} />
-      {fact.nextRecheckAt ? <p>Next recheck {fact.nextRecheckAt}</p> : null}
-      {fact.factualReviewerRef ? <p>Factual reviewer: {fact.factualReviewerRef}</p> : null}
-      {fact.rightsReviewerRef ? <p>Rights reviewer: {fact.rightsReviewerRef}</p> : null}
-      {fact.conflict ? <ConflictReading conflict={fact.conflict} /> : null}
+      <div className="flex min-w-0 flex-col gap-1 text-muted-foreground">
+        <FactState fact={fact} />
+        {fact.curatedReason ? <p>{fact.curatedReason}</p> : null}
+        {fact.state === "known" || fact.state === "unknown" ? (
+          <>
+            <p>
+              Normalized: <MaybeValue value={fact.state === "known" ? fact.normalizedValue : null} />
+            </p>
+            <p>
+              Unit: <MaybeValue value={fact.state === "known" ? fact.unit : null} />
+            </p>
+            <p>
+              Standard:{" "}
+              <MaybeValue value={fact.state === "known" ? fact.measurementStandard : null} />
+            </p>
+          </>
+        ) : null}
+        <p className="break-words">{sourceText(fact.sourceTitle, fact.sourceUrl)}</p>
+        <p>{fact.policyName}</p>
+        <p>Audience: {fact.policyAudience}</p>
+        <p className="break-words">{fact.policyAttribution}</p>
+        <p>Retrieved {fact.retrievedOn}</p>
+        {fact.observedOn ? <p>Observed {fact.observedOn}</p> : null}
+        {fact.fetchedAt ? <p>Fetched {fact.fetchedAt}</p> : null}
+        {fact.lastSuccessfulProviderSyncAt ? (
+          <p>Last provider sync {fact.lastSuccessfulProviderSyncAt}</p>
+        ) : null}
+        <p>{fact.reviewStatus}</p>
+        <ReviewState freshness={fact.freshness} reviewedOn={fact.reviewedOn} />
+        {fact.nextRecheckAt ? <p>Next recheck {fact.nextRecheckAt}</p> : null}
+        {fact.factualReviewerRef ? <p>Factual reviewer: {fact.factualReviewerRef}</p> : null}
+        {fact.rightsReviewerRef ? <p>Rights reviewer: {fact.rightsReviewerRef}</p> : null}
+        {fact.conflict ? <ConflictReading conflict={fact.conflict} /> : null}
+      </div>
     </div>
   );
 }
@@ -600,7 +641,7 @@ function FactState({ fact }: { fact: CatalogueFact }) {
   }
   return (
     <>
-      <p>{fact.rawValue}</p>
+      <p className="text-base text-foreground">{fact.rawValue}</p>
       {fact.measurementStandard ? <p>{fact.measurementStandard}</p> : null}
     </>
   );
@@ -639,7 +680,7 @@ function ConflictReading({ conflict }: { conflict: CatalogueAssertion }) {
 function PolicyBlock({ policy }: { policy: CataloguePolicy }) {
   return (
     <section className="flex flex-col gap-2" aria-labelledby="source-policy">
-      <h2 id="source-policy" className="text-base font-medium">
+      <h2 id="source-policy" className="text-lg font-semibold">
         Source policy
       </h2>
       <p>{policy.name}</p>
@@ -655,11 +696,11 @@ function PolicyBlock({ policy }: { policy: CataloguePolicy }) {
 function Photograph({ image }: { image: CatalogueImage | null }) {
   if (!image) {
     return (
-      <figure className="bg-card">
-        <div className="flex h-36 items-center justify-center" aria-hidden="true">
+      <figure className="rise border border-dashed border-border bg-card" style={stagger(3)}>
+        <div className="flex aspect-[16/9] items-center justify-center text-muted-foreground" aria-hidden="true">
           <DossierMark />
         </div>
-        <figcaption className="px-4 py-3 text-sm">
+        <figcaption className="border-t border-dashed border-border px-4 py-3 text-sm">
           No catalogue photograph
           <span className="mt-1 block text-muted-foreground">
             This record has no rights-cleared image.
@@ -669,9 +710,9 @@ function Photograph({ image }: { image: CatalogueImage | null }) {
     );
   }
   return (
-    <figure className="bg-card">
+    <figure className="rise border border-border bg-card" style={stagger(3)}>
       <img src={image.assetUrl} alt={image.altText} className="h-auto w-full" />
-      <figcaption className="flex flex-col gap-1 px-4 py-3 text-sm">
+      <figcaption className="flex flex-col gap-1 border-t border-border px-4 py-3 text-sm text-muted-foreground">
         <p>{image.credit}</p>
         <p>{image.licence}</p>
         {image.sourceUrl && /^https?:\/\//i.test(image.sourceUrl) ? (
@@ -686,8 +727,8 @@ function Photograph({ image }: { image: CatalogueImage | null }) {
 
 function SearchForm({ query }: { query: string }) {
   return (
-    <form method="get" action="/" role="search" className="flex flex-col gap-3">
-      <label htmlFor="catalogue-query" className="text-sm">
+    <form method="get" action="/" role="search" className="rise flex flex-col gap-3" style={stagger(3)}>
+      <label htmlFor="catalogue-query" className="text-sm text-muted-foreground">
         Car name
       </label>
       <div className="flex flex-col gap-3 sm:flex-row">
@@ -698,11 +739,11 @@ function SearchForm({ query }: { query: string }) {
           maxLength={80}
           autoComplete="off"
           enterKeyHint="search"
-          className="min-h-11 w-full border border-border bg-card px-3 text-base text-foreground"
+          className="h-14 w-full border border-border bg-card px-4 text-lg text-foreground transition-colors duration-300 placeholder:text-muted-foreground focus:border-foreground"
         />
         <button
           type="submit"
-          className="min-h-11 rounded-full bg-primary px-5 text-sm font-medium text-primary-foreground hover:bg-primary/80"
+          className="h-14 bg-primary px-8 text-sm font-medium text-primary-foreground transition-[background-color,transform] duration-200 hover:bg-foreground/85 active:scale-[0.98]"
         >
           Search
         </button>
@@ -713,44 +754,62 @@ function SearchForm({ query }: { query: string }) {
 
 function SearchStatus({ state }: { state: CatalogueSearchState }) {
   if (state.kind === "unconfigured") {
-    return <p id="catalogue-results">The catalogue database is not configured.</p>;
+    return <p id="catalogue-results" className="text-muted-foreground">The catalogue database is not configured.</p>;
   }
   if (state.kind === "unavailable") {
-    return <p id="catalogue-results">The catalogue could not be read.</p>;
+    return <p id="catalogue-results" className="text-muted-foreground">The catalogue could not be read.</p>;
   }
   if (state.kind === "invalid") {
-    return <p id="catalogue-results">Use 80 characters or fewer.</p>;
+    return <p id="catalogue-results" className="text-muted-foreground">Use 80 characters or fewer.</p>;
   }
   if (state.kind === "idle") return null;
   if (state.result.hits.length === 0) {
-    return <p id="catalogue-results">No published record matches this search.</p>;
+    return <p id="catalogue-results" className="text-muted-foreground">No published record matches this search.</p>;
   }
   return (
-    <ul id="catalogue-results">
-      {state.result.hits.map((hit) => (
+    <ul id="catalogue-results" className="flex flex-col border-t border-border">
+      {state.result.hits.map((hit, index) => (
         <li
           key={`${hit.scope}-${hit.scope === "applicability" ? hit.applicabilityId : hit.scope === "generation" ? hit.generationId : hit.modelId}`}
-          className="border-b border-border py-3"
+          className="rise border-b border-border"
+          style={stagger(index + 4)}
         >
-          <TextLink href={hit.href}>
-            {hit.brandName} {hit.modelName}
-          </TextLink>
-          {hit.scope === "model" ? (
-            <p className="text-sm text-muted-foreground">No generation is selected.</p>
-          ) : hit.scope === "generation" ? (
-            <p className="text-sm text-muted-foreground">
-              {hit.generationName}. No variant is selected.
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              {hit.generationName} · {hit.salesMarketName} · model year {hit.modelYearLabel} ·{" "}
-              {hit.variantName}
-            </p>
-          )}
-          <p className="text-sm">
-            {hit.match === "exact" ? "Exact name" : "Name begins with the query"}
-          </p>
-          {hit.synthetic ? <p className="text-sm">Synthetic fixture</p> : null}
+          <a
+            href={hit.href}
+            className="group grid gap-3 py-5 transition-colors duration-300 hover:bg-card sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-4"
+          >
+            <span className="flex min-w-0 flex-col gap-1">
+              <span className="flex items-center gap-3 text-xl font-medium tracking-tight">
+                {hit.brandName} {hit.modelName}
+                <span
+                  aria-hidden="true"
+                  className="text-muted-foreground transition-transform duration-300 group-hover:translate-x-1 group-hover:text-foreground"
+                >
+                  →
+                </span>
+              </span>
+              {hit.scope === "model" ? (
+                <span className="text-sm text-muted-foreground">No generation is selected.</span>
+              ) : hit.scope === "generation" ? (
+                <span className="text-sm text-muted-foreground">
+                  {hit.generationName}. No variant is selected.
+                </span>
+              ) : (
+                <span className="text-sm text-muted-foreground">
+                  {hit.generationName} · {hit.salesMarketName} · model year {hit.modelYearLabel} ·{" "}
+                  {hit.variantName}
+                </span>
+              )}
+            </span>
+            <span className="flex flex-wrap gap-2 text-xs">
+              <span className="border border-border px-2 py-1 text-muted-foreground">
+                {hit.match === "exact" ? "Exact name" : "Name begins with the query"}
+              </span>
+              {hit.synthetic ? (
+                <span className="border border-stale px-2 py-1 text-stale">Synthetic fixture</span>
+              ) : null}
+            </span>
+          </a>
         </li>
       ))}
     </ul>
@@ -759,16 +818,22 @@ function SearchStatus({ state }: { state: CatalogueSearchState }) {
 
 function PreviewNotice() {
   return (
-    <p>Private preview. Synthetic records are labelled and stay out of the public catalogue.</p>
+    <p className="max-w-3xl border-l-2 border-stale pl-4 text-sm text-foreground">
+      Private preview. Synthetic records are labelled and stay out of the public catalogue.
+    </p>
   );
 }
 
 function Frame({ children }: { children: ReactNode }) {
   return (
-    <main id="catalogue" className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
+    <main id="catalogue" className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 pt-12 pb-16 sm:pt-20">
       {children}
     </main>
   );
+}
+
+function stagger(index: number): CSSProperties {
+  return { "--i": index } as CSSProperties;
 }
 
 function TextLink({
@@ -784,7 +849,7 @@ function TextLink({
     <a
       href={href}
       aria-current={current ? "true" : undefined}
-      className="inline-flex min-h-11 items-center break-words hover:underline"
+      className="link-draw inline-flex min-h-11 items-center break-words"
     >
       {children}
     </a>
@@ -794,6 +859,26 @@ function TextLink({
 function MaybeValue({ value }: { value: string | null }) {
   if (!value) return <Blank />;
   return value;
+}
+
+const RAIL_TONE = {
+  current: "border-l-foreground/40",
+  stale: "border-l-stale",
+  "not-checked": "border-l-faint/35",
+} as const;
+
+function Rail({
+  freshness = "current",
+  children,
+}: {
+  freshness?: "current" | "stale" | "not-checked";
+  children: ReactNode;
+}) {
+  return (
+    <div className={`mb-4 flex min-w-0 flex-col gap-1 border-l-2 pl-4 last:mb-0 ${RAIL_TONE[freshness]}`}>
+      {children}
+    </div>
+  );
 }
 
 function Blank() {
@@ -808,7 +893,7 @@ function Blank() {
 function sourceText(title: string, url: string | null) {
   if (url && /^https?:\/\//i.test(url)) {
     return (
-      <a href={url} rel="noreferrer">
+      <a href={url} rel="noreferrer" className="link-draw">
         {title}
       </a>
     );

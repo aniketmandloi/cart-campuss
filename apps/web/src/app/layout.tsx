@@ -37,8 +37,8 @@ export default function RootLayout({
             </a>
             <Header />
             <div className="flex-1">{children}</div>
-            <footer className="px-4 py-6 text-sm text-muted-foreground">
-              <a href="/fonts/Inter-OFL.txt" className="inline-flex min-h-11 items-center">
+            <footer className="mx-auto flex w-full max-w-[1120px] flex-col gap-1 border-t border-border px-4 py-8 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <a href="/fonts/Inter-OFL.txt" className="link-draw inline-flex min-h-11 items-center hover:text-foreground">
                 Inter typeface, SIL Open Font License 1.1
               </a>
               <p>Copyright 2020 The Inter Project Authors.</p>
