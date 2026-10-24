@@ -347,6 +347,40 @@ describe("recheck, expiry, and withdrawal", { timeout: 120_000 }, () => {
     assert.doesNotMatch(search.text, /Raced directory page|example\.test\/sources\/raced-directory/);
   });
 
+  it("hides a directory URL after its source permission is removed", async () => {
+    const input = catalogueImport("Revoked Directory");
+    const record = input.records[0];
+    assert.ok(record);
+    record.document.sourceDirectory = [
+      {
+        title: "Revoked maker page",
+        url: "https://example.test/directories/revoked-maker",
+        observedAt: REVIEWED,
+        retrievedAt: REVIEWED,
+        reviewedAt: REVIEWED,
+      },
+    ];
+    record.document.listings = [listing("lot-revoked", "Revoked asking card", "active")];
+    assert.equal((await caller().publishing.submit(input)).status, "published");
+    await runScheduledRecheck(deps(), OPERATOR_TOKEN, null);
+    const before = await caller().publishing.detail({ subjectId: "subject-revoked-directory" });
+    assert.match(JSON.stringify(before), /example\.test\/directories\/revoked-maker/);
+    await db
+      .update(publishingSourcePolicy)
+      .set({
+        permittedFields: input.sourcePolicy.permittedFields.filter((field) => field !== "sourceDirectory"),
+      })
+      .where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id ?? ""}`);
+    const after = await caller().publishing.detail({ subjectId: "subject-revoked-directory" });
+    const body = JSON.stringify(after);
+    assert.deepEqual(after?.marketAccess?.sourceDirectory, []);
+    assert.doesNotMatch(body, /example\.test\/directories\/revoked-maker|Revoked maker page/);
+    assert.match(body, /Revoked asking card/);
+    const html = await renderCar("revoked directory");
+    assert.doesNotMatch(html, /example\.test\/directories\/revoked-maker|Revoked maker page/);
+    assert.match(html, /Revoked asking card/);
+  });
+
   it("rejects an unauthorised recheck", async () => {
     await assert.rejects(() => runScheduledRecheck(deps(), undefined, null), PublishingRejected);
   });

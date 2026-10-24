@@ -754,6 +754,10 @@ export async function readPublishedCatalogueDetail(
       clock,
     );
   });
+  const marketAccess = asPublicMarketAccess(row.marketAccess, row.permittedFields);
+  const rechecks = (await readPublicRechecks(db, row.providerKey, row.externalId)).filter((recheck) =>
+    recheckPermitted(recheck, row.permittedFields, marketAccess),
+  );
   return {
     canonicalSubjectId: row.canonicalSubjectId,
     displayName: row.displayName,
@@ -773,8 +777,8 @@ export async function readPublishedCatalogueDetail(
     media,
     productionClaims,
     priceReference: row.permittedFields.includes("priceReference") ? asPublicPrice(row.priceReference) : null,
-    marketAccess: asPublicMarketAccess(row.marketAccess, row.permittedFields),
-    rechecks: await readPublicRechecks(db, row.providerKey, row.externalId),
+    marketAccess,
+    rechecks,
     identityScope: row.identityScope === "generation" || row.identityScope === "model" ? row.identityScope : "applicability",
   };
 }
@@ -2452,6 +2456,22 @@ function cataloguePolicyStatements(db: Database, policy: SourcePolicyInput, poli
         .limit(1),
     ),
   ];
+}
+
+function recheckPermitted(
+  recheck: PublicRecheck,
+  fields: string[],
+  market: PublishingMarketAccess | null,
+): boolean {
+  if (recheck.kind === "source-directory-url") {
+    return fields.includes("sourceDirectory") && (market?.sourceDirectory.some((entry) => entry.url === recheck.targetKey) ?? false);
+  }
+  if (recheck.kind === "approved-feed") {
+    return fields.includes("approvedFeed") && (market?.listings.some((listing) => listing.externalId === recheck.targetKey) ?? false);
+  }
+  if (recheck.kind === "model-price") return fields.includes("priceReference");
+  if (recheck.kind === "editorial-specification") return fields.includes(recheck.targetKey);
+  return false;
 }
 
 function asPublicMarketAccess(value: unknown, fields: string[]): PublishingMarketAccess | null {
