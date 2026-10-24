@@ -12,12 +12,17 @@ import {
   catalogueSourcePolicy,
 } from "@cart-campuss/db/schema/catalogue";
 import {
+  publishingAuditEvent,
   publishingImportBatch,
   publishingProjectionGeneration,
   publishingProjectionPointer,
   publishingPublishedAssertion,
+  publishingRecheckTarget,
   publishingSourcePolicy,
   publishingStagedRecord,
+  type PublishingDirectoryEntry,
+  type PublishingListing,
+  type PublishingMarketAccess,
   type PublishingPriceReference,
   type PublishingProductionClaim,
 } from "@cart-campuss/db/schema/publishing";
@@ -192,7 +197,23 @@ export type PublicDetail = PublicSearchHit & {
   media: PublicMedia[];
   productionClaims: PublicProductionClaim[];
   priceReference: PublishingPriceReference | null;
+  marketAccess: PublishingMarketAccess | null;
+  rechecks: PublicRecheck[];
   identityScope: "applicability" | "generation" | "model";
+};
+
+export type PublicRecheck = {
+  kind: "editorial-specification" | "model-price" | "source-directory-url" | "approved-feed";
+  targetKey: string;
+  observedAt: string | null;
+  fetchedAt: string | null;
+  lastSuccessfulProviderSyncAt: string | null;
+  lastReviewedAt: string | null;
+  nextRecheckAt: string;
+  freshness: "current" | "stale" | "not-checked";
+  providerOutcome: "succeeded" | "failed" | "not-attempted";
+  lifecycle: "active" | "ended" | "unknown" | null;
+  suppressed: boolean;
 };
 
 export type OperatorResult = {
@@ -413,20 +434,71 @@ const modelCatalogueSchema = z
   })
   .strict();
 
+const directoryEntrySchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  url: sourceUrlSchema,
+  observedAt: z.iso.datetime().nullable().default(null),
+  retrievedAt: z.iso.datetime(),
+  reviewedAt: z.iso.datetime(),
+});
+
+const listingSchema = z
+  .object({
+    externalId: z.string().trim().min(1).max(200),
+    title: z.string().trim().min(1).max(200),
+    url: sourceUrlSchema,
+    lifecycle: z.enum(["active", "ended", "unknown"]),
+    priceType: z.enum([
+      "asking",
+      "auction-guide",
+      "current-bid",
+      "assumed-hammer",
+      "hammer",
+      "buyer-premium",
+      "completed-sale",
+      "estimate",
+    ]),
+    amountMinor: z.number().int().min(-9_007_199_254_740_991).max(9_007_199_254_740_991).nullable().optional(),
+    currency: z.string().regex(/^[A-Z]{3}$/).nullable().optional(),
+    minorUnitExponent: z.number().int().min(0).max(6).nullable().optional(),
+    observedAt: z.iso.datetime(),
+    retrievedAt: z.iso.datetime(),
+    reviewedAt: z.iso.datetime(),
+  })
+  .superRefine((listing, context) => {
+    const amount = listing.amountMinor ?? null;
+    const currency = listing.currency ?? null;
+    const exponent = listing.minorUnitExponent ?? null;
+    if ((amount === null) !== (currency === null) || (amount === null) !== (exponent === null)) {
+      context.addIssue({ code: "custom", path: ["amountMinor"] });
+    }
+  });
+
 const recordSchema = z.object({
   externalId: z.string().trim().min(1),
   provenance: z.enum(["manual", "seed", "import", "fixture"]),
   privatePayload: z.record(z.string(), z.unknown()).default({}),
-  document: z.object({
-    displayName: z.string().trim().min(1),
-    aliases: z.array(z.string().trim().min(1)).default([]),
-    canonicalSubjectId: z.string().trim().min(1),
-    salesMarket: z.string().regex(/^[A-Z]{2}$/),
-    modelYearLabel: z.string().trim().min(1).nullable().default(null),
-    facts: z.array(sourcedFactSchema).default([]),
-    media: z.array(mediaSchema).default([]),
-    productionClaims: z.array(productionClaimSchema).default([]),
-  }),
+  document: z
+    .object({
+      displayName: z.string().trim().min(1),
+      aliases: z.array(z.string().trim().min(1)).default([]),
+      canonicalSubjectId: z.string().trim().min(1),
+      salesMarket: z.string().regex(/^[A-Z]{2}$/),
+      modelYearLabel: z.string().trim().min(1).nullable().default(null),
+      facts: z.array(sourcedFactSchema).default([]),
+      media: z.array(mediaSchema).default([]),
+      productionClaims: z.array(productionClaimSchema).default([]),
+      sourceDirectory: z.array(directoryEntrySchema).optional(),
+      listings: z.array(listingSchema).optional(),
+    })
+    .superRefine((document, context) => {
+      const listingIds = (document.listings ?? []).map((listing) => listing.externalId);
+      if (new Set(listingIds).size !== listingIds.length) {
+        context.addIssue({ code: "custom", path: ["listings"] });
+      }
+      const urls = (document.sourceDirectory ?? []).map((entry) => entry.url);
+      if (new Set(urls).size !== urls.length) context.addIssue({ code: "custom", path: ["sourceDirectory"] });
+    }),
   catalogue: catalogueIdentitySchema.optional(),
   generationCatalogue: generationCatalogueSchema.optional(),
   modelCatalogue: modelCatalogueSchema.optional(),
@@ -591,6 +663,8 @@ export async function readPublishedCatalogueDetail(
       reviewedAt: publishingPublishedAssertion.reviewedAt,
       publishedAt: publishingProjectionGeneration.publishedAt,
       priceReference: publishingPublishedAssertion.priceReference,
+      marketAccess: publishingPublishedAssertion.marketAccess,
+      externalId: publishingPublishedAssertion.externalId,
       identityScope: publishingPublishedAssertion.identityScope,
       effectiveCapturedAt: sql<string>`least(${publishingPublishedAssertion.capturedAt}, publishing_price_captured_at(${publishingPublishedAssertion.priceReference}))`,
       imagePermission: publishingSourcePolicy.imagePermission,
@@ -699,6 +773,8 @@ export async function readPublishedCatalogueDetail(
     media,
     productionClaims,
     priceReference: row.permittedFields.includes("priceReference") ? asPublicPrice(row.priceReference) : null,
+    marketAccess: asPublicMarketAccess(row.marketAccess, row.permittedFields),
+    rechecks: await readPublicRechecks(db, row.providerKey, row.externalId),
     identityScope: row.identityScope === "generation" || row.identityScope === "model" ? row.identityScope : "applicability",
   };
 }
@@ -928,15 +1004,75 @@ export async function cleanupPublishingCopies(
 ): Promise<{ stagedDeleted: number; assertionsDeleted: number }> {
   assertOperatorAuthorized(deps.operatorToken, presentedToken);
   const now = publishingWriteTime(deps);
+  const assertionDue = sql`exists (
+    select 1 from ${publishingSourcePolicy}
+    where ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
+      and ${sourceCopyDue(assertionCapturedAt(), now)}
+  )`;
   try {
-    const [, staged, assertions] = await deps.db.batch([
+    const [, , , , staged, assertions] = await deps.db.batch([
       publishingWriteLock(deps.db),
+      deps.db.insert(publishingAuditEvent).select(
+        deps.db
+          .select({
+            id: sql<string>`gen_random_uuid()::text`.as("id"),
+            occurredAt: sql<string>`${now}`.as("occurred_at"),
+            kind: sql<string>`case when ${publishingSourcePolicy.suspended} then 'suspension' else 'expiry' end`.as("kind"),
+            canonicalSubjectId: publishingPublishedAssertion.canonicalSubjectId,
+            providerKey: publishingPublishedAssertion.providerKey,
+            externalId: publishingPublishedAssertion.externalId,
+            targetKind: sql<string | null>`null`.as("target_kind"),
+            targetKey: sql<string | null>`null`.as("target_key"),
+            summary: sql<string>`case when ${publishingSourcePolicy.suspended}
+              then 'Suspended source withheld from pages and search.'
+              else 'Expired or past-retention source copy removed from pages, search, and stored copies.'
+            end`.as("summary"),
+          })
+          .from(publishingPublishedAssertion)
+          .innerJoin(
+            publishingSourcePolicy,
+            eq(publishingSourcePolicy.id, publishingPublishedAssertion.sourcePolicyId),
+          )
+          .where(sourceCopyDue(assertionCapturedAt(), now)),
+      ),
+      deps.db.insert(publishingAuditEvent).select(
+        deps.db
+          .select({
+            id: sql<string>`gen_random_uuid()::text`.as("id"),
+            occurredAt: sql<string>`${now}`.as("occurred_at"),
+            kind: sql<string>`'expiry'`.as("kind"),
+            canonicalSubjectId: publishingPublishedAssertion.canonicalSubjectId,
+            providerKey: publishingPublishedAssertion.providerKey,
+            externalId: publishingPublishedAssertion.externalId,
+            targetKind: sql<string>`'image-or-production'`.as("target_kind"),
+            targetKey: sql<string | null>`null`.as("target_key"),
+            summary: sql<string>`'Image or production copy withheld because its source is suspended, expired, or past retention.'`.as(
+              "summary",
+            ),
+          })
+          .from(publishingPublishedAssertion)
+          .where(sql`not (${assertionDue}) and exists (
+            select 1
+            from jsonb_array_elements(
+              coalesce(${publishingPublishedAssertion.media}, '[]'::jsonb)
+              || coalesce(${publishingPublishedAssertion.productionClaims}, '[]'::jsonb)
+            ) as component_item
+            where ${componentItemDue(
+              sql`component_item`,
+              assertionCapturedAt(),
+              publishingPublishedAssertion.sourcePolicyId,
+              now,
+            )}
+          )`),
+      ),
+      deps.db.delete(publishingRecheckTarget).where(sql`exists (
+        select 1 from ${publishingPublishedAssertion}
+        where ${publishingPublishedAssertion.providerKey} = ${publishingRecheckTarget.providerKey}
+          and ${publishingPublishedAssertion.externalId} = ${publishingRecheckTarget.externalId}
+          and ${assertionDue}
+      )`),
       deps.db.delete(publishingStagedRecord).where(storedStagedCopyDue(now)).returning({ id: publishingStagedRecord.id }),
-      deps.db.delete(publishingPublishedAssertion).where(sql`exists (
-        select 1 from ${publishingSourcePolicy}
-        where ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
-          and ${sourceCopyDue(assertionCapturedAt(), now)}
-      )`).returning({ id: publishingPublishedAssertion.id }),
+      deps.db.delete(publishingPublishedAssertion).where(assertionDue).returning({ id: publishingPublishedAssertion.id }),
       deps.db.update(publishingPublishedAssertion).set({
         media: retainedComponentArray(
           publishingPublishedAssertion.media,
@@ -959,7 +1095,7 @@ export async function cleanupPublishingCopies(
 }
 
 // Cleanup and import writes share one transaction-scoped lock, including their final deadline checks.
-function publishingWriteLock(db: Database) {
+export function publishingWriteLock(db: Database) {
   return db.select({ lock: sql`pg_advisory_xact_lock(1128354388)` })
     .from(sql`(select 1) as publishing_lock`);
 }
@@ -1096,6 +1232,8 @@ function sourceCapturedAt(record: ImportRecord, receivedAt: string): string {
     new Date(receivedAt).getTime(),
     ...record.document.facts.map((fact) => new Date(fact.retrievedAt).getTime()),
     ...(record.catalogue?.priceReference ? [new Date(record.catalogue.priceReference.retrievedOn).getTime()] : []),
+    ...(record.document.sourceDirectory ?? []).map((entry) => new Date(entry.retrievedAt).getTime()),
+    ...(record.document.listings ?? []).map((listing) => new Date(listing.retrievedAt).getTime()),
   )).toISOString();
 }
 
@@ -1689,6 +1827,47 @@ function upsertStaged(
     });
 }
 
+function publicMarketAccess(record: ImportRecord, policy: SourcePolicyInput): PublishingMarketAccess | null {
+  const sourceDirectory: PublishingDirectoryEntry[] = policy.permittedFields.includes("sourceDirectory")
+    ? (record.document.sourceDirectory ?? []).flatMap((entry) => {
+        if (textLeaksIdentifier([entry.title, entry.url, entry.observedAt ?? ""])) return [];
+        return [
+          {
+            title: entry.title,
+            url: entry.url,
+            observedAt: entry.observedAt,
+            retrievedAt: entry.retrievedAt,
+            reviewedAt: entry.reviewedAt,
+          },
+        ];
+      })
+    : [];
+  const listings: PublishingListing[] = policy.permittedFields.includes("approvedFeed")
+    ? (record.document.listings ?? []).flatMap((listing) => {
+        if (textLeaksIdentifier([listing.externalId, listing.title, listing.url, listing.priceType, listing.currency ?? ""])) {
+          return [];
+        }
+        return [
+          {
+            externalId: listing.externalId,
+            title: listing.title,
+            url: listing.url,
+            lifecycle: listing.lifecycle,
+            priceType: listing.priceType,
+            amountMinor: listing.amountMinor ?? null,
+            currency: listing.currency ?? null,
+            minorUnitExponent: listing.minorUnitExponent ?? null,
+            observedAt: listing.observedAt,
+            retrievedAt: listing.retrievedAt,
+            reviewedAt: listing.reviewedAt,
+          },
+        ];
+      })
+    : [];
+  if (sourceDirectory.length === 0 && listings.length === 0) return null;
+  return { sourceDirectory, listings };
+}
+
 function publicAssertion(
   record: ImportRecord,
   policy: SourcePolicyInput,
@@ -1834,6 +2013,7 @@ function publicAssertion(
       !partial && policy.permittedFields.includes("priceReference")
         ? record.catalogue?.priceReference ?? null
         : null,
+    marketAccess: partial ? null : publicMarketAccess(record, policy),
   };
 }
 
@@ -2274,6 +2454,80 @@ function cataloguePolicyStatements(db: Database, policy: SourcePolicyInput, poli
   ];
 }
 
+function asPublicMarketAccess(value: unknown, fields: string[]): PublishingMarketAccess | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Partial<PublishingMarketAccess>;
+  const sourceDirectory = fields.includes("sourceDirectory") && Array.isArray(record.sourceDirectory)
+    ? record.sourceDirectory.flatMap((entry) => {
+        if (!entry || typeof entry.title !== "string" || typeof entry.url !== "string") return [];
+        if (textLeaksIdentifier([entry.title, entry.url, entry.observedAt ?? ""])) return [];
+        return [entry];
+      })
+    : [];
+  const listings = fields.includes("approvedFeed") && Array.isArray(record.listings)
+    ? record.listings.flatMap((listing) => {
+        if (!listing || typeof listing.title !== "string" || typeof listing.url !== "string") return [];
+        if (textLeaksIdentifier([listing.externalId, listing.title, listing.url, listing.priceType, listing.currency ?? ""])) {
+          return [];
+        }
+        return [listing];
+      })
+    : [];
+  if (sourceDirectory.length === 0 && listings.length === 0) return null;
+  return { sourceDirectory, listings };
+}
+
+async function readPublicRechecks(db: Database, providerKey: string, externalId: string): Promise<PublicRecheck[]> {
+  const rows = await db
+    .select({
+      kind: publishingRecheckTarget.kind,
+      targetKey: publishingRecheckTarget.targetKey,
+      observedAt: publishingRecheckTarget.observedAt,
+      fetchedAt: publishingRecheckTarget.fetchedAt,
+      lastSuccessfulProviderSyncAt: publishingRecheckTarget.lastSuccessfulProviderSyncAt,
+      lastReviewedAt: publishingRecheckTarget.lastReviewedAt,
+      nextRecheckAt: publishingRecheckTarget.nextRecheckAt,
+      freshness: publishingRecheckTarget.freshness,
+      providerOutcome: publishingRecheckTarget.providerOutcome,
+      lifecycle: publishingRecheckTarget.lifecycle,
+      suppressed: publishingRecheckTarget.suppressed,
+    })
+    .from(publishingRecheckTarget)
+    .where(
+      and(eq(publishingRecheckTarget.providerKey, providerKey), eq(publishingRecheckTarget.externalId, externalId)),
+    );
+  return rows.flatMap((row) => {
+    const kind = row.kind;
+    const freshness = row.freshness === "stale" || row.freshness === "not-checked" ? row.freshness : "current";
+    const providerOutcome =
+      row.providerOutcome === "failed" || row.providerOutcome === "not-attempted" ? row.providerOutcome : "succeeded";
+    const lifecycle = row.lifecycle === "active" || row.lifecycle === "ended" || row.lifecycle === "unknown" ? row.lifecycle : null;
+    if (
+      kind !== "editorial-specification" &&
+      kind !== "model-price" &&
+      kind !== "source-directory-url" &&
+      kind !== "approved-feed"
+    ) {
+      return [];
+    }
+    return [
+      {
+        kind,
+        targetKey: row.targetKey,
+        observedAt: row.observedAt ? toIso(row.observedAt) : null,
+        fetchedAt: row.fetchedAt ? toIso(row.fetchedAt) : null,
+        lastSuccessfulProviderSyncAt: row.lastSuccessfulProviderSyncAt ? toIso(row.lastSuccessfulProviderSyncAt) : null,
+        lastReviewedAt: row.lastReviewedAt ? toIso(row.lastReviewedAt) : null,
+        nextRecheckAt: toIso(row.nextRecheckAt),
+        freshness,
+        providerOutcome,
+        lifecycle,
+        suppressed: row.suppressed,
+      },
+    ];
+  });
+}
+
 function asPublicPrice(value: unknown): PublishingPriceReference | null {
   const parsed = priceReferenceSchema.safeParse(value);
   if (!parsed.success) return null;
@@ -2336,6 +2590,14 @@ function publicationLeaksIdentifier(record: ImportRecord, policy: SourcePolicyIn
     record.rightsReview.reviewerRef ?? "",
     ...record.document.aliases,
     ...catalogueIdentityText(record),
+    ...(record.document.sourceDirectory ?? []).flatMap((entry) => [entry.title, entry.url, entry.observedAt ?? ""]),
+    ...(record.document.listings ?? []).flatMap((listing) => [
+      listing.externalId,
+      listing.title,
+      listing.url,
+      listing.priceType,
+      listing.currency ?? "",
+    ]),
   ]);
 }
 
