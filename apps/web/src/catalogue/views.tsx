@@ -330,8 +330,13 @@ function CostSection({ page }: { page: DossierPage }) {
               {price.sourceIdentifier ? <p>Source identifier: {price.sourceIdentifier}</p> : null}
               <p>Observed {price.observedOn}</p>
               <p>Retrieved {price.retrievedOn}</p>
+              {price.fetchedAt ? <p>Fetched {price.fetchedAt}</p> : null}
+              {price.lastSuccessfulProviderSyncAt ? (
+                <p>Last provider sync {price.lastSuccessfulProviderSyncAt}</p>
+              ) : null}
               <p>Review: {price.reviewStatus}</p>
-              {price.reviewedOn ? <p>Reviewed {price.reviewedOn}</p> : null}
+              <PriceFreshness price={price} />
+              {price.nextRecheckAt ? <p>Next recheck {price.nextRecheckAt}</p> : null}
               <p>Source policy: {price.policyName}</p>
               <p>Audience: {price.policyAudience}</p>
               <p className="break-words">{price.policyAttribution}</p>
@@ -437,19 +442,77 @@ function SeparateCounts({ facts }: { facts: CatalogueFact[] }) {
 }
 
 function MarketSection({ page }: { page: DossierPage }) {
+  const directory = page.availability === "visible" ? (page.marketDirectory ?? []) : [];
+  const listings = page.availability === "visible" ? (page.marketListings ?? []) : [];
+  const label = page.availability === "visible" ? page.marketLabel : "No market data";
   return (
     <section id="market" className="flex flex-col gap-2" aria-labelledby="market-heading">
       <h2 id="market-heading" className="text-base font-medium">
         Market
       </h2>
       <h3 id="market-data" className="text-base font-medium">
-        {page.availability === "visible" ? page.marketLabel : "No market data"}
+        {label}
       </h3>
-      <p className="text-sm text-muted-foreground">
-        This record has no directory or feed of market listings.
-      </p>
+      {directory.length === 0 && listings.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          This record has no directory or feed of market listings.
+        </p>
+      ) : null}
+      {directory.map((entry) => (
+        <div key={entry.url} className="flex flex-col gap-1 text-sm">
+          <p>{entry.title}</p>
+          <a className="break-all" href={entry.url} rel="noreferrer noopener" target="_blank">
+            {entry.url}
+          </a>
+          <DirectoryFreshness entry={entry} />
+          {entry.lastSuccessfulProviderSyncAt ? (
+            <p>Last provider sync {entry.lastSuccessfulProviderSyncAt}</p>
+          ) : null}
+          {entry.nextRecheckAt ? <p>Next recheck {entry.nextRecheckAt}</p> : null}
+        </div>
+      ))}
+      {listings.map((listing) => (
+        <div key={listing.url} className="flex flex-col gap-1 text-sm">
+          <p>{listing.title}</p>
+          <a className="break-all" href={listing.url} rel="noreferrer noopener" target="_blank">
+            {listing.url}
+          </a>
+          <p>{listing.priceType}</p>
+          {listing.displayAmount ? <p>{listing.displayAmount}</p> : null}
+          {listing.amountMinor !== null && listing.currency ? (
+            <p>
+              {listing.amountMinor} {listing.currency} minor units
+            </p>
+          ) : null}
+          <ListingState listing={listing} />
+        </div>
+      ))}
     </section>
   );
+}
+
+function DirectoryFreshness({
+  entry,
+}: {
+  entry: { freshness: "current" | "stale" | "not-checked"; lastReviewedAt: string | null };
+}) {
+  const date = entry.lastReviewedAt ?? "an unknown date";
+  if (entry.freshness === "stale") return <p>Stale. Last reviewed {date}.</p>;
+  if (entry.freshness === "not-checked") return <p>Not checked. Last reviewed {date}.</p>;
+  return entry.lastReviewedAt ? <p>Reviewed {entry.lastReviewedAt}</p> : null;
+}
+
+function ListingState({
+  listing,
+}: {
+  listing: { presentation: "active" | "unknown" | "historical" | "ended"; observedAt: string };
+}) {
+  if (listing.presentation === "ended") return <p>Ended. Last observed {listing.observedAt}.</p>;
+  if (listing.presentation === "unknown") return <p>Status unknown. Last observed {listing.observedAt}.</p>;
+  if (listing.presentation === "historical") {
+    return <p>Not a current listing. Last observed {listing.observedAt}.</p>;
+  }
+  return <p>Active as last observed {listing.observedAt}.</p>;
 }
 
 function SourcesSection({ page }: { page: DossierPage }) {
@@ -494,8 +557,13 @@ function FactRecord({ fact }: { fact: CatalogueFact }) {
       <p className="break-words">{fact.policyAttribution}</p>
       <p>Retrieved {fact.retrievedOn}</p>
       {fact.observedOn ? <p>Observed {fact.observedOn}</p> : null}
+      {fact.fetchedAt ? <p>Fetched {fact.fetchedAt}</p> : null}
+      {fact.lastSuccessfulProviderSyncAt ? (
+        <p>Last provider sync {fact.lastSuccessfulProviderSyncAt}</p>
+      ) : null}
       <p>{fact.reviewStatus}</p>
       <Freshness fact={fact} />
+      {fact.nextRecheckAt ? <p>Next recheck {fact.nextRecheckAt}</p> : null}
       {fact.factualReviewerRef ? <p>Factual reviewer: {fact.factualReviewerRef}</p> : null}
       {fact.rightsReviewerRef ? <p>Rights reviewer: {fact.rightsReviewerRef}</p> : null}
       {fact.conflict ? <ConflictReading conflict={fact.conflict} /> : null}
@@ -534,6 +602,17 @@ function FactState({ fact }: { fact: CatalogueFact }) {
       {fact.measurementStandard ? <p>{fact.measurementStandard}</p> : null}
     </>
   );
+}
+
+function PriceFreshness({
+  price,
+}: {
+  price: { freshness?: "current" | "stale" | "not-checked"; reviewedOn: string | null };
+}) {
+  const date = price.reviewedOn ?? "an unknown date";
+  if (price.freshness === "stale") return <p>Stale. Last reviewed {date}.</p>;
+  if (price.freshness === "not-checked") return <p>Not checked. Last reviewed {date}.</p>;
+  return price.reviewedOn ? <p>Reviewed {price.reviewedOn}</p> : null;
 }
 
 function Freshness({ fact }: { fact: CatalogueFact }) {
