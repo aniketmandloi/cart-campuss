@@ -17,6 +17,7 @@ import {
   publishingSourcePolicy,
   publishingStagedRecord,
   type PublishingPriceReference,
+  type PublishingProductionClaim,
 } from "@cart-campuss/db/schema/publishing";
 import { and, eq, getTableColumns, inArray, max, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import { normalizeCatalogueQuery } from "./catalogue-name";
@@ -144,7 +145,12 @@ export type PublicMedia = {
   altText: string;
   sourcePolicyId: string;
   rightsReviewerRef: string;
+  retrievedAt: string | null;
+  countryCode: string | null;
+  attribution: string | null;
 };
+
+export type PublicProductionClaim = PublishingProductionClaim;
 
 export type PublicSearchHit = {
   canonicalSubjectId: string;
@@ -166,6 +172,7 @@ export type PublicDetail = PublicSearchHit & {
   permittedFields: string[];
   facts: PublicFact[];
   media: PublicMedia[];
+  productionClaims: PublicProductionClaim[];
   priceReference: PublishingPriceReference | null;
 };
 
@@ -210,7 +217,32 @@ const mediaSchema = z.object({
   sourceUrl: sourceUrlSchema,
   credit: z.string().trim().min(1),
   altText: z.string().trim().min(1),
+  sourcePolicyId: z.uuid().optional(),
+  retrievedAt: z.iso.datetime().optional(),
+  countryCode: z.string().regex(/^[A-Z]{2}$/).optional(),
 });
+
+const productionClaimSchema = z
+  .object({
+    scope: z.string().trim().min(1).max(200),
+    geography: z.string().trim().min(1).max(200),
+    period: z.string().trim().min(1).max(200),
+    count: z.number().int().nonnegative(),
+    status: z.enum(["planned", "completed"]),
+    counted: z.string().trim().min(1).max(200),
+    sourceTitle: z.string().trim().min(1).max(200),
+    sourceUrl: sourceUrlSchema.nullable().default(null),
+    observedAt: z.iso.datetime().nullable().default(null),
+    retrievedAt: z.iso.datetime(),
+    reviewedOn: z.string().trim().min(1).max(40),
+    countryCode: z.string().regex(/^[A-Z]{2}$/),
+    sourcePolicyId: z.uuid().optional(),
+  })
+  .superRefine((claim, ctx) => {
+    if (/(sale|registration|export)/i.test(claim.counted)) {
+      ctx.addIssue({ code: "custom", path: ["counted"] });
+    }
+  });
 
 const sourcePolicySchema = z.object({
   id: z.uuid().optional(),
@@ -232,6 +264,10 @@ const sourcePolicySchema = z.object({
   reviewerRef: z.string().trim().min(1).nullable().default(null),
   reviewedAt: z.iso.datetime().nullable().default(null),
   displayName: z.string().trim().min(1).max(200).optional(),
+});
+
+const componentPolicySchema = sourcePolicySchema.extend({
+  id: z.uuid(),
 });
 
 const catalogueIdSchema = z
@@ -310,6 +346,7 @@ const recordSchema = z.object({
     modelYearLabel: z.string().trim().min(1).nullable().default(null),
     facts: z.array(sourcedFactSchema).default([]),
     media: z.array(mediaSchema).default([]),
+    productionClaims: z.array(productionClaimSchema).default([]),
   }),
   catalogue: catalogueIdentitySchema.optional(),
   identity: z.object({
@@ -334,6 +371,7 @@ export const operatorImportSchema = z.object({
   idempotencyKey: z.string().trim().min(1),
   providerKey: z.string().trim().min(1),
   sourcePolicy: sourcePolicySchema,
+  componentPolicies: z.array(componentPolicySchema).default([]),
   records: z.array(recordSchema).min(1),
   publish: z.boolean().default(false),
 });
@@ -463,6 +501,7 @@ export async function readPublishedCatalogueDetail(
       modelYearLabel: publishingPublishedAssertion.modelYearLabel,
       facts: publishingPublishedAssertion.facts,
       media: publishingPublishedAssertion.media,
+      productionClaims: publishingPublishedAssertion.productionClaims,
       attribution: publishingPublishedAssertion.attribution,
       providerKey: publishingPublishedAssertion.providerKey,
       sourcePolicyId: publishingPublishedAssertion.sourcePolicyId,
@@ -472,6 +511,12 @@ export async function readPublishedCatalogueDetail(
       publishedAt: publishingProjectionGeneration.publishedAt,
       priceReference: publishingPublishedAssertion.priceReference,
       imagePermission: publishingSourcePolicy.imagePermission,
+      factPermission: publishingSourcePolicy.factPermission,
+      policySuspended: publishingSourcePolicy.suspended,
+      policyReviewedAt: publishingSourcePolicy.reviewedAt,
+      permissionExpiresAt: publishingSourcePolicy.permissionExpiresAt,
+      retentionSeconds: publishingSourcePolicy.retentionSeconds,
+      permittedGeographies: publishingSourcePolicy.permittedGeographies,
       permittedFields: publishingSourcePolicy.permittedFields,
       policyName: catalogueSourcePolicy.name,
       policyReviewerRef: publishingSourcePolicy.reviewerRef,
@@ -503,6 +548,56 @@ export async function readPublishedCatalogueDetail(
     .limit(1);
 
   if (!row || !publicRecordEligible(row)) return null;
+  const clock = now();
+  const assertionPolicy = {
+    suspended: row.policySuspended,
+    reviewerRef: row.policyReviewerRef,
+    reviewedAt: row.policyReviewedAt,
+    permissionExpiresAt: row.permissionExpiresAt,
+    retentionSeconds: row.retentionSeconds,
+    permittedGeographies: row.permittedGeographies,
+    imagePermission: row.imagePermission,
+    factPermission: row.factPermission,
+    attribution: row.attribution,
+  };
+  const parsedMedia = asPublicMedia(row.media);
+  const parsedClaims = asPublicProductionClaims(row.productionClaims);
+  const extraIds = [
+    ...new Set(
+      [...parsedMedia, ...parsedClaims]
+        .map((item) => item.sourcePolicyId)
+        .filter((id) => id !== row.sourcePolicyId),
+    ),
+  ];
+  const extraPolicies = await readComponentPolicies(db, extraIds);
+  const policyFor = (id: string) => (id === row.sourcePolicyId ? assertionPolicy : extraPolicies.get(id));
+  const media = parsedMedia.flatMap((item) => {
+    const policy = policyFor(item.sourcePolicyId);
+    const separate = item.sourcePolicyId !== row.sourcePolicyId;
+    const visible = separate
+      ? componentPolicyAllows(
+          policy,
+          { retrievedAt: item.retrievedAt, countryCode: item.countryCode ?? row.salesMarket },
+          "image",
+          clock,
+        )
+      : row.imagePermission === "permitted";
+    if (!visible) return [];
+    return [
+      {
+        ...item,
+        attribution: policy?.attribution ?? item.attribution,
+      },
+    ];
+  });
+  const productionClaims = parsedClaims.filter((claim) =>
+    componentPolicyAllows(
+      policyFor(claim.sourcePolicyId),
+      { retrievedAt: claim.retrievedAt, countryCode: claim.countryCode },
+      "fact",
+      clock,
+    ),
+  );
   return {
     canonicalSubjectId: row.canonicalSubjectId,
     displayName: row.displayName,
@@ -519,7 +614,8 @@ export async function readPublishedCatalogueDetail(
     policyName: row.policyName,
     permittedFields: row.permittedFields,
     facts: permittedPublicFacts(row.facts, row.permittedFields),
-    media: row.imagePermission === "permitted" ? asPublicMedia(row.media) : [],
+    media,
+    productionClaims,
     priceReference: row.permittedFields.includes("priceReference") ? asPublicPrice(row.priceReference) : null,
   };
 }
@@ -565,14 +661,23 @@ export async function applyOperatorImport(
   if (await storedPolicyDiffers(deps.db, policyId, parsed.sourcePolicy)) {
     throw new PublishingRejected("policy-immutable", "A reviewed source policy cannot be changed.");
   }
+  for (const policy of parsed.componentPolicies) {
+    if (await storedPolicyDiffers(deps.db, policy.id, policy)) {
+      throw new PublishingRejected("policy-immutable", "A reviewed source policy cannot be changed.");
+    }
+  }
   const batchId = randomId();
   const createdAt = now.toISOString();
   const writeTime = publishingWriteTime(deps);
   const statements: BatchItem<"pg">[] = [
     publishingWriteLock(deps.db),
     ...stagedVersions.map((version) => rejectStaleStaging(deps.db, version)),
-    insertPolicy(deps.db, parsed, policyId, createdAt),
+    insertPolicy(deps.db, parsed.sourcePolicy, policyId, createdAt),
     rejectPolicyRewrite(deps.db, parsed.sourcePolicy, policyId),
+    ...parsed.componentPolicies.flatMap((policy) => [
+      insertPolicy(deps.db, policy, policy.id, createdAt),
+      rejectPolicyRewrite(deps.db, policy, policy.id),
+    ]),
     deps.db.insert(publishingImportBatch).values({
       id: batchId,
       idempotencyKey: parsed.idempotencyKey,
@@ -631,7 +736,7 @@ export async function applyOperatorImport(
         is distinct from ${context ? sql`cast(${JSON.stringify(context.signature)} as jsonb)` : sql`null`}`));
       statements.push(
         deps.db.insert(publishingPublishedAssertion).values({
-          ...publicAssertion(record, parsed.sourcePolicy, policyId, generationId, createdAt),
+          ...publicAssertion(record, parsed.sourcePolicy, policyId, generationId, createdAt, parsed.componentPolicies),
           capturedAt: sql`(select ${publishingStagedRecord.capturedAt}
             from ${publishingStagedRecord}
             where ${publishingStagedRecord.batchId} = ${batchId}
@@ -674,7 +779,10 @@ export async function applyOperatorImport(
   } catch {
     const raced = await readIdempotentReplay(deps.db, parsed.idempotencyKey, payloadHash);
     if (raced) return raced;
-    if (await storedPolicyDiffers(deps.db, policyId, parsed.sourcePolicy)) {
+    if (
+      await storedPolicyDiffers(deps.db, policyId, parsed.sourcePolicy) ||
+      (await Promise.all(parsed.componentPolicies.map((policy) => storedPolicyDiffers(deps.db, policy.id, policy)))).some(Boolean)
+    ) {
       throw new PublishingRejected("policy-immutable", "A reviewed source policy cannot be changed.");
     }
     throw new PublishingRejected(
@@ -867,6 +975,16 @@ function parseImport(input: unknown): OperatorImport {
   if (value.sourcePolicy.providerKey !== value.providerKey) {
     throw new PublishingRejected("validation", "The source policy provider does not match the import provider.");
   }
+  const componentIds = new Set<string>();
+  for (const policy of value.componentPolicies) {
+    if (policy.providerKey !== value.providerKey) {
+      throw new PublishingRejected("validation", "A component source policy provider does not match the import provider.");
+    }
+    if (policy.id === value.sourcePolicy.id || componentIds.has(policy.id)) {
+      throw new PublishingRejected("validation", "A component source policy repeats a policy id.");
+    }
+    componentIds.add(policy.id);
+  }
   const externalIds = new Set<string>();
   for (const record of value.records) {
     if (externalIds.has(record.externalId)) {
@@ -878,9 +996,27 @@ function parseImport(input: unknown): OperatorImport {
         throw new PublishingRejected("validation", "A sourced fact cites a different provider.");
       }
     }
+    for (const item of [...record.document.media, ...record.document.productionClaims]) {
+      assertComponentPolicyRef(value, item.sourcePolicyId);
+      if (item.sourcePolicyId && item.sourcePolicyId !== value.sourcePolicy.id && !item.retrievedAt) {
+        throw new PublishingRejected("validation", "Image and production content under its own policy needs a retrieval time.");
+      }
+    }
+    for (const claim of record.document.productionClaims) {
+      if (!claim.retrievedAt) {
+        throw new PublishingRejected("validation", "A production claim needs a retrieval time.");
+      }
+    }
     assertCatalogueContext(value.sourcePolicy, record);
   }
   return value;
+}
+
+function assertComponentPolicyRef(parsed: OperatorImport, sourcePolicyId: string | undefined): void {
+  if (!sourcePolicyId || sourcePolicyId === parsed.sourcePolicy.id) return;
+  if (!parsed.componentPolicies.some((policy) => policy.id === sourcePolicyId)) {
+    throw new PublishingRejected("validation", "Image or production content cites a source policy that is not in this import.");
+  }
 }
 
 function assertCatalogueContext(policy: SourcePolicyInput, record: ImportRecord): void {
@@ -1030,7 +1166,76 @@ function evaluateRecord(
   if (visible.length === 0) {
     return { externalId, code: "rights", message: "No permitted sourced fact remains." };
   }
+  return evaluateComponents(record, parsed, now);
+}
+
+function evaluateComponents(record: ImportRecord, parsed: OperatorImport, now: Date): GateFailure | null {
+  const externalId = record.externalId;
+  const components = [
+    ...record.document.media.map((item) => ({
+      kind: "image" as const,
+      sourcePolicyId: item.sourcePolicyId,
+      countryCode: item.countryCode ?? record.document.salesMarket,
+      retrievedAt: item.retrievedAt,
+    })),
+    ...record.document.productionClaims.map((claim) => ({
+      kind: "fact" as const,
+      sourcePolicyId: claim.sourcePolicyId,
+      countryCode: claim.countryCode,
+      retrievedAt: claim.retrievedAt,
+    })),
+  ];
+  for (const component of components) {
+    const policy = componentPolicy(parsed, component.sourcePolicyId);
+    if (!policy) continue;
+    const separate = component.sourcePolicyId !== undefined && component.sourcePolicyId !== parsed.sourcePolicy.id;
+    if (!separate) continue;
+    if (!policy.reviewerRef || !policy.reviewedAt) {
+      return { externalId, code: "rights", message: "A component source policy has not been reviewed." };
+    }
+    if (policy.suspended) {
+      return { externalId, code: "suspended", message: "A suspended source cannot add public results." };
+    }
+    if (isExpired(policy.permissionExpiresAt, now)) {
+      return { externalId, code: "expired", message: "The source permission has expired." };
+    }
+    if (policy.retentionSeconds <= 0 || !component.retrievedAt) {
+      return { externalId, code: "expired", message: "The source copy is already beyond its retention deadline." };
+    }
+    const retrieved = new Date(component.retrievedAt).getTime();
+    if (Number.isNaN(retrieved) || retrieved + policy.retentionSeconds * 1000 <= now.getTime()) {
+      return { externalId, code: "expired", message: "The source copy is already beyond its retention deadline." };
+    }
+    if (!policy.permittedGeographies.includes(component.countryCode)) {
+      return { externalId, code: "rights", message: "The component geography is outside the permitted geography." };
+    }
+    if (policy.attribution.trim().length === 0) {
+      return { externalId, code: "rights", message: "A permitted component needs attribution." };
+    }
+    if (component.kind === "image" && policy.imagePermission !== "permitted") {
+      return { externalId, code: "rights", message: "Image permission is denied." };
+    }
+    if (component.kind === "fact" && policy.factPermission !== "permitted") {
+      return { externalId, code: "rights", message: "Fact permission is denied." };
+    }
+  }
   return null;
+}
+
+function componentPolicy(parsed: OperatorImport, sourcePolicyId: string | undefined): SourcePolicyInput | undefined {
+  if (!sourcePolicyId || sourcePolicyId === parsed.sourcePolicy.id) return parsed.sourcePolicy;
+  return parsed.componentPolicies.find((policy) => policy.id === sourcePolicyId);
+}
+
+function governingPolicy(
+  policy: SourcePolicyInput,
+  policyId: string,
+  sourcePolicyId: string | undefined,
+  componentPolicies: OperatorImport["componentPolicies"],
+): { policy: SourcePolicyInput; id: string } | null {
+  if (!sourcePolicyId || sourcePolicyId === policyId) return { policy, id: policyId };
+  const component = componentPolicies.find((item) => item.id === sourcePolicyId);
+  return component ? { policy: component, id: component.id } : null;
 }
 
 function rejectionFor(records: ImportRecord[], failures: GateFailure[]): NonNullable<OperatorResult["rejection"]> {
@@ -1113,8 +1318,7 @@ function canonicalContexts(db: Database, subjectIds: string[]) {
 
 type CanonicalContext = Awaited<ReturnType<typeof canonicalContexts>>[number];
 
-function insertPolicy(db: Database, parsed: OperatorImport, policyId: string, createdAt: string) {
-  const policy = parsed.sourcePolicy;
+function insertPolicy(db: Database, policy: SourcePolicyInput, policyId: string, createdAt: string) {
   return db
     .insert(publishingSourcePolicy)
     .values({
@@ -1277,6 +1481,7 @@ function publicAssertion(
   policyId: string,
   generationId: string,
   publishedAt: string,
+  componentPolicies: OperatorImport["componentPolicies"],
 ) {
   const factualReviewerRef = record.factualReview.reviewerRef ?? "";
   const rightsReviewerRef = record.rightsReview.reviewerRef ?? "";
@@ -1301,18 +1506,66 @@ function publicAssertion(
       factualReviewerRef,
       rightsReviewerRef,
     }));
-  const media =
-    policy.imagePermission === "permitted"
-      ? record.document.media
-          .filter((item) => !textLeaksIdentifier([item.sourceUrl, item.altText, item.credit]))
-          .map((item) => ({
-            sourceUrl: item.sourceUrl,
-            credit: item.credit,
-            altText: item.altText,
-            sourcePolicyId: policyId,
-            rightsReviewerRef,
-          }))
-      : [];
+  const media = record.document.media.flatMap((item) => {
+    const governing = governingPolicy(policy, policyId, item.sourcePolicyId, componentPolicies);
+    if (!governing || governing.policy.imagePermission !== "permitted") return [];
+    if (textLeaksIdentifier([item.sourceUrl, item.altText, item.credit, governing.policy.attribution])) return [];
+    const separate = governing.id !== policyId;
+    return [
+      {
+        sourceUrl: item.sourceUrl,
+        credit: item.credit,
+        altText: item.altText,
+        sourcePolicyId: governing.id,
+        rightsReviewerRef,
+        retrievedAt: separate ? item.retrievedAt ?? null : null,
+        countryCode: separate ? item.countryCode ?? record.document.salesMarket : null,
+        attribution: governing.policy.attribution,
+      },
+    ];
+  });
+  const productionClaims = record.document.productionClaims.flatMap((claim) => {
+    const governing = governingPolicy(policy, policyId, claim.sourcePolicyId, componentPolicies);
+    if (!governing || governing.policy.factPermission !== "permitted") return [];
+    if (/(sale|registration|export)/i.test(claim.counted)) return [];
+    if (
+      textLeaksIdentifier([
+        claim.scope,
+        claim.geography,
+        claim.period,
+        claim.counted,
+        claim.sourceTitle,
+        claim.sourceUrl ?? "",
+        claim.reviewedOn,
+        claim.countryCode,
+        governing.policy.attribution,
+        governing.policy.displayName ?? "",
+      ])
+    ) {
+      return [];
+    }
+    return [
+      {
+        scope: claim.scope,
+        geography: claim.geography,
+        period: claim.period,
+        count: claim.count,
+        status: claim.status,
+        counted: claim.counted,
+        sourceTitle: claim.sourceTitle,
+        sourceUrl: claim.sourceUrl,
+        observedAt: claim.observedAt,
+        retrievedAt: claim.retrievedAt,
+        reviewedOn: claim.reviewedOn,
+        countryCode: claim.countryCode,
+        sourcePolicyId: governing.id,
+        factualReviewerRef,
+        rightsReviewerRef,
+        policyName: governing.policy.displayName ?? policy.displayName ?? "",
+        policyAttribution: governing.policy.attribution,
+      },
+    ];
+  });
   const observedAt = facts
     .map((fact) => fact.observedAt)
     .filter((value): value is string => value !== null)
@@ -1337,6 +1590,7 @@ function publicAssertion(
     modelYearLabel: policy.permittedFields.includes("modelYearLabel") ? record.document.modelYearLabel : null,
     facts,
     media,
+    productionClaims,
     attribution: policy.attribution,
     sourcePolicyId: policyId,
     factualReviewerRef,
@@ -1622,6 +1876,22 @@ function publicationLeaksIdentifier(record: ImportRecord, policy: SourcePolicyIn
   ) {
     return true;
   }
+  if (
+    record.document.productionClaims.some((claim) =>
+      textLeaksIdentifier([
+        claim.scope,
+        claim.geography,
+        claim.period,
+        claim.counted,
+        claim.sourceTitle,
+        claim.sourceUrl ?? "",
+        claim.reviewedOn,
+        claim.countryCode,
+      ]),
+    )
+  ) {
+    return true;
+  }
   return textLeaksIdentifier([
     record.document.canonicalSubjectId,
     record.document.displayName,
@@ -1876,9 +2146,100 @@ function asPublicMedia(value: unknown): PublicMedia[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
     const media = publicMediaSchema.safeParse(item);
-    return media.success && !textLeaksIdentifier([media.data.sourceUrl, media.data.altText, media.data.credit, media.data.sourcePolicyId, media.data.rightsReviewerRef])
-      ? [media.data] : [];
+    if (!media.success) return [];
+    const parsed = {
+      ...media.data,
+      retrievedAt: media.data.retrievedAt ?? null,
+      countryCode: media.data.countryCode ?? null,
+      attribution: media.data.attribution ?? null,
+    };
+    return textLeaksIdentifier([
+      parsed.sourceUrl,
+      parsed.altText,
+      parsed.credit,
+      parsed.sourcePolicyId,
+      parsed.rightsReviewerRef,
+      parsed.attribution ?? "",
+      parsed.countryCode ?? "",
+    ])
+      ? []
+      : [parsed];
   });
+}
+
+function asPublicProductionClaims(value: unknown): PublicProductionClaim[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const claim = publicProductionClaimSchema.safeParse(item);
+    if (!claim.success || /(sale|registration|export)/i.test(claim.data.counted)) return [];
+    return textLeaksIdentifier([
+      claim.data.scope,
+      claim.data.geography,
+      claim.data.period,
+      claim.data.counted,
+      claim.data.sourceTitle,
+      claim.data.sourceUrl ?? "",
+      claim.data.reviewedOn,
+      claim.data.countryCode,
+      claim.data.policyName,
+      claim.data.policyAttribution,
+      claim.data.sourcePolicyId,
+      claim.data.factualReviewerRef,
+      claim.data.rightsReviewerRef,
+    ])
+      ? []
+      : [claim.data];
+  });
+}
+
+type ComponentPolicyRow = {
+  suspended: boolean;
+  reviewerRef: string | null;
+  reviewedAt: string | null;
+  permissionExpiresAt: string | null;
+  retentionSeconds: number;
+  permittedGeographies: string[];
+  imagePermission: string;
+  factPermission: string;
+  attribution: string;
+};
+
+function componentPolicyAllows(
+  policy: ComponentPolicyRow | undefined,
+  item: { retrievedAt: string | null; countryCode: string },
+  kind: "image" | "fact",
+  now: Date,
+): boolean {
+  if (!policy || policy.suspended || !policy.reviewerRef || !policy.reviewedAt) return false;
+  if (isExpired(policy.permissionExpiresAt, now)) return false;
+  if (policy.retentionSeconds <= 0 || !item.retrievedAt) return false;
+  const retrieved = new Date(item.retrievedAt).getTime();
+  if (Number.isNaN(retrieved) || retrieved + policy.retentionSeconds * 1000 <= now.getTime()) return false;
+  if (!policy.permittedGeographies.includes(item.countryCode)) return false;
+  if (kind === "image" && policy.imagePermission !== "permitted") return false;
+  if (kind === "fact" && policy.factPermission !== "permitted") return false;
+  if (policy.attribution.trim().length === 0) return false;
+  return true;
+}
+
+async function readComponentPolicies(db: Database, ids: string[]): Promise<Map<string, ComponentPolicyRow>> {
+  if (ids.length === 0) return new Map();
+  const rows = await db
+    .select({
+      id: publishingSourcePolicy.id,
+      suspended: publishingSourcePolicy.suspended,
+      reviewerRef: publishingSourcePolicy.reviewerRef,
+      reviewedAt: publishingSourcePolicy.reviewedAt,
+      permissionExpiresAt: publishingSourcePolicy.permissionExpiresAt,
+      retentionSeconds: publishingSourcePolicy.retentionSeconds,
+      permittedGeographies: publishingSourcePolicy.permittedGeographies,
+      imagePermission: publishingSourcePolicy.imagePermission,
+      factPermission: publishingSourcePolicy.factPermission,
+      attribution: publishingSourcePolicy.attribution,
+    })
+    .from(publishingSourcePolicy)
+    .where(inArray(publishingSourcePolicy.id, ids));
+  return new Map(rows.map((row) => [row.id, row]));
 }
 
 const publicFactSchema = z.object({
@@ -1905,4 +2266,27 @@ const publicMediaSchema = z.object({
   altText: z.string(),
   sourcePolicyId: z.string(),
   rightsReviewerRef: z.string(),
+  retrievedAt: z.string().nullable().optional(),
+  countryCode: z.string().nullable().optional(),
+  attribution: z.string().nullable().optional(),
+});
+
+const publicProductionClaimSchema = z.object({
+  scope: z.string().min(1),
+  geography: z.string().min(1),
+  period: z.string().min(1),
+  count: z.number().int().nonnegative(),
+  status: z.enum(["planned", "completed"]),
+  counted: z.string().min(1),
+  sourceTitle: z.string().min(1),
+  sourceUrl: sourceUrlSchema.nullable(),
+  observedAt: z.string().nullable(),
+  retrievedAt: z.string(),
+  reviewedOn: z.string().min(1),
+  countryCode: z.string().regex(/^[A-Z]{2}$/),
+  sourcePolicyId: z.string(),
+  factualReviewerRef: z.string(),
+  rightsReviewerRef: z.string(),
+  policyName: z.string(),
+  policyAttribution: z.string(),
 });

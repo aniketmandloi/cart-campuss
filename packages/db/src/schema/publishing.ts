@@ -25,6 +25,27 @@ export type PublishingPriceReference = {
   sourceIdentifier: string | null;
 };
 
+/** A production count stored on the approved projection, under its own source policy. */
+export type PublishingProductionClaim = {
+  scope: string;
+  geography: string;
+  period: string;
+  count: number;
+  status: "planned" | "completed";
+  counted: string;
+  sourceTitle: string;
+  sourceUrl: string | null;
+  observedAt: string | null;
+  retrievedAt: string;
+  reviewedOn: string;
+  countryCode: string;
+  sourcePolicyId: string;
+  factualReviewerRef: string;
+  rightsReviewerRef: string;
+  policyName: string;
+  policyAttribution: string;
+};
+
 /**
  * Reviewed permission for one source. Fact and image permissions are
  * independent and default to denied. `contract_text` is never part of a
@@ -162,6 +183,10 @@ export const publishingPublishedAssertion = pgTable(
     modelYearLabel: text("model_year_label"),
     facts: jsonb("facts").notNull(),
     media: jsonb("media").notNull(),
+    productionClaims: jsonb("production_claims")
+      .$type<PublishingProductionClaim[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     attribution: text("attribution").notNull(),
     sourcePolicyId: text("source_policy_id")
       .notNull()

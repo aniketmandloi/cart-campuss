@@ -443,7 +443,10 @@ export async function readCatalogueCar(
         ? policyFromProjection(policyOf(first), first.projection)
         : policyOf(first)
       : policyOf(located);
-    const image = await readImage(db, access, { generationId: located.generationId });
+    const image =
+      located.synthetic || Boolean(first?.synthetic)
+        ? await readImage(db, access, { generationId: located.generationId })
+        : null;
     return {
       availability: complete ? "incompatible" : "overview",
       ...shell,
@@ -473,14 +476,17 @@ export async function readCatalogueCar(
   const prices = projection
     ? projectionPrices(projection, policy, selected.salesMarketName)
     : await readPrices(db, access, selected.applicabilityId);
-  const productionClaims = await readProductionClaims(db, access, selected.applicabilityId);
+  const productionClaims = projection
+    ? projectionProduction(projection, policy)
+    : await readProductionClaims(db, access, selected.applicabilityId);
   const aliases = projection
     ? projection.permittedFields.includes("alias")
       ? projection.aliases
       : []
     : await readAliases(db, selected.applicabilityId);
-  const storedImage = await readImage(db, access, { applicabilityId: selected.applicabilityId });
-  const image = storedImage ?? (projection ? imageFromMedia(projection.media[0], policy) : null);
+  const image = projection
+    ? imageFromMedia(projection.media[0], policy)
+    : await readImage(db, access, { applicabilityId: selected.applicabilityId });
 
   return {
     availability: "visible",
@@ -823,6 +829,7 @@ async function readAliases(db: Database, applicabilityId: string): Promise<strin
   return rows.map((row) => row.name);
 }
 
+/** Synthetic fixture rows. Public production counts come from the approved projection. */
 async function readProductionClaims(
   db: Database,
   access: CatalogueAccess,
@@ -886,6 +893,7 @@ async function readProductionClaims(
   });
 }
 
+/** Synthetic fixture rows. A public image comes from the approved projection. */
 async function readImage(
   db: Database,
   access: CatalogueAccess,
@@ -925,10 +933,36 @@ function imageFromMedia(media: PublicMedia | undefined, policy: CataloguePolicy)
   return {
     altText: media.altText,
     credit: media.credit,
-    licence: policy.attribution,
+    licence: media.attribution || policy.attribution,
     sourceUrl: media.sourceUrl,
     assetUrl: media.sourceUrl,
   };
+}
+
+function projectionProduction(projection: PublicDetail, policy: CataloguePolicy): CatalogueProductionClaim[] {
+  return projection.productionClaims.flatMap((claim) => {
+    if (claim.status !== "planned" && claim.status !== "completed") return [];
+    if (/(sale|registration|export)/i.test(claim.counted)) return [];
+    return [
+      {
+        scope: claim.scope,
+        geography: claim.geography,
+        period: claim.period,
+        count: claim.count,
+        status: claim.status,
+        counted: claim.counted,
+        sourceTitle: claim.sourceTitle,
+        sourceUrl: claim.sourceUrl,
+        observedOn: claim.observedAt,
+        retrievedOn: claim.retrievedAt,
+        reviewedOn: claim.reviewedOn,
+        reviewStatus: "reviewed",
+        policyName: claim.policyName || policy.name,
+        policyAudience: "public",
+        policyAttribution: claim.policyAttribution || policy.attribution,
+      },
+    ];
+  });
 }
 
 function factState(state: string): CatalogueFact["state"] {

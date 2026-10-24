@@ -10,7 +10,9 @@ import { appRouter } from "@cart-campuss/api/routers/index";
 import { commitNeonHttpBatch, sql, type Database } from "@cart-campuss/db";
 import {
   catalogueApplicability,
+  catalogueImage,
   cataloguePriceReference,
+  catalogueProductionClaim,
   catalogueSourcePolicy,
   catalogueSourcedFact,
 } from "@cart-campuss/db/schema/catalogue";
@@ -1853,6 +1855,167 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     const page = await caller(null).catalogue.read(catalogueReadInput(href));
     assert.equal(page.availability, "visible");
     if (page.availability === "visible") assert.equal(page.facts.some((fact) => fact.rawValue === "100 PS"), true);
+  });
+
+  it("withholds image and production content when its own policy expires", async () => {
+    const input = labelledCatalogueImport("Separate Rights Coupe");
+    const policyB = crypto.randomUUID();
+    input.sourcePolicy.imagePermission = "denied";
+    input.componentPolicies = [
+      {
+        ...input.sourcePolicy,
+        id: policyB,
+        displayName: "Policy B images",
+        factPermission: "permitted",
+        imagePermission: "permitted",
+        attribution: "Policy B attribution",
+        permittedFields: ["displayName"],
+        permittedGeographies: ["IN"],
+      },
+    ];
+    const record = input.records[0];
+    assert.ok(record);
+    record.document.media = [
+      {
+        sourceUrl: "https://example.test/images/separate-rights",
+        credit: "Policy B credit",
+        altText: "Policy B photograph",
+        sourcePolicyId: policyB,
+        retrievedAt: BASE_TIME,
+        countryCode: "IN",
+      },
+    ];
+    record.document.productionClaims = [
+      {
+        scope: "Separate Rights generation",
+        geography: "India",
+        period: "2024",
+        count: 42,
+        status: "completed",
+        counted: "cars built",
+        sourceTitle: "Policy B production note",
+        sourceUrl: "https://example.test/production/separate-rights",
+        observedAt: BASE_TIME,
+        retrievedAt: BASE_TIME,
+        reviewedOn: "2026-10-22",
+        countryCode: "IN",
+        sourcePolicyId: policyB,
+      },
+    ];
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const subjectId = record.document.canonicalSubjectId;
+    await db.insert(catalogueSourcePolicy).values({
+      id: "policy-raw-table-leak",
+      name: "Raw table policy",
+      audience: "public",
+      permitsPublicCatalogue: true,
+      rightsReview: "reviewed",
+      attribution: "RAW TABLE LEAK",
+      internalNote: "",
+      permitsImages: true,
+    });
+    await db.insert(catalogueImage).values({
+      id: "image-raw-table-leak",
+      applicabilityId: subjectId,
+      sourcePolicyId: "policy-raw-table-leak",
+      publicationStatus: "published",
+      credit: "RAW TABLE LEAK",
+      licence: "RAW TABLE LEAK",
+      sourceUrl: "https://example.test/images/raw-table-leak",
+      altText: "RAW TABLE LEAK",
+      assetUrl: "https://example.test/images/raw-table-leak",
+      reviewStatus: "reviewed",
+    });
+    await db.insert(catalogueProductionClaim).values({
+      id: "production-raw-table-leak",
+      applicabilityId: subjectId,
+      sourcePolicyId: "policy-raw-table-leak",
+      scope: "RAW TABLE LEAK",
+      geography: "India",
+      period: "2024",
+      count: 88001,
+      status: "completed",
+      counted: "cars built",
+      sourceTitle: "RAW TABLE LEAK",
+      sourceUrl: "https://example.test/production/raw-table-leak",
+      observedOn: "2026-10-22",
+      retrievedOn: "2026-10-22",
+      reviewedOn: "2026-10-22",
+      reviewStatus: "reviewed",
+      publicationStatus: "published",
+      sortOrder: 0,
+    });
+
+    const hits = await caller(null).catalogue.search({ q: "separate rights coupe" });
+    assert.equal(hits.hits.length, 1);
+    const href = hits.hits[0]?.href ?? "";
+    const page = await caller(null).catalogue.read(catalogueReadInput(href));
+    assert.equal(page.availability, "visible");
+    if (page.availability !== "visible") return;
+    assert.equal(page.facts.some((fact) => fact.rawValue === "100 PS"), true);
+    assert.equal(page.image?.credit, "Policy B credit");
+    assert.equal(page.image?.licence, "Policy B attribution");
+    assert.equal(page.productionClaims.length, 1);
+    assert.equal(page.productionClaims[0]?.count, 42);
+    assert.equal(page.productionClaims[0]?.policyName, "Policy B images");
+    assert.equal(JSON.stringify(page).includes("RAW TABLE LEAK"), false);
+    assert.equal(JSON.stringify(page).includes("88001"), false);
+
+    const loaders = await importCatalogueLoaders();
+    const views = await importCatalogueViews();
+    const detail = await loaders.loadCatalogueCarForContext(catalogueRuntime(), catalogueReadInput(href));
+    const html = renderToStaticMarkup(createElement(views.CatalogueDetailView, { state: detail }));
+    assert.match(html, /Policy B credit/);
+    assert.match(html, /Policy B production note/);
+    assert.match(html, /Completed 42/);
+    assert.match(html, /100 PS/);
+    assert.doesNotMatch(html, /RAW TABLE LEAK|88001/);
+
+    const detailBefore = await caller(null).publishing.detail({ subjectId });
+    assert.equal(detailBefore?.media[0]?.sourcePolicyId, policyB);
+    assert.equal(detailBefore?.productionClaims[0]?.count, 42);
+
+    await db.update(publishingSourcePolicy).set({ suspended: true }).where(sql`${publishingSourcePolicy.id} = ${policyB}`);
+    const suspended = await caller(null).catalogue.read(catalogueReadInput(href));
+    assert.equal(suspended.availability, "visible");
+    if (suspended.availability !== "visible") return;
+    assert.equal(suspended.image, null);
+    assert.deepEqual(suspended.productionClaims, []);
+    assert.equal(suspended.facts.some((fact) => fact.rawValue === "100 PS"), true);
+    const suspendedHtml = renderToStaticMarkup(
+      createElement(views.CatalogueDetailView, {
+        state: await loaders.loadCatalogueCarForContext(catalogueRuntime(), catalogueReadInput(href)),
+      }),
+    );
+    assert.doesNotMatch(suspendedHtml, /Policy B credit|Policy B production note|Completed 42|RAW TABLE LEAK/);
+    assert.match(suspendedHtml, /100 PS/);
+    assert.match(suspendedHtml, /No catalogue photograph/);
+
+    await db.update(publishingSourcePolicy).set({ suspended: false, permissionExpiresAt: "2020-01-01T00:00:00.000Z" }).where(sql`${publishingSourcePolicy.id} = ${policyB}`);
+    const expired = await caller(null).catalogue.read(catalogueReadInput(href));
+    assert.equal(expired.availability, "visible");
+    if (expired.availability === "visible") {
+      assert.equal(expired.image, null);
+      assert.deepEqual(expired.productionClaims, []);
+    }
+
+    await db.update(publishingSourcePolicy).set({ permissionExpiresAt: "2030-01-01T00:00:00.000Z", retentionSeconds: 1 }).where(sql`${publishingSourcePolicy.id} = ${policyB}`);
+    const retained = await caller(null, () => new Date(testClock().getTime() + 2_000)).catalogue.read(catalogueReadInput(href));
+    assert.equal(retained.availability, "visible");
+    if (retained.availability === "visible") {
+      assert.equal(retained.image, null);
+      assert.deepEqual(retained.productionClaims, []);
+      assert.equal(retained.facts.some((fact) => fact.rawValue === "100 PS"), true);
+    }
+
+    await db.update(publishingSourcePolicy).set({ retentionSeconds: 86_400, permittedGeographies: ["DE"] }).where(sql`${publishingSourcePolicy.id} = ${policyB}`);
+    const moved = await caller(null).catalogue.read(catalogueReadInput(href));
+    assert.equal(moved.availability, "visible");
+    if (moved.availability === "visible") {
+      assert.equal(moved.image, null);
+      assert.deepEqual(moved.productionClaims, []);
+      assert.equal((await caller(null).catalogue.search({ q: "separate rights coupe" })).hits.length, 1);
+    }
   });
 
 });
