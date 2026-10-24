@@ -103,6 +103,9 @@ export type CatalogueFact = CatalogueAssertion & {
   unknownReason: string | null;
   curatedReason: string | null;
   conflict: CatalogueAssertion | null;
+  fetchedAt?: string | null;
+  lastSuccessfulProviderSyncAt?: string | null;
+  nextRecheckAt?: string | null;
 };
 
 export type CatalogueImage = {
@@ -152,6 +155,32 @@ export type CataloguePriceReference = {
   policyName: string;
   policyAudience: string;
   policyAttribution: string;
+  freshness?: "current" | "stale" | "not-checked";
+  fetchedAt?: string | null;
+  lastSuccessfulProviderSyncAt?: string | null;
+  nextRecheckAt?: string | null;
+};
+
+export type CatalogueDirectoryEntry = {
+  title: string;
+  url: string;
+  freshness: "current" | "stale" | "not-checked";
+  lastReviewedAt: string | null;
+  observedAt: string | null;
+  fetchedAt: string | null;
+  lastSuccessfulProviderSyncAt: string | null;
+  nextRecheckAt: string | null;
+};
+
+export type CatalogueListing = {
+  title: string;
+  url: string;
+  priceType: string;
+  amountMinor: number | null;
+  currency: string | null;
+  displayAmount: string | null;
+  observedAt: string;
+  presentation: "active" | "unknown" | "historical" | "ended";
 };
 
 export type CataloguePolicy = {
@@ -211,7 +240,9 @@ export type CatalogueCarPage =
       identity: CatalogueIdentity;
       facts: CatalogueFact[];
       priceReference: CataloguePriceReference | null;
-      marketLabel: "No market data";
+      marketLabel: "No market data" | "Search official and marketplace sources" | "No current listing" | "Market listings";
+      marketDirectory?: CatalogueDirectoryEntry[];
+      marketListings?: CatalogueListing[];
       productionClaims: CatalogueProductionClaim[];
     } & DossierShell
   | {
@@ -615,7 +646,9 @@ export async function readCatalogueCar(
     },
     facts,
     priceReference: prices.length === 1 ? (prices[0] ?? null) : null,
-    marketLabel: "No market data",
+    ...(projection
+      ? projectionMarket(projection)
+      : { marketLabel: "No market data" as const }),
     productionClaims,
   };
 }
@@ -1522,6 +1555,9 @@ function projectionMatchesIdentity(
 function projectionFacts(projection: PublicDetail, policy: CataloguePolicy): CatalogueFact[] {
   return projection.facts.map((fact) => {
     const valued = fact.state === "known";
+    const recheck = projection.rechecks.find(
+      (item) => item.kind === "editorial-specification" && item.targetKey === fact.property,
+    );
     return {
       property: fact.property,
       state: factState(fact.state),
@@ -1530,7 +1566,10 @@ function projectionFacts(projection: PublicDetail, policy: CataloguePolicy): Cat
       unit: valued ? fact.unit : null,
       measurementStandard: valued ? fact.standard : null,
       unknownReason: valued ? null : fact.unknownReason,
-      freshness: factFreshness(fact.freshness),
+      freshness: recheck ? recheck.freshness : factFreshness(fact.freshness),
+      fetchedAt: recheck?.fetchedAt ?? null,
+      lastSuccessfulProviderSyncAt: recheck?.lastSuccessfulProviderSyncAt ?? null,
+      nextRecheckAt: recheck?.nextRecheckAt ?? null,
       curatedReason: fact.curatedReason,
       conflict:
         fact.conflict && (fact.state === "known" || fact.state === "unknown")
@@ -1556,7 +1595,7 @@ function projectionFacts(projection: PublicDetail, policy: CataloguePolicy): Cat
       sourceUrl: fact.sourceUrl,
       observedOn: fact.observedAt,
       retrievedOn: fact.retrievedAt,
-      reviewedOn: projection.reviewedAt,
+      reviewedOn: recheck?.lastReviewedAt ?? projection.reviewedAt,
       reviewStatus: "reviewed",
       policyName: policy.name,
       policyAudience: policy.audience,
@@ -1576,6 +1615,7 @@ function projectionPrices(
   if (!price) return [];
   const displayAmount = formatMinorUnits(price.amountMinor, price.currency, price.minorUnitExponent);
   if (displayAmount === null) return [];
+  const recheck = projection.rechecks.find((item) => item.kind === "model-price");
   return [
     {
       kind: "price-reference",
@@ -1588,7 +1628,7 @@ function projectionPrices(
       salesMarketName,
       observedOn: price.observedOn,
       retrievedOn: price.retrievedOn,
-      reviewedOn: price.reviewedOn,
+      reviewedOn: recheck?.lastReviewedAt ?? price.reviewedOn,
       reviewStatus: "reviewed",
       sourceTitle: price.sourceTitle,
       sourceUrl: price.sourceUrl,
@@ -1596,8 +1636,79 @@ function projectionPrices(
       policyName: policy.name,
       policyAudience: policy.audience,
       policyAttribution: policy.attribution,
+      freshness: recheck?.freshness,
+      fetchedAt: recheck?.fetchedAt,
+      lastSuccessfulProviderSyncAt: recheck?.lastSuccessfulProviderSyncAt,
+      nextRecheckAt: recheck?.nextRecheckAt,
     },
   ];
+}
+
+function projectionMarket(projection: PublicDetail): {
+  marketLabel: "No market data" | "Search official and marketplace sources" | "No current listing" | "Market listings";
+  marketDirectory: CatalogueDirectoryEntry[];
+  marketListings: CatalogueListing[];
+} {
+  const access = projection.marketAccess;
+  const marketDirectory = (access?.sourceDirectory ?? []).map((entry) => {
+    const recheck = projection.rechecks.find(
+      (item) => item.kind === "source-directory-url" && item.targetKey === entry.url,
+    );
+    return {
+      title: entry.title,
+      url: entry.url,
+      freshness: recheck?.freshness ?? "current",
+      lastReviewedAt: recheck?.lastReviewedAt ?? entry.reviewedAt,
+      observedAt: recheck?.observedAt ?? entry.observedAt,
+      fetchedAt: recheck?.fetchedAt ?? entry.retrievedAt,
+      lastSuccessfulProviderSyncAt: recheck?.lastSuccessfulProviderSyncAt ?? null,
+      nextRecheckAt: recheck?.nextRecheckAt ?? null,
+    };
+  });
+  const marketListings = (access?.listings ?? []).map((listing) => {
+    const recheck = projection.rechecks.find(
+      (item) => item.kind === "approved-feed" && item.targetKey === listing.externalId,
+    );
+    const displayAmount =
+      listing.amountMinor !== null && listing.currency && listing.minorUnitExponent !== null
+        ? formatMinorUnits(listing.amountMinor, listing.currency, listing.minorUnitExponent)
+        : null;
+    return {
+      title: listing.title,
+      url: listing.url,
+      priceType: listing.priceType,
+      amountMinor: listing.amountMinor,
+      currency: listing.currency,
+      displayAmount,
+      observedAt: recheck?.observedAt ?? listing.observedAt,
+      presentation: listingPresentation(listing.lifecycle, recheck),
+    };
+  });
+  const live = marketListings.some((listing) => listing.presentation === "active" || listing.presentation === "unknown" || listing.presentation === "ended");
+  const marketLabel = marketDirectory.length > 0
+    ? "Search official and marketplace sources"
+    : live
+      ? "Market listings"
+      : marketListings.length > 0
+        ? "No current listing"
+        : "No market data";
+  return { marketLabel, marketDirectory, marketListings };
+}
+
+function listingPresentation(
+  lifecycle: "active" | "ended" | "unknown",
+  recheck: PublicDetail["rechecks"][number] | undefined,
+): CatalogueListing["presentation"] {
+  if (!recheck) {
+    if (lifecycle === "ended") return "ended";
+    if (lifecycle === "unknown") return "unknown";
+    return "active";
+  }
+  if (recheck.lifecycle === "ended" && recheck.providerOutcome === "succeeded") return "ended";
+  if (recheck.providerOutcome === "failed" && !recheck.suppressed && recheck.freshness !== "stale") return "unknown";
+  if (recheck.freshness === "stale" || recheck.freshness === "not-checked" || recheck.suppressed) return "historical";
+  if (recheck.lifecycle === "unknown" || lifecycle === "unknown") return "unknown";
+  return "active";
 }
 
 function visibleRecord(access: CatalogueAccess, now: Date): SQL {

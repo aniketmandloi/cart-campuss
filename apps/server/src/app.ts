@@ -5,6 +5,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 
+import { PUBLIC_CACHE_CONTROL } from "@cart-campuss/api/public-cache";
+
 import { createContext } from "./context";
 
 export type AppDeps = {
@@ -24,7 +26,7 @@ export function createApp(deps: AppDeps) {
   }
   app.use("/*", async (c, next) => {
     await next();
-    c.header("Cache-Control", "private, no-store");
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
   });
   app.use(
     "/*",

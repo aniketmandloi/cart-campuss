@@ -1,3 +1,4 @@
+import { PUBLIC_CACHE_CONTROL } from "@cart-campuss/api/public-cache";
 import { varlockNextConfigPlugin } from "@varlock/nextjs-integration/plugin";
 
 const withVarlock = varlockNextConfigPlugin();
@@ -10,7 +11,7 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/:path*",
-        headers: [{ key: "Cache-Control", value: "private, no-store" }],
+        headers: [{ key: "Cache-Control", value: PUBLIC_CACHE_CONTROL }],
       },
     ];
   },

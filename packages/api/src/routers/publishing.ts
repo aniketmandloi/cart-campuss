@@ -9,6 +9,7 @@ import {
   readPublishedCatalogueDetail,
   searchPublishedCatalogue,
 } from "../publishing";
+import { runScheduledRecheck, withdrawPublishedContent } from "../recheck";
 import { publicProcedure, router, t } from "../index";
 
 const operatorProcedure = t.procedure.use(({ ctx, next }) => {
@@ -32,6 +33,32 @@ export const publishingRouter = router({
   submit: operatorProcedure.input(operatorImportSchema).mutation(async ({ ctx, input }) => {
     try {
       return await applyOperatorImport(
+        { db: ctx.db, operatorToken: ctx.operatorToken, now: ctx.now },
+        ctx.presentedOperatorToken ?? undefined,
+        input,
+      );
+    } catch (error) {
+      throw asTrpcError(error);
+    }
+  }),
+
+  recheck: operatorProcedure
+    .input(z.object({ report: z.unknown().nullable().default(null) }))
+    .mutation(async ({ ctx, input }) => {
+      try {
+        return await runScheduledRecheck(
+          { db: ctx.db, operatorToken: ctx.operatorToken, now: ctx.now },
+          ctx.presentedOperatorToken ?? undefined,
+          input.report,
+        );
+      } catch (error) {
+        throw asTrpcError(error);
+      }
+    }),
+
+  withdraw: operatorProcedure.input(z.unknown()).mutation(async ({ ctx, input }) => {
+    try {
+      return await withdrawPublishedContent(
         { db: ctx.db, operatorToken: ctx.operatorToken, now: ctx.now },
         ctx.presentedOperatorToken ?? undefined,
         input,
