@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { permanentRedirect } from "next/navigation";
 
 import { loadCatalogueCar } from "@/catalogue/load";
 import { CatalogueDetailView, type CatalogueDetailState } from "@/catalogue/views";
@@ -13,12 +14,15 @@ type CarRoute = {
     market?: string | string[];
     year?: string | string[];
     variant?: string | string[];
+    section?: string | string[];
+    registration?: string | string[];
   }>;
 };
 
 export async function generateMetadata({ params, searchParams }: CarRoute): Promise<Metadata> {
   const state = await loadFromRoute(params, searchParams);
-  if (state.kind === "page" && state.page.availability !== "not-in-public-catalogue") {
+  if (state.kind === "redirect") permanentCatalogueRedirect(state.location);
+  if (state.kind === "page" && state.page.availability !== "not-in-public-catalogue" && state.page.availability !== "redirect") {
     const title = `${state.page.identity.brandName} ${state.page.identity.modelName}`;
     return {
       title,
@@ -40,6 +44,7 @@ export async function generateMetadata({ params, searchParams }: CarRoute): Prom
 
 export default async function CarPage({ params, searchParams }: CarRoute) {
   const state = await loadFromRoute(params, searchParams);
+  if (state.kind === "redirect") permanentCatalogueRedirect(state.location);
   return <CatalogueDetailView state={state} />;
 }
 
@@ -54,7 +59,16 @@ async function loadFromRoute(
     market: first(query.market),
     year: first(query.year),
     variant: first(query.variant),
+    section: first(query.section),
+    registration: first(query.registration),
   });
+}
+
+function permanentCatalogueRedirect(location: string): never {
+  if (!/^\/cars\/[a-z0-9-]+\/[a-z0-9-]+(?:\?[a-z0-9_&=-]+)?$/.test(location)) {
+    throw new Error("The catalogue redirect is not a car path.");
+  }
+  permanentRedirect(location as `/cars/${string}/${string}` | `/cars/${string}/${string}?${string}`);
 }
 
 function first(value: string | string[] | undefined): string | undefined {

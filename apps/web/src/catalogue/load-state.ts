@@ -1,3 +1,4 @@
+import { catalogueContextHref } from "@cart-campuss/api/dossier";
 import type { Context } from "@cart-campuss/api/context";
 import { appRouter } from "@cart-campuss/api/routers/index";
 
@@ -28,6 +29,8 @@ export async function loadCatalogueCarForContext(
     market?: string;
     year?: string;
     variant?: string;
+    section?: string;
+    registration?: string;
   },
 ): Promise<CatalogueDetailState> {
   const parsed = parseCatalogueRead(input);
@@ -42,6 +45,20 @@ export async function loadCatalogueCarForContext(
   }
   try {
     const page = await appRouter.createCaller(runtime).catalogue.read(parsed.value);
+    if (page.availability === "redirect") {
+      return {
+        kind: "redirect",
+        location: catalogueContextHref({
+          modelSlug: page.modelSlug,
+          generationSlug: page.generationSlug,
+          market: parsed.value.market,
+          year: parsed.value.year,
+          variant: parsed.value.variant,
+          section: parsed.value.section,
+          registration: parsed.value.registration,
+        }),
+      };
+    }
     return { kind: "page", page };
   } catch {
     return { kind: "unavailable" };

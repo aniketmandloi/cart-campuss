@@ -3,20 +3,32 @@ import {
   catalogueApplicability,
   catalogueBrand,
   catalogueGeneration,
+  catalogueGenerationAlias,
+  catalogueImage,
   catalogueMarketVariant,
   catalogueModel,
   catalogueModelYear,
   cataloguePriceReference,
+  catalogueProductionClaim,
+  catalogueRouteRedirect,
   catalogueSalesMarket,
   catalogueSourcePolicy,
   catalogueSourcedFact,
 } from "@cart-campuss/db/schema/catalogue";
 import type { Database } from "@cart-campuss/db";
-import { and, asc, eq, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 
 import { normalizeCatalogueQuery } from "./catalogue-name";
 import type { CatalogueAccess } from "./context";
-import { CATALOGUE_IDENTITY_FIELDS, currentProjectionCovers, publicMetadataEligible, readPublishedCatalogueDetail, type PublicDetail } from "./publishing";
+import {
+  buildApplicabilitySelector,
+  catalogueContextHref,
+  correctionIssueUrl,
+  dossierSections,
+  parseDossierSection,
+  type DossierSection,
+} from "./dossier";
+import { CATALOGUE_IDENTITY_FIELDS, currentProjectionCovers, publicMetadataEligible, readPublishedCatalogueDetail, type PublicDetail, type PublicMedia } from "./publishing";
 
 export { normalizeCatalogueQuery } from "./catalogue-name";
 
@@ -35,6 +47,7 @@ export type CatalogueSearchHit = {
   variantId: string;
   match: "exact" | "prefix";
   synthetic: boolean;
+  scope: "applicability" | "generation";
   href: string;
 };
 
@@ -64,11 +77,40 @@ export type CatalogueAssertion = {
 
 export type CatalogueFact = CatalogueAssertion & {
   property: string;
-  state: "known" | "unknown";
+  state: "known" | "unknown" | "not-applicable" | "withheld";
+  freshness: "current" | "stale" | "not-checked";
   unknownReason: string | null;
   curatedReason: string | null;
   conflict: CatalogueAssertion | null;
 };
+
+export type CatalogueImage = {
+  altText: string;
+  credit: string;
+  licence: string;
+  sourceUrl: string | null;
+  assetUrl: string;
+};
+
+export type CatalogueProductionClaim = {
+  scope: string;
+  geography: string;
+  period: string;
+  count: number;
+  status: "planned" | "completed";
+  counted: string;
+  sourceTitle: string;
+  sourceUrl: string | null;
+  observedOn: string | null;
+  retrievedOn: string;
+  reviewedOn: string | null;
+  reviewStatus: string;
+  policyName: string;
+  policyAudience: string;
+  policyAttribution: string;
+};
+
+export type CatalogueSelector = ReturnType<typeof buildApplicabilitySelector>;
 
 export type CataloguePriceReference = {
   kind: "price-reference";
@@ -116,32 +158,47 @@ export type CatalogueIdentity = {
   applicabilityId: string;
 };
 
+type GenerationIdentity = Pick<
+  CatalogueIdentity,
+  "brandName" | "modelName" | "generationName" | "modelSlug" | "generationSlug"
+>;
+
+type DossierShell = {
+  privatePreview: boolean;
+  synthetic: boolean;
+  policy: CataloguePolicy;
+  selector: CatalogueSelector;
+  sections: ReturnType<typeof dossierSections>;
+  context: {
+    market: string | null;
+    year: string | null;
+    variant: string | null;
+    registration: string | null;
+    section: DossierSection;
+  };
+  correctionHref: string;
+  rebadge: { brandName: string; modelName: string; href: string } | null;
+  aliases: string[];
+  image: CatalogueImage | null;
+};
+
 export type CatalogueCarPage =
   | {
       availability: "visible";
-      privatePreview: boolean;
-      synthetic: boolean;
       identity: CatalogueIdentity;
-      policy: CataloguePolicy;
       facts: CatalogueFact[];
       priceReference: CataloguePriceReference | null;
       marketLabel: "No market data";
-    }
+      productionClaims: CatalogueProductionClaim[];
+    } & DossierShell
   | {
-      availability: "overview";
-      privatePreview: boolean;
-      synthetic: boolean;
-      policy: CataloguePolicy;
-      identity: Pick<
-        CatalogueIdentity,
-        "brandName" | "modelName" | "generationName" | "modelSlug" | "generationSlug"
-      >;
-      selections: Array<{
-        salesMarketName: string;
-        modelYearLabel: string;
-        variantName: string;
-        href: string;
-      }>;
+      availability: "overview" | "incompatible";
+      identity: GenerationIdentity;
+    } & DossierShell
+  | {
+      availability: "redirect";
+      modelSlug: string;
+      generationSlug: string;
     }
   | {
       availability: "not-in-public-catalogue";
@@ -154,6 +211,8 @@ export type CarSelection = {
   market?: string;
   year?: string;
   variant?: string;
+  section?: DossierSection;
+  registration?: string;
 };
 
 export function formatMinorUnits(
@@ -194,12 +253,13 @@ export function catalogueCarHref(input: {
   modelYearId: string;
   variantId: string;
 }): string {
-  const params = new URLSearchParams({
+  return catalogueContextHref({
+    modelSlug: input.modelSlug,
+    generationSlug: input.generationSlug,
     market: input.salesMarketId,
     year: input.modelYearId,
     variant: input.variantId,
   });
-  return `/cars/${input.modelSlug}/${input.generationSlug}?${params.toString()}`;
 }
 
 export function catalogueStatus(access: CatalogueAccess) {
@@ -273,9 +333,18 @@ export async function searchCatalogue(
       variantId: row.variantId,
       match: row.normalizedName === normalized ? "exact" : "prefix",
       synthetic: row.synthetic,
+      scope: "applicability",
       href: catalogueCarHref(row),
     });
     if (hits.length === 20) break;
+  }
+
+  if (hits.length < 20) {
+    const generations = await searchBareGenerations(db, access, normalized, now());
+    for (const hit of generations) {
+      if (hits.length === 20) break;
+      hits.push(hit);
+    }
   }
 
   return {
@@ -291,9 +360,268 @@ export async function readCatalogueCar(
   selection: CarSelection,
   now: () => Date = () => new Date(),
 ): Promise<CatalogueCarPage> {
+  const privatePreview = access.allowFixtures;
+  const clock = now();
+  const section = parseDossierSection(selection.section);
+  const located = await findGenerationBySlug(db, selection.modelSlug, selection.generationSlug);
+  if (!located) {
+    const redirect = await findRedirect(db, access, selection, clock);
+    return redirect ?? { availability: "not-in-public-catalogue", privatePreview };
+  }
+
+  const modelRows = await loadVisibleApplicability(db, access, located.modelId, clock);
+  const generationRows = modelRows.filter((row) => row.generationId === located.generationId);
+  const selfVisible = generationRowVisible(located, access);
+  if (generationRows.length === 0 && !selfVisible) {
+    return { availability: "not-in-public-catalogue", privatePreview };
+  }
+
+  const generations = await listVisibleGenerations(db, access, located.modelId, modelRows);
+  const requested = {
+    market: selection.market ?? null,
+    year: selection.year ?? null,
+    variant: selection.variant ?? null,
+    section,
+    registration: selection.registration ?? null,
+  };
+  const selector = buildApplicabilitySelector({
+    modelSlug: located.modelSlug,
+    generations,
+    currentGenerationId: located.generationId,
+    currentGenerationSlug: located.generationSlug,
+    rows: modelRows,
+    requested,
+  });
+  const rebadge = await readRebadge(db, access, located.rebadgeOfModelId, clock);
+  const shell = {
+    privatePreview,
+    synthetic: located.synthetic || generationRows.some((row) => row.synthetic),
+    selector,
+    sections: dossierSections({
+      modelSlug: located.modelSlug,
+      generationSlug: located.generationSlug,
+      market: requested.market,
+      year: requested.year,
+      variant: requested.variant,
+      section,
+      registration: requested.registration,
+    }),
+    context: requested,
+    rebadge,
+    aliases: [] as string[],
+    image: null as CatalogueImage | null,
+  };
+  const identity = {
+    brandName: located.brandName,
+    modelName: located.modelName,
+    generationName: located.generationName,
+    modelSlug: located.modelSlug,
+    generationSlug: located.generationSlug,
+  };
+  const pagePath = catalogueContextHref({
+    modelSlug: located.modelSlug,
+    generationSlug: located.generationSlug,
+    market: requested.market,
+    year: requested.year,
+    variant: requested.variant,
+    section,
+  });
+  const complete = Boolean(requested.market && requested.year && requested.variant);
+  const selected = complete
+    ? generationRows.find(
+        (row) =>
+          row.salesMarketId === requested.market &&
+          row.modelYearId === requested.year &&
+          row.variantId === requested.variant,
+      )
+    : undefined;
+
+  if (!selected) {
+    const [first] = generationRows;
+    const policy = first
+      ? first.projection
+        ? policyFromProjection(policyOf(first), first.projection)
+        : policyOf(first)
+      : policyOf(located);
+    const image = await readImage(db, access, { generationId: located.generationId });
+    return {
+      availability: complete ? "incompatible" : "overview",
+      ...shell,
+      synthetic: shell.synthetic || Boolean(first?.synthetic),
+      policy,
+      identity,
+      image,
+      correctionHref: correctionIssueUrl({
+        ...identity,
+        applicabilityId: null,
+        salesMarketId: requested.market,
+        modelYearId: requested.year,
+        variantId: requested.variant,
+        pagePath,
+      }),
+    };
+  }
+
+  const projection = selected.projection;
+  if (!selected.synthetic && !projection) {
+    return { availability: "not-in-public-catalogue", privatePreview };
+  }
+  const policy = projection ? policyFromProjection(policyOf(selected), projection) : policyOf(selected);
+  const facts = projection
+    ? projectionFacts(projection, policy)
+    : await readFacts(db, access, selected.applicabilityId);
+  const prices = projection
+    ? projectionPrices(projection, policy, selected.salesMarketName)
+    : await readPrices(db, access, selected.applicabilityId);
+  const productionClaims = await readProductionClaims(db, access, selected.applicabilityId);
+  const aliases = projection
+    ? projection.permittedFields.includes("alias")
+      ? projection.aliases
+      : []
+    : await readAliases(db, selected.applicabilityId);
+  const storedImage = await readImage(db, access, { applicabilityId: selected.applicabilityId });
+  const image = storedImage ?? (projection ? imageFromMedia(projection.media[0], policy) : null);
+
+  return {
+    availability: "visible",
+    ...shell,
+    synthetic: selected.synthetic,
+    policy,
+    aliases,
+    image,
+    correctionHref: correctionIssueUrl({
+      ...identity,
+      applicabilityId: selected.applicabilityId,
+      salesMarketId: selected.salesMarketId,
+      modelYearId: selected.modelYearId,
+      variantId: selected.variantId,
+      pagePath,
+    }),
+    identity: {
+      ...identity,
+      salesMarketName: selected.salesMarketName,
+      salesMarketId: selected.salesMarketId,
+      modelYearLabel: selected.modelYearLabel,
+      modelYearId: selected.modelYearId,
+      modelYearConvention: selected.modelYearConvention,
+      variantName: selected.variantName,
+      variantId: selected.variantId,
+      applicabilityId: selected.applicabilityId,
+    },
+    facts,
+    priceReference: prices.length === 1 ? (prices[0] ?? null) : null,
+    marketLabel: "No market data",
+    productionClaims,
+  };
+}
+
+type GenerationRecord = {
+  generationId: string;
+  generationName: string;
+  generationSlug: string;
+  modelId: string;
+  modelName: string;
+  modelSlug: string;
+  brandName: string;
+  rebadgeOfModelId: string | null;
+  publicationStatus: string | null;
+  synthetic: boolean;
+  policyName: string | null;
+  policyAudience: string | null;
+  policyAttribution: string | null;
+  permitsPublicCatalogue: boolean | null;
+  rightsReview: string | null;
+};
+
+type ApplicabilityRow = {
+  applicabilityId: string;
+  generationId: string;
+  brandName: string;
+  modelName: string;
+  generationName: string;
+  modelSlug: string;
+  generationSlug: string;
+  salesMarketName: string;
+  salesMarketId: string;
+  countryCode: string;
+  modelYearLabel: string;
+  modelYearId: string;
+  modelYearConvention: string;
+  variantName: string;
+  variantId: string;
+  synthetic: boolean;
+  policyName: string;
+  policyAudience: string;
+  policyAttribution: string;
+  projection: PublicDetail | null;
+};
+
+async function findGenerationBySlug(
+  db: Database,
+  modelSlug: string,
+  generationSlug: string,
+): Promise<GenerationRecord | null> {
+  const [row] = await db
+    .select({
+      generationId: catalogueGeneration.id,
+      generationName: catalogueGeneration.name,
+      generationSlug: catalogueGeneration.slug,
+      modelId: catalogueModel.id,
+      modelName: catalogueModel.name,
+      modelSlug: catalogueModel.slug,
+      brandName: catalogueBrand.name,
+      rebadgeOfModelId: catalogueModel.rebadgeOfModelId,
+      publicationStatus: catalogueGeneration.publicationStatus,
+      synthetic: catalogueGeneration.synthetic,
+      policyName: catalogueSourcePolicy.name,
+      policyAudience: catalogueSourcePolicy.audience,
+      policyAttribution: catalogueSourcePolicy.attribution,
+      permitsPublicCatalogue: catalogueSourcePolicy.permitsPublicCatalogue,
+      rightsReview: catalogueSourcePolicy.rightsReview,
+    })
+    .from(catalogueGeneration)
+    .innerJoin(catalogueModel, eq(catalogueGeneration.modelId, catalogueModel.id))
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .leftJoin(
+      catalogueSourcePolicy,
+      eq(catalogueGeneration.sourcePolicyId, catalogueSourcePolicy.id),
+    )
+    .where(and(eq(catalogueModel.slug, modelSlug), eq(catalogueGeneration.slug, generationSlug)))
+    .limit(1);
+  return row ?? null;
+}
+
+function generationRowVisible(row: GenerationRecord, access: CatalogueAccess): boolean {
+  if (!row.policyName || row.rightsReview !== "reviewed" || row.permitsPublicCatalogue === null) {
+    return false;
+  }
+  if (
+    row.publicationStatus === "published" &&
+    !row.synthetic &&
+    row.permitsPublicCatalogue &&
+    row.policyAudience === "public"
+  ) {
+    return true;
+  }
+  return (
+    access.allowFixtures &&
+    row.publicationStatus === "fixture" &&
+    row.synthetic &&
+    !row.permitsPublicCatalogue &&
+    row.policyAudience === "private-preview"
+  );
+}
+
+async function loadVisibleApplicability(
+  db: Database,
+  access: CatalogueAccess,
+  modelId: string,
+  now: Date,
+): Promise<ApplicabilityRow[]> {
   const rows = await db
     .select({
       applicabilityId: catalogueApplicability.id,
+      generationId: catalogueGeneration.id,
       brandName: catalogueBrand.name,
       modelName: catalogueModel.name,
       generationName: catalogueGeneration.name,
@@ -312,116 +640,418 @@ export async function readCatalogueCar(
       policyAudience: catalogueSourcePolicy.audience,
       policyAttribution: catalogueSourcePolicy.attribution,
     })
-    .from(catalogueGeneration)
-    .innerJoin(catalogueModel, eq(catalogueGeneration.modelId, catalogueModel.id))
-    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .from(catalogueApplicability)
     .innerJoin(
       catalogueMarketVariant,
-      eq(catalogueMarketVariant.generationId, catalogueGeneration.id),
-    )
-    .innerJoin(
-      catalogueApplicability,
       eq(catalogueApplicability.marketVariantId, catalogueMarketVariant.id),
     )
+    .innerJoin(catalogueGeneration, eq(catalogueMarketVariant.generationId, catalogueGeneration.id))
+    .innerJoin(catalogueModel, eq(catalogueGeneration.modelId, catalogueModel.id))
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
     .innerJoin(
       catalogueSourcePolicy,
       eq(catalogueApplicability.sourcePolicyId, catalogueSourcePolicy.id),
     )
     .innerJoin(catalogueSalesMarket, eq(catalogueApplicability.salesMarketId, catalogueSalesMarket.id))
     .innerJoin(catalogueModelYear, eq(catalogueApplicability.modelYearId, catalogueModelYear.id))
-    .where(
-      and(
-        eq(catalogueModel.slug, selection.modelSlug),
-        eq(catalogueGeneration.slug, selection.generationSlug),
-        visibleRecord(access, now()),
-      ),
-    )
+    .where(and(eq(catalogueModel.id, modelId), visibleRecord(access, now)))
     .orderBy(asc(catalogueApplicability.id));
 
-  const privatePreview = access.allowFixtures;
-  const visibleRows = [];
+  const visible: ApplicabilityRow[] = [];
   for (const row of rows) {
-    const projection = row.synthetic ? null : await readPublishedCatalogueDetail(db, row.applicabilityId, now);
-    if (row.synthetic || (projection && projectionMatchesIdentity(row, projection) &&
-      publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string")))) {
-      visibleRows.push({ ...row, projection });
+    const projection = row.synthetic ? null : await readPublishedCatalogueDetail(db, row.applicabilityId, () => now);
+    if (
+      row.synthetic ||
+      (projection &&
+        projectionMatchesIdentity(row, projection) &&
+        publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string")))
+    ) {
+      visible.push({ ...row, projection });
     }
   }
-  if (visibleRows.length === 0) {
-    return { availability: "not-in-public-catalogue", privatePreview };
+  return visible;
+}
+
+async function listVisibleGenerations(
+  db: Database,
+  access: CatalogueAccess,
+  modelId: string,
+  rows: ApplicabilityRow[],
+): Promise<Array<{ id: string; name: string; slug: string }>> {
+  const listed = new Map<string, { id: string; name: string; slug: string }>();
+  for (const row of rows) {
+    listed.set(row.generationId, {
+      id: row.generationId,
+      name: row.generationName,
+      slug: row.generationSlug,
+    });
   }
+  const bare = await db
+    .select({
+      generationId: catalogueGeneration.id,
+      generationName: catalogueGeneration.name,
+      generationSlug: catalogueGeneration.slug,
+      modelId: catalogueModel.id,
+      modelName: catalogueModel.name,
+      modelSlug: catalogueModel.slug,
+      brandName: catalogueBrand.name,
+      rebadgeOfModelId: catalogueModel.rebadgeOfModelId,
+      publicationStatus: catalogueGeneration.publicationStatus,
+      synthetic: catalogueGeneration.synthetic,
+      policyName: catalogueSourcePolicy.name,
+      policyAudience: catalogueSourcePolicy.audience,
+      policyAttribution: catalogueSourcePolicy.attribution,
+      permitsPublicCatalogue: catalogueSourcePolicy.permitsPublicCatalogue,
+      rightsReview: catalogueSourcePolicy.rightsReview,
+    })
+    .from(catalogueGeneration)
+    .innerJoin(catalogueModel, eq(catalogueGeneration.modelId, catalogueModel.id))
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .leftJoin(
+      catalogueSourcePolicy,
+      eq(catalogueGeneration.sourcePolicyId, catalogueSourcePolicy.id),
+    )
+    .where(eq(catalogueGeneration.modelId, modelId))
+    .orderBy(asc(catalogueGeneration.id));
+  for (const generation of bare) {
+    if (listed.has(generation.generationId) || !generationRowVisible(generation, access)) continue;
+    listed.set(generation.generationId, {
+      id: generation.generationId,
+      name: generation.generationName,
+      slug: generation.generationSlug,
+    });
+  }
+  return [...listed.values()];
+}
 
-  const selected =
-    selection.market && selection.year && selection.variant
-      ? visibleRows.find(
-          (row) =>
-            row.salesMarketId === selection.market &&
-            row.modelYearId === selection.year &&
-            row.variantId === selection.variant,
-        )
-      : undefined;
+async function findRedirect(
+  db: Database,
+  access: CatalogueAccess,
+  selection: CarSelection,
+  now: Date,
+): Promise<Extract<CatalogueCarPage, { availability: "redirect" }> | null> {
+  const [target] = await db
+    .select({
+      modelSlug: catalogueModel.slug,
+      generationSlug: catalogueGeneration.slug,
+      modelId: catalogueModel.id,
+      generationId: catalogueGeneration.id,
+    })
+    .from(catalogueRouteRedirect)
+    .innerJoin(catalogueGeneration, eq(catalogueRouteRedirect.generationId, catalogueGeneration.id))
+    .innerJoin(catalogueModel, eq(catalogueGeneration.modelId, catalogueModel.id))
+    .where(
+      and(
+        eq(catalogueRouteRedirect.modelSlug, selection.modelSlug),
+        eq(catalogueRouteRedirect.generationSlug, selection.generationSlug),
+      ),
+    )
+    .limit(1);
+  if (!target || (target.modelSlug === selection.modelSlug && target.generationSlug === selection.generationSlug)) {
+    return null;
+  }
+  const generation = await findGenerationBySlug(db, target.modelSlug, target.generationSlug);
+  if (!generation) return null;
+  const rows = await loadVisibleApplicability(db, access, generation.modelId, now);
+  const own = rows.some((row) => row.generationId === generation.generationId);
+  if (!own && !generationRowVisible(generation, access)) return null;
+  return {
+    availability: "redirect",
+    modelSlug: target.modelSlug,
+    generationSlug: target.generationSlug,
+  };
+}
 
-  if (!selected) {
-    const [first] = visibleRows;
-    if (!first) return { availability: "not-in-public-catalogue", privatePreview };
-    const overviewProjection = first.projection;
+async function readRebadge(
+  db: Database,
+  access: CatalogueAccess,
+  modelId: string | null,
+  now: Date,
+): Promise<{ brandName: string; modelName: string; href: string } | null> {
+  if (!modelId) return null;
+  const generations = await db
+    .select({
+      generationId: catalogueGeneration.id,
+      generationName: catalogueGeneration.name,
+      generationSlug: catalogueGeneration.slug,
+      modelId: catalogueModel.id,
+      modelName: catalogueModel.name,
+      modelSlug: catalogueModel.slug,
+      brandName: catalogueBrand.name,
+      rebadgeOfModelId: catalogueModel.rebadgeOfModelId,
+      publicationStatus: catalogueGeneration.publicationStatus,
+      synthetic: catalogueGeneration.synthetic,
+      policyName: catalogueSourcePolicy.name,
+      policyAudience: catalogueSourcePolicy.audience,
+      policyAttribution: catalogueSourcePolicy.attribution,
+      permitsPublicCatalogue: catalogueSourcePolicy.permitsPublicCatalogue,
+      rightsReview: catalogueSourcePolicy.rightsReview,
+    })
+    .from(catalogueModel)
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .innerJoin(catalogueGeneration, eq(catalogueGeneration.modelId, catalogueModel.id))
+    .leftJoin(
+      catalogueSourcePolicy,
+      eq(catalogueGeneration.sourcePolicyId, catalogueSourcePolicy.id),
+    )
+    .where(eq(catalogueModel.id, modelId))
+    .orderBy(asc(catalogueGeneration.id));
+  const rows = await loadVisibleApplicability(db, access, modelId, now);
+  for (const generation of generations) {
+    const visible =
+      rows.some((row) => row.generationId === generation.generationId) ||
+      generationRowVisible(generation, access);
+    if (!visible) continue;
     return {
-      availability: "overview",
-      privatePreview,
-      synthetic: visibleRows.some((row) => row.synthetic),
-      policy: overviewProjection ? policyFromProjection(policyOf(first), overviewProjection) : policyOf(first),
-      identity: {
-        brandName: first.brandName,
-        modelName: first.modelName,
-        generationName: first.generationName,
-        modelSlug: first.modelSlug,
-        generationSlug: first.generationSlug,
-      },
-      selections: visibleRows.map((row) => ({
-        salesMarketName: row.salesMarketName,
-        modelYearLabel: row.modelYearLabel,
-        variantName: row.variantName,
-        href: catalogueCarHref(row),
-      })),
+      brandName: generation.brandName,
+      modelName: generation.modelName,
+      href: catalogueContextHref({
+        modelSlug: generation.modelSlug,
+        generationSlug: generation.generationSlug,
+      }),
     };
   }
+  return null;
+}
 
-  const projection = selected.projection;
-  if (!selected.synthetic && !projection) {
-    return { availability: "not-in-public-catalogue", privatePreview };
-  }
-  const policy = projection ? policyFromProjection(policyOf(selected), projection) : policyOf(selected);
-  const [facts, prices] = projection
-    ? [projectionFacts(projection, policy), projectionPrices(projection, policy, selected.salesMarketName)]
-    : await Promise.all([
-        readFacts(db, access, selected.applicabilityId),
-        readPrices(db, access, selected.applicabilityId),
-      ]);
+async function readAliases(db: Database, applicabilityId: string): Promise<string[]> {
+  const rows = await db
+    .select({ name: catalogueAlias.normalizedName })
+    .from(catalogueAlias)
+    .where(and(eq(catalogueAlias.applicabilityId, applicabilityId), eq(catalogueAlias.kind, "alias")))
+    .orderBy(asc(catalogueAlias.normalizedName));
+  return rows.map((row) => row.name);
+}
 
+async function readProductionClaims(
+  db: Database,
+  access: CatalogueAccess,
+  applicabilityId: string,
+): Promise<CatalogueProductionClaim[]> {
+  const rows = await db
+    .select({
+      scope: catalogueProductionClaim.scope,
+      geography: catalogueProductionClaim.geography,
+      period: catalogueProductionClaim.period,
+      count: catalogueProductionClaim.count,
+      status: catalogueProductionClaim.status,
+      counted: catalogueProductionClaim.counted,
+      sourceTitle: catalogueProductionClaim.sourceTitle,
+      sourceUrl: catalogueProductionClaim.sourceUrl,
+      observedOn: catalogueProductionClaim.observedOn,
+      retrievedOn: catalogueProductionClaim.retrievedOn,
+      reviewedOn: catalogueProductionClaim.reviewedOn,
+      reviewStatus: catalogueProductionClaim.reviewStatus,
+      policyName: catalogueSourcePolicy.name,
+      policyAudience: catalogueSourcePolicy.audience,
+      policyAttribution: catalogueSourcePolicy.attribution,
+    })
+    .from(catalogueProductionClaim)
+    .innerJoin(
+      catalogueSourcePolicy,
+      eq(catalogueProductionClaim.sourcePolicyId, catalogueSourcePolicy.id),
+    )
+    .where(
+      and(
+        eq(catalogueProductionClaim.applicabilityId, applicabilityId),
+        visibleProjection(access, {
+          publicationStatus: catalogueProductionClaim.publicationStatus,
+          reviewStatus: catalogueProductionClaim.reviewStatus,
+        }),
+      ),
+    )
+    .orderBy(asc(catalogueProductionClaim.sortOrder));
+  return rows.flatMap((row) => {
+    const status = row.status === "planned" || row.status === "completed" ? row.status : null;
+    if (!status || /(sale|registration|export)/i.test(row.counted)) return [];
+    return [
+      {
+        scope: row.scope,
+        geography: row.geography,
+        period: row.period,
+        count: row.count,
+        status,
+        counted: row.counted,
+        sourceTitle: row.sourceTitle,
+        sourceUrl: row.sourceUrl,
+        observedOn: row.observedOn,
+        retrievedOn: row.retrievedOn,
+        reviewedOn: row.reviewedOn,
+        reviewStatus: row.reviewStatus,
+        policyName: row.policyName,
+        policyAudience: row.policyAudience,
+        policyAttribution: row.policyAttribution,
+      },
+    ];
+  });
+}
+
+async function readImage(
+  db: Database,
+  access: CatalogueAccess,
+  parent: { applicabilityId?: string; generationId?: string },
+): Promise<CatalogueImage | null> {
+  const parentMatch = parent.applicabilityId
+    ? eq(catalogueImage.applicabilityId, parent.applicabilityId)
+    : parent.generationId
+      ? eq(catalogueImage.generationId, parent.generationId)
+      : sql`false`;
+  const [row] = await db
+    .select({
+      altText: catalogueImage.altText,
+      credit: catalogueImage.credit,
+      licence: catalogueImage.licence,
+      sourceUrl: catalogueImage.sourceUrl,
+      assetUrl: catalogueImage.assetUrl,
+    })
+    .from(catalogueImage)
+    .innerJoin(catalogueSourcePolicy, eq(catalogueImage.sourcePolicyId, catalogueSourcePolicy.id))
+    .where(
+      and(
+        parentMatch,
+        eq(catalogueSourcePolicy.permitsImages, true),
+        visibleProjection(access, {
+          publicationStatus: catalogueImage.publicationStatus,
+          reviewStatus: catalogueImage.reviewStatus,
+        }),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+function imageFromMedia(media: PublicMedia | undefined, policy: CataloguePolicy): CatalogueImage | null {
+  if (!media?.credit || !media.altText || !media.sourceUrl) return null;
   return {
-    availability: "visible",
-    privatePreview,
-    synthetic: selected.synthetic,
-    policy,
-    identity: {
-      brandName: selected.brandName,
-      modelName: selected.modelName,
-      generationName: selected.generationName,
-      modelSlug: selected.modelSlug,
-      generationSlug: selected.generationSlug,
-      salesMarketName: selected.salesMarketName,
-      salesMarketId: selected.salesMarketId,
-      modelYearLabel: selected.modelYearLabel,
-      modelYearId: selected.modelYearId,
-      modelYearConvention: selected.modelYearConvention,
-      variantName: selected.variantName,
-      variantId: selected.variantId,
-      applicabilityId: selected.applicabilityId,
-    },
-    facts,
-    priceReference: prices.length === 1 ? (prices[0] ?? null) : null,
-    marketLabel: "No market data",
+    altText: media.altText,
+    credit: media.credit,
+    licence: policy.attribution,
+    sourceUrl: media.sourceUrl,
+    assetUrl: media.sourceUrl,
   };
+}
+
+function factState(state: string): CatalogueFact["state"] {
+  if (state === "unknown" || state === "not-applicable" || state === "withheld") return state;
+  return "known";
+}
+
+function factFreshness(value: string): CatalogueFact["freshness"] {
+  if (value === "stale" || value === "not-checked") return value;
+  return "current";
+}
+
+async function searchBareGenerations(
+  db: Database,
+  access: CatalogueAccess,
+  normalized: string,
+  now: Date,
+): Promise<CatalogueSearchHit[]> {
+  const upper = prefixUpperBound(normalized);
+  const rows = await db
+    .select({
+      generationId: catalogueGeneration.id,
+      generationName: catalogueGeneration.name,
+      generationSlug: catalogueGeneration.slug,
+      modelName: catalogueModel.name,
+      modelSlug: catalogueModel.slug,
+      brandName: catalogueBrand.name,
+      normalizedName: catalogueGenerationAlias.normalizedName,
+      synthetic: catalogueGeneration.synthetic,
+    })
+    .from(catalogueGenerationAlias)
+    .innerJoin(catalogueGeneration, eq(catalogueGenerationAlias.generationId, catalogueGeneration.id))
+    .innerJoin(catalogueModel, eq(catalogueGeneration.modelId, catalogueModel.id))
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .innerJoin(
+      catalogueSourcePolicy,
+      eq(catalogueGeneration.sourcePolicyId, catalogueSourcePolicy.id),
+    )
+    .where(
+      and(
+        sql`${catalogueGenerationAlias.normalizedName} ~>=~ ${normalized}`,
+        sql`${catalogueGenerationAlias.normalizedName} ~<~ ${upper}`,
+        selfVisibleGenerationSql(access),
+      ),
+    )
+    .orderBy(
+      sql`case when ${catalogueGenerationAlias.normalizedName} = ${normalized} then 0 else 1 end`,
+      asc(catalogueGeneration.id),
+    )
+    .limit(20);
+  if (rows.length === 0) return [];
+  const occupied = await db
+    .select({ generationId: catalogueMarketVariant.generationId })
+    .from(catalogueApplicability)
+    .innerJoin(
+      catalogueMarketVariant,
+      eq(catalogueApplicability.marketVariantId, catalogueMarketVariant.id),
+    )
+    .innerJoin(
+      catalogueSourcePolicy,
+      eq(catalogueApplicability.sourcePolicyId, catalogueSourcePolicy.id),
+    )
+    .where(
+      and(
+        inArray(
+          catalogueMarketVariant.generationId,
+          rows.map((row) => row.generationId),
+        ),
+        visibleRecord(access, now),
+      ),
+    );
+  const occupiedIds = new Set(occupied.map((row) => row.generationId));
+  const seen = new Set<string>();
+  const hits: CatalogueSearchHit[] = [];
+  for (const row of rows) {
+    if (occupiedIds.has(row.generationId) || seen.has(row.generationId)) continue;
+    seen.add(row.generationId);
+    hits.push({
+      applicabilityId: row.generationId,
+      brandName: row.brandName,
+      modelName: row.modelName,
+      generationName: row.generationName,
+      modelSlug: row.modelSlug,
+      generationSlug: row.generationSlug,
+      salesMarketName: "",
+      salesMarketId: "",
+      modelYearLabel: "",
+      modelYearId: "",
+      variantName: "",
+      variantId: "",
+      match: row.normalizedName === normalized ? "exact" : "prefix",
+      synthetic: row.synthetic,
+      scope: "generation",
+      href: catalogueContextHref({
+        modelSlug: row.modelSlug,
+        generationSlug: row.generationSlug,
+      }),
+    });
+  }
+  return hits;
+}
+
+function selfVisibleGenerationSql(access: CatalogueAccess): SQL {
+  const published = and(
+    eq(catalogueGeneration.publicationStatus, "published"),
+    eq(catalogueGeneration.synthetic, false),
+    eq(catalogueSourcePolicy.permitsPublicCatalogue, true),
+    eq(catalogueSourcePolicy.audience, "public"),
+    eq(catalogueSourcePolicy.rightsReview, "reviewed"),
+  );
+  if (!access.allowFixtures) return mustSql(published);
+  return mustSql(
+    or(
+      published,
+      and(
+        eq(catalogueGeneration.publicationStatus, "fixture"),
+        eq(catalogueGeneration.synthetic, true),
+        eq(catalogueSourcePolicy.permitsPublicCatalogue, false),
+        eq(catalogueSourcePolicy.audience, "private-preview"),
+        eq(catalogueSourcePolicy.rightsReview, "reviewed"),
+      ),
+    ),
+  );
 }
 
 function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized: string, now: Date) {
@@ -490,14 +1120,14 @@ function mustSql(condition: SQL | undefined): SQL {
 }
 
 function policyOf(row: {
-  policyName: string;
-  policyAudience: string;
-  policyAttribution: string;
+  policyName: string | null;
+  policyAudience: string | null;
+  policyAttribution: string | null;
 }): CataloguePolicy {
   return {
-    name: row.policyName,
-    audience: row.policyAudience,
-    attribution: row.policyAttribution,
+    name: row.policyName ?? "",
+    audience: row.policyAudience ?? "",
+    attribution: row.policyAttribution ?? "",
   };
 }
 
@@ -532,6 +1162,7 @@ function projectionFacts(projection: PublicDetail, policy: CataloguePolicy): Cat
       unit: unknown ? null : fact.unit,
       measurementStandard: unknown ? null : fact.standard,
       unknownReason: unknown ? fact.unknownReason : null,
+      freshness: "current",
       curatedReason: null,
       conflict: null,
       sourceTitle: fact.sourceTitle ?? "",
@@ -623,6 +1254,7 @@ async function readFacts(
       measurementStandard: catalogueSourcedFact.measurementStandard,
       unknownReason: catalogueSourcedFact.unknownReason,
       curatedReason: catalogueSourcedFact.curatedReason,
+      freshness: catalogueSourcedFact.freshness,
       sourceTitle: catalogueSourcedFact.sourceTitle,
       sourceUrl: catalogueSourcedFact.sourceUrl,
       observedOn: catalogueSourcedFact.observedOn,
@@ -669,7 +1301,8 @@ async function readFacts(
       return {
         ...assertion(row),
         property: row.property,
-        state: row.state === "unknown" ? "unknown" : "known",
+        state: factState(row.state),
+        freshness: factFreshness(row.freshness),
         unknownReason: row.unknownReason,
         curatedReason: row.curatedReason,
         conflict: conflict ? assertion(conflict) : null,

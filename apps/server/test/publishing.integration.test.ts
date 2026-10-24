@@ -1710,12 +1710,14 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
       "Not a listing",
       "No market data",
       "Not the calendar build year",
-      "No catalogue photograph",
+      "Reviewed sample credit",
+      "Neutral sample image",
       "Audience: public",
     ]) {
       assert.match(detailHtml, new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     }
-    assert.doesNotMatch(detailHtml, /<img|Unindexed|invented-unit|not-a-measurement|CONTRACT-TEXT-NOT-PUBLIC|PAYLOAD-NOT-PUBLIC|Synthetic fixture/);
+    assert.match(detailHtml, /<img/);
+    assert.doesNotMatch(detailHtml, /No catalogue photograph|Unindexed|invented-unit|not-a-measurement|CONTRACT-TEXT-NOT-PUBLIC|PAYLOAD-NOT-PUBLIC|Synthetic fixture/);
     assert.equal(detailHtml.includes(OPERATOR_TOKEN), false);
 
     const http = await requestJson("GET", "/api/trpc/catalogue.search", { q: "labeled dossier" });

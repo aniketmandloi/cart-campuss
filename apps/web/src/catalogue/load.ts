@@ -34,6 +34,8 @@ export const loadCatalogueCar = cache(
     market?: string;
     year?: string;
     variant?: string;
+    section?: string;
+    registration?: string;
   }): Promise<CatalogueDetailState> => {
     const runtime = catalogueRuntime();
     if (!runtime) return { kind: "unconfigured" };
