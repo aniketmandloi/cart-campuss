@@ -228,7 +228,7 @@ export async function runScheduledRecheck(
         deps.db.update(publishingRecheckTarget).set(targetPatch(target)).where(eq(publishingRecheckTarget.id, target.id)),
       ),
       // The snapshots were planned before the lock. A withdrawal can remove the source while this command waits.
-      ...(insertedIds.length > 0 ? [dropUnpermittedSnapshots(deps.db, insertedIds, now)] : []),
+      ...(insertedIds.length > 0 ? [dropUnpermittedSnapshots(deps.db, insertedIds)] : []),
       ...(audits.length > 0 ? [deps.db.insert(publishingAuditEvent).values(audits.map((audit) => auditRow(audit, now)))] : []),
     ]);
   } catch (error) {
@@ -338,7 +338,7 @@ function reconcilePublishedTarget(current: TargetDraft, draft: TargetDraft): Tar
   };
 }
 
-function dropUnpermittedSnapshots(db: Database, ids: string[], now: Date) {
+function dropUnpermittedSnapshots(db: Database, ids: string[]) {
   return db.delete(publishingRecheckTarget).where(sql`
     ${publishingRecheckTarget.id} in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
     and not exists (
@@ -351,7 +351,7 @@ function dropUnpermittedSnapshots(db: Database, ids: string[], now: Date) {
         on ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
       where ${publishingPublishedAssertion.providerKey} = ${publishingRecheckTarget.providerKey}
         and ${publishingPublishedAssertion.externalId} = ${publishingRecheckTarget.externalId}
-        and ${publicPolicyAllows(assertionCapturedAt(), now)}
+        and ${publicPolicyAllows(assertionCapturedAt(), sql`clock_timestamp()`)}
     )
   `);
 }

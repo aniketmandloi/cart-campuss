@@ -433,6 +433,48 @@ describe("recheck, expiry, and withdrawal", { timeout: 120_000 }, () => {
     assert.doesNotMatch(html, /Active as last observed/);
   });
 
+  it("does not store recheck snapshots when permission expires while recheck waits for the lock", async () => {
+    const input = catalogueImport("Raced Expiry");
+    input.sourcePolicy.permissionExpiresAt = "2030-01-01T00:00:00.000Z";
+    assert.equal((await caller().publishing.submit(input)).status, "published");
+    const release = await holdAdvisoryLock(1128354388);
+    const pending = runScheduledRecheck(deps(), OPERATOR_TOKEN, null).then(
+      (value) => ({ value, error: null as null }),
+      (error: unknown) => ({ value: null, error }),
+    );
+    try {
+      await until(async () => {
+        const [row] = await db
+          .select({
+            waiting: sql<boolean>`exists (
+              select 1 from pg_locks where locktype = 'advisory' and objid = ${1128354388} and not granted
+            )`,
+          })
+          .from(sql`(select 1) as lock_probe`);
+        return row?.waiting === true;
+      });
+      await db
+        .update(publishingSourcePolicy)
+        .set({ permissionExpiresAt: "2026-10-23T00:00:00.000Z" })
+        .where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id ?? ""}`);
+    } finally {
+      await release();
+    }
+    const finished = await pending;
+    assert.equal(finished.error, null);
+    const copies = await db
+      .select({ targetKey: publishingRecheckTarget.targetKey })
+      .from(publishingRecheckTarget)
+      .where(sql`${publishingRecheckTarget.externalId} = ${"ext-raced-expiry"}`);
+    assert.deepEqual(copies, []);
+    assert.equal(
+      await caller(() => new Date("2026-10-24T00:00:00.000Z")).publishing.detail({
+        subjectId: "subject-raced-expiry",
+      }),
+      null,
+    );
+  });
+
   it("rejects an unauthorised recheck", async () => {
     await assert.rejects(() => runScheduledRecheck(deps(), undefined, null), PublishingRejected);
   });
