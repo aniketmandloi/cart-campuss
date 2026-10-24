@@ -51,7 +51,7 @@ The original source failed Taste app lint with **1 FAIL, 0 WARN**: its decorativ
 
 ## Asset credits
 
-- Photograph: **Porsche 911 GT3 RS (2022) 1X7A7164**, by **Alexander-93**, [source](https://commons.wikimedia.org/wiki/File:Porsche_911_GT3_RS_(2022)_1X7A7164.jpg), [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Downloaded at 1280 × 621. Resized by the source service; no additional crop or recoloring is intended. Image rights remain CC BY-SA 4.0. The concept must include source/author/license credit beside its closing evidence note.
+- Photograph: **Porsche 911 GT3 RS (2022) 1X7A7164**, by **Alexander-93**, [source](<https://commons.wikimedia.org/wiki/File:Porsche_911_GT3_RS_(2022)_1X7A7164.jpg>), [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). Downloaded at 1280 × 621. Resized by the source service; no additional crop or recoloring is intended. Image rights remain CC BY-SA 4.0. The concept must include source/author/license credit beside its closing evidence note.
 - Font: **Inter**, copyright 2020 The Inter Project Authors, [project](https://github.com/rsms/inter), [SIL Open Font License 1.1](https://raw.githubusercontent.com/google/fonts/main/ofl/inter/OFL.txt). The local variable Latin subset is embedded for offline rendering; the license is included in `assets/Inter-OFL.txt`.
 
 Portable source metadata is recorded in `assets/credits.json`. No generated photograph, unrelated car photo, hotlinked image, external font request, or network script is needed.

@@ -10,6 +10,7 @@ creates them when terms or decisions are resolved.
 ## Layout
 
 This repo uses a single context:
+
 - `GLOSSARY.md`: domain terminology.
 - `docs/adr/`: architectural decision records.
 
