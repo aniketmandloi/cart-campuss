@@ -8,6 +8,7 @@ import { openIsolatedCatalogueDatabase, runPsql } from "@cart-campuss/api/psql-c
 import { appRouter } from "@cart-campuss/api/routers/index";
 
 import { CatalogueDetailView, CatalogueSearchView } from "../src/catalogue/views";
+import { loadCatalogueCarForContext } from "../src/catalogue/load-state";
 import { acquireCataloguePublicLock } from "./catalogue-public-lock";
 
 const databaseUrl = process.env.CATALOGUE_TEST_DATABASE_URL ?? "";
@@ -27,6 +28,7 @@ describe(
   () => {
     let publicCaller: ReturnType<typeof appRouter.createCaller>;
     let previewCaller: ReturnType<typeof appRouter.createCaller>;
+    let previewContext: ReturnType<typeof createCatalogueContextFromClient>;
     let schema = "";
     let closeDatabase: (() => void) | undefined;
     let releasePublicLock: (() => void) | undefined;
@@ -47,6 +49,7 @@ describe(
           publicCaller = appRouter.createCaller(
             createCatalogueContextFromClient(isolated.client, false),
           );
+          previewContext = preview;
           previewCaller = appRouter.createCaller(preview);
         } catch (error) {
           isolated.close();
@@ -229,7 +232,7 @@ order by case when normalized_name = 'rank probe' then 0 else 1 end,
         if (!expected.includes(id)) expected.push(id);
       }
       assert.deepEqual(
-        found.hits.map((hit) => hit.applicabilityId),
+        found.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])),
         expected,
       );
       assert.deepEqual(
@@ -237,6 +240,208 @@ order by case when normalized_name = 'rank probe' then 0 else 1 end,
         ["app_f_order", "app_é_order"].sort(),
       );
       assert.equal(found.hits.length, 2);
+    });
+
+    test("private preview keeps markets, states, production, and redirects distinct", async () => {
+      const found = await previewCaller.catalogue.search({ q: "lumen twin" });
+      assert.deepEqual(
+        found.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])).sort(),
+        ["app_lumen_in_2024_base", "app_lumen_jp_2024_base"].sort(),
+      );
+      assert.deepEqual(
+        found.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.variantName] : [])),
+        ["Base", "Base"],
+      );
+      const variants = found.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.variantId] : []));
+      assert.notEqual(variants[0], variants[1]);
+
+      const overview = await previewCaller.catalogue.read({
+        modelSlug: "twin-coupe",
+        generationSlug: "series-two",
+      });
+      assert.equal(overview.availability, "overview");
+      const overviewHtml = renderToStaticMarkup(
+        <CatalogueDetailView state={{ kind: "page", page: overview }} />,
+      );
+      assert.match(overviewHtml, /variant=var_lumen_in_base/);
+      assert.match(overviewHtml, /variant=var_lumen_jp_base/);
+      assert.match(overviewHtml, /year=year_lumen_in/);
+      assert.match(overviewHtml, /year=year_lumen_jp/);
+      assert.doesNotMatch(overviewHtml, /300 PS|150 PS|88001/);
+      if (overview.availability === "overview" || overview.availability === "incompatible") {
+        const correction = new URL(overview.correctionHref);
+        assert.match(correction.searchParams.get("body") ?? "", /Applicability: not selected/);
+        assert.doesNotMatch(correction.search, /reg_fixture_mh|income|emi/);
+      }
+
+      const india = await previewCaller.catalogue.read({
+        modelSlug: "twin-coupe",
+        generationSlug: "series-two",
+        market: "mkt_fixture_in",
+        year: "year_lumen_in",
+        variant: "var_lumen_in_base",
+        section: "specs",
+        registration: "reg_fixture_mh",
+      });
+      assert.equal(india.availability, "visible");
+      if (india.availability !== "visible") return;
+      const indiaHtml = renderToStaticMarkup(
+        <CatalogueDetailView state={{ kind: "page", page: india }} />,
+      );
+      for (const text of [
+        "300 PS",
+        "296 bhp",
+        "221 kW",
+        "WLTP",
+        "NEDC",
+        "1400 kg",
+        "1280 kg",
+        "1350 kg",
+        "Stale. Last reviewed 2026-10-23.",
+        "Not checked. Last reviewed 2026-10-23.",
+        "Not applicable",
+        "Withheld by rights",
+        "Completed 12",
+        "Planned 40",
+        "vehicles built",
+        "88001",
+        "These counts are not production",
+        "Not a purchase total",
+        "Registration jurisdiction: reg_fixture_mh",
+        "Not a tax calculation",
+        "id=\"overview\"",
+        "id=\"specs\"",
+        "id=\"market\"",
+        "id=\"cost\"",
+        "id=\"sources\"",
+        "₹1,11,100.00",
+      ]) {
+        assert.match(indiaHtml, new RegExp(escapeRegExp(text)));
+      }
+      const production = indiaHtml.slice(
+        indiaHtml.indexOf('id="production-history"'),
+        indiaHtml.indexOf('id="separate-counts"'),
+      );
+      assert.doesNotMatch(production, /88001|Sales/);
+      assert.doesNotMatch(indiaHtml, /150 PS|<img|Porsche|GT3/);
+      const indiaCorrection = new URL(india.correctionHref);
+      const indiaBody = indiaCorrection.searchParams.get("body") ?? "";
+      assert.match(indiaBody, /Brand: Lumen Fixture/);
+      assert.match(indiaBody, /Applicability: app_lumen_in_2024_base/);
+      assert.match(indiaBody, /Sales market: mkt_fixture_in/);
+      assert.doesNotMatch(indiaBody, /reg_fixture_mh|income|emi|registration/i);
+
+      const japan = await previewCaller.catalogue.read({
+        modelSlug: "twin-coupe",
+        generationSlug: "series-two",
+        market: "mkt_fixture_jp",
+        year: "year_lumen_jp",
+        variant: "var_lumen_jp_base",
+      });
+      assert.equal(japan.availability, "visible");
+      if (japan.availability !== "visible") return;
+      const japanHtml = renderToStaticMarkup(
+        <CatalogueDetailView state={{ kind: "page", page: japan }} />,
+      );
+      assert.match(japanHtml, /150 PS/);
+      assert.match(japanHtml, /JPY 2,500,000/);
+      assert.match(japanHtml, /alt="Synthetic fixture graphic"/);
+      assert.match(japanHtml, /Synthetic fixture image office/);
+      assert.match(japanHtml, /Fixture image only\. Not a catalogue photograph grant\./);
+      assert.match(japanHtml, /Production is/);
+      assert.doesNotMatch(japanHtml, /300 PS|296 bhp|88001|Completed 12/);
+
+      const incompatible = await previewCaller.catalogue.read({
+        modelSlug: "twin-coupe",
+        generationSlug: "series-two",
+        market: "mkt_fixture_in",
+        year: "year_lumen_jp",
+        variant: "var_lumen_in_base",
+      });
+      assert.equal(incompatible.availability, "incompatible");
+      const incompatibleHtml = renderToStaticMarkup(
+        <CatalogueDetailView state={{ kind: "page", page: incompatible }} />,
+      );
+      assert.match(incompatibleHtml, /not a record of this car/);
+      assert.doesNotMatch(incompatibleHtml, /300 PS|150 PS|88001/);
+
+      const sketch = await previewCaller.catalogue.search({ q: "sketch fixture" });
+      assert.equal(sketch.hits.length, 1);
+      assert.equal(sketch.hits[0]?.scope, "generation");
+      assert.equal(sketch.hits[0]?.href, "/cars/unfinished-note/open-sheet");
+      const sketchResults = renderToStaticMarkup(
+        <CatalogueSearchView
+          state={{ kind: "results", query: "sketch fixture", privatePreview: true, result: sketch }}
+        />,
+      );
+      assert.match(sketchResults, /No variant is selected/);
+      const sketchPage = await previewCaller.catalogue.read({
+        modelSlug: "unfinished-note",
+        generationSlug: "open-sheet",
+      });
+      assert.equal(sketchPage.availability, "overview");
+      const sketchHtml = renderToStaticMarkup(
+        <CatalogueDetailView state={{ kind: "page", page: sketchPage }} />,
+      );
+      assert.match(sketchHtml, /Unfinished Note/);
+      assert.match(sketchHtml, /No applicability record is published for this generation/);
+      assert.doesNotMatch(sketchHtml, /300 PS/);
+
+      const rebadge = await previewCaller.catalogue.read({
+        modelSlug: "relabelled-coupe",
+        generationSlug: "local-sheet",
+        market: "mkt_fixture_in",
+        year: "year_lumen_in",
+        variant: "var_relabel_base",
+      });
+      assert.equal(rebadge.availability, "visible");
+      const rebadgeHtml = renderToStaticMarkup(
+        <CatalogueDetailView state={{ kind: "page", page: rebadge }} />,
+      );
+      assert.match(rebadgeHtml, /Separate model/);
+      assert.match(rebadgeHtml, /href="\/cars\/twin-coupe\/series-two"/);
+      assert.match(rebadgeHtml, /coupe/);
+      assert.doesNotMatch(rebadgeHtml, /300 PS|href="\/cars\/twin-coupe\/series-two\?/);
+
+      const moved = await loadCatalogueCarForContext(previewContext, {
+        modelSlug: "twin-coupe-old",
+        generationSlug: "series-two-old",
+        market: "mkt_fixture_in",
+        year: "year_lumen_in",
+        variant: "var_lumen_in_base",
+        section: "cost",
+        registration: "reg_fixture_mh",
+      });
+      assert.equal(moved.kind, "redirect");
+      if (moved.kind === "redirect") {
+        assert.equal(
+          moved.location,
+          "/cars/twin-coupe/series-two?market=mkt_fixture_in&year=year_lumen_in&variant=var_lumen_in_base&section=cost&registration=reg_fixture_mh",
+        );
+      }
+      const dropped = await loadCatalogueCarForContext(previewContext, {
+        modelSlug: "twin-coupe-old",
+        generationSlug: "series-two-old",
+        section: "finance",
+        registration: "not an id",
+      });
+      assert.equal(dropped.kind, "redirect");
+      if (dropped.kind === "redirect") assert.equal(dropped.location, "/cars/twin-coupe/series-two");
+
+      const publicLumen = await publicCaller.catalogue.search({ q: "lumen fixture" });
+      assert.equal(publicLumen.hits.length, 0);
+      const publicSketch = await publicCaller.catalogue.search({ q: "sketch fixture" });
+      assert.equal(publicSketch.hits.length, 0);
+      for (const input of [
+        { modelSlug: "twin-coupe", generationSlug: "series-two" },
+        { modelSlug: "twin-coupe-old", generationSlug: "series-two-old" },
+        { modelSlug: "unfinished-note", generationSlug: "open-sheet" },
+        { modelSlug: "relabelled-coupe", generationSlug: "local-sheet" },
+      ]) {
+        const hidden = await publicCaller.catalogue.read(input);
+        assert.equal(hidden.availability, "not-in-public-catalogue");
+        assert.doesNotMatch(JSON.stringify(hidden), /Lumen Fixture|Sketch Fixture|300 PS|88001|Synthetic fixture image office/);
+      }
     });
   },
 );

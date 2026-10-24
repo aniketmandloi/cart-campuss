@@ -34,7 +34,7 @@ pnpm install --frozen-lockfile
 pnpm db:migrate
 ```
 
-Put `DATABASE_URL` in `apps/server/.env`. The web app has its own server-only `DATABASE_URL` and renders an unconfigured catalogue when it is empty. Do not use `db:push` for these tables. Operator publishing and the visitor catalogue are in [docs/publishing-setup.md](docs/publishing-setup.md). Fixture preview checks are in [docs/catalogue-search.md](docs/catalogue-search.md).
+Put `DATABASE_URL` in `apps/server/.env`. The web app has its own server-only `DATABASE_URL` and renders an unconfigured catalogue when it is empty. Do not use `db:push` for these tables. Operator publishing and the visitor catalogue are in [docs/publishing-setup.md](docs/publishing-setup.md). Fixture preview checks are in [docs/catalogue-search.md](docs/catalogue-search.md). The car dossier, including partial Model and Generation records, is in [docs/catalogue-dossier.md](docs/catalogue-dossier.md).
 
 Then, run the development server:
 

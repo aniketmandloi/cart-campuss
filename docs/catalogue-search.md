@@ -20,7 +20,7 @@ pnpm env:generate
 
 Put `DATABASE_URL` in `apps/server/.env`. The web process has its own server-only `DATABASE_URL` in `apps/web/.env.local`. Leave it empty and the site renders an unconfigured catalogue instead of fixture HTML. `CATALOGUE_ALLOW_FIXTURES` defaults to false in both schemas and is not a client variable.
 
-Apply the reviewed migrations on Neon, which is the driver Drizzle Kit uses. Do not use `db:push`. The folders are listed in [publishing-setup.md](publishing-setup.md). The last one adds a nullable price column on the publishing assertion and does not rewrite catalogue rows:
+Apply the reviewed migrations on Neon, which is the driver Drizzle Kit uses. Do not use `db:push`. The folders, including `20261024130000_dossier_reader` and the later projection folders, are listed in [publishing-setup.md](publishing-setup.md). Dossier routes and the public import fields are in [catalogue-dossier.md](catalogue-dossier.md).
 
 ```bash
 pnpm db:migrate

@@ -73,4 +73,36 @@ test("invalid and absent remain usable catalogue identifiers", () => {
     }).status,
     "invalid",
   );
+  assert.deepEqual(
+    parseCatalogueRead({
+      modelSlug: "sample-hatch",
+      generationSlug: "series-one",
+      section: "cost",
+      registration: "reg_mh",
+    }),
+    {
+      status: "ready",
+      value: {
+        modelSlug: "sample-hatch",
+        generationSlug: "series-one",
+        section: "cost",
+        registration: "reg_mh",
+      },
+    },
+  );
+  assert.deepEqual(
+    parseCatalogueRead({
+      modelSlug: "sample-hatch",
+      generationSlug: "series-one",
+      section: "not-a-section",
+      registration: "not an id",
+    }),
+    {
+      status: "ready",
+      value: {
+        modelSlug: "sample-hatch",
+        generationSlug: "series-one",
+      },
+    },
+  );
 });

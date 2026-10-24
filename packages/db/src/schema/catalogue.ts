@@ -20,6 +20,7 @@ export const catalogueSourcePolicy = pgTable(
     rightsReview: text("rights_review").notNull(),
     attribution: text("attribution").notNull(),
     internalNote: text("internal_note").notNull(),
+    permitsImages: boolean("permits_images").notNull().default(false),
   },
   (table) => [
     check(
@@ -58,8 +59,15 @@ export const catalogueModel = pgTable(
       .references(() => catalogueBrand.id),
     name: text("name").notNull(),
     slug: text("slug").notNull().unique(),
+    rebadgeOfModelId: text("rebadge_of_model_id"),
   },
-  (table) => [index("catalogue_model_brand_idx").on(table.brandId)],
+  (table) => [
+    index("catalogue_model_brand_idx").on(table.brandId),
+    check(
+      "catalogue_model_rebadge_not_self",
+      sql`${table.rebadgeOfModelId} is null or ${table.rebadgeOfModelId} <> ${table.id}`,
+    ),
+  ],
 );
 
 export const catalogueGeneration = pgTable(
@@ -71,10 +79,25 @@ export const catalogueGeneration = pgTable(
       .references(() => catalogueModel.id),
     name: text("name").notNull(),
     slug: text("slug").notNull(),
+    publicationStatus: text("publication_status"),
+    synthetic: boolean("synthetic").notNull().default(false),
+    sourcePolicyId: text("source_policy_id").references(() => catalogueSourcePolicy.id),
   },
   (table) => [
     uniqueIndex("catalogue_generation_model_slug_idx").on(table.modelId, table.slug),
     index("catalogue_generation_slug_idx").on(table.slug),
+    check(
+      "catalogue_generation_publication",
+      sql`${table.publicationStatus} is null or ${table.publicationStatus} in ('published', 'fixture', 'withheld')`,
+    ),
+    check(
+      "catalogue_generation_fixture_is_synthetic",
+      sql`${table.publicationStatus} is null or (${table.publicationStatus} = 'fixture' and ${table.synthetic} = true) or (${table.publicationStatus} = 'published' and ${table.synthetic} = false) or ${table.publicationStatus} = 'withheld'`,
+    ),
+    check(
+      "catalogue_generation_policy",
+      sql`${table.publicationStatus} is null or ${table.publicationStatus} = 'withheld' or ${table.sourcePolicyId} is not null`,
+    ),
   ],
 );
 
@@ -182,10 +205,14 @@ export const catalogueSourcedFact = pgTable(
     curatedReason: text("curated_reason"),
     unknownReason: text("unknown_reason"),
     conflictsWithFactId: text("conflicts_with_fact_id"),
+    freshness: text("freshness").notNull().default("current"),
     sortOrder: integer("sort_order").notNull(),
   },
   (table) => [
-    check("catalogue_sourced_fact_state", sql`${table.state} in ('known', 'unknown')`),
+    check(
+      "catalogue_sourced_fact_state",
+      sql`${table.state} in ('known', 'unknown', 'not-applicable', 'withheld')`,
+    ),
     check(
       "catalogue_sourced_fact_review",
       sql`${table.reviewStatus} in ('reviewed', 'unreviewed')`,
@@ -195,8 +222,12 @@ export const catalogueSourcedFact = pgTable(
       sql`${table.publicationStatus} in ('published', 'fixture', 'withheld')`,
     ),
     check(
-      "catalogue_sourced_fact_unknown_has_no_value",
-      sql`(${table.state} = 'unknown' and ${table.rawValue} is null and ${table.normalizedValue} is null) or (${table.state} = 'known' and ${table.rawValue} is not null)`,
+      "catalogue_sourced_fact_freshness",
+      sql`${table.freshness} in ('current', 'stale', 'not-checked')`,
+    ),
+    check(
+      "catalogue_sourced_fact_value_matches_state",
+      sql`(${table.state} = 'known' and ${table.rawValue} is not null) or (${table.state} in ('unknown', 'not-applicable', 'withheld') and ${table.rawValue} is null and ${table.normalizedValue} is null)`,
     ),
     index("catalogue_sourced_fact_applicability_idx").on(table.applicabilityId),
   ],
@@ -263,5 +294,131 @@ export const cataloguePriceReference = pgTable(
       sql`(${table.reviewStatus} = 'reviewed' and ${table.reviewedOn} is not null and length(btrim(${table.reviewedOn})) > 0) or ${table.reviewStatus} = 'unreviewed'`,
     ),
     index("catalogue_price_reference_applicability_idx").on(table.applicabilityId),
+  ],
+);
+
+export const catalogueProductionClaim = pgTable(
+  "catalogue_production_claim",
+  {
+    id: text("id").primaryKey(),
+    applicabilityId: text("applicability_id")
+      .notNull()
+      .references(() => catalogueApplicability.id),
+    sourcePolicyId: text("source_policy_id")
+      .notNull()
+      .references(() => catalogueSourcePolicy.id),
+    scope: text("scope").notNull(),
+    geography: text("geography").notNull(),
+    period: text("period").notNull(),
+    count: integer("count").notNull(),
+    status: text("status").notNull(),
+    counted: text("counted").notNull(),
+    sourceTitle: text("source_title").notNull(),
+    sourceUrl: text("source_url"),
+    observedOn: text("observed_on"),
+    retrievedOn: text("retrieved_on").notNull(),
+    reviewedOn: text("reviewed_on"),
+    reviewStatus: text("review_status").notNull(),
+    publicationStatus: text("publication_status").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+  },
+  (table) => [
+    check(
+      "catalogue_production_claim_status",
+      sql`${table.status} in ('planned', 'completed')`,
+    ),
+    check("catalogue_production_claim_count", sql`${table.count} >= 0`),
+    check(
+      "catalogue_production_claim_counted",
+      sql`lower(${table.counted}) !~ '(sale|registration|export)'`,
+    ),
+    check(
+      "catalogue_production_claim_review",
+      sql`${table.reviewStatus} in ('reviewed', 'unreviewed')`,
+    ),
+    check(
+      "catalogue_production_claim_publication",
+      sql`${table.publicationStatus} in ('published', 'fixture', 'withheld')`,
+    ),
+    index("catalogue_production_claim_applicability_idx").on(table.applicabilityId),
+  ],
+);
+
+export const catalogueImage = pgTable(
+  "catalogue_image",
+  {
+    id: text("id").primaryKey(),
+    applicabilityId: text("applicability_id").references(() => catalogueApplicability.id),
+    generationId: text("generation_id").references(() => catalogueGeneration.id),
+    sourcePolicyId: text("source_policy_id")
+      .notNull()
+      .references(() => catalogueSourcePolicy.id),
+    publicationStatus: text("publication_status").notNull(),
+    credit: text("credit").notNull(),
+    licence: text("licence").notNull(),
+    sourceUrl: text("source_url"),
+    altText: text("alt_text").notNull(),
+    assetUrl: text("asset_url").notNull(),
+    reviewStatus: text("review_status").notNull(),
+  },
+  (table) => [
+    check(
+      "catalogue_image_parent",
+      sql`(${table.applicabilityId} is not null and ${table.generationId} is null) or (${table.applicabilityId} is null and ${table.generationId} is not null)`,
+    ),
+    check(
+      "catalogue_image_publication",
+      sql`${table.publicationStatus} in ('published', 'fixture', 'withheld')`,
+    ),
+    check(
+      "catalogue_image_review",
+      sql`${table.reviewStatus} in ('reviewed', 'unreviewed')`,
+    ),
+  ],
+);
+
+export const catalogueRouteRedirect = pgTable(
+  "catalogue_route_redirect",
+  {
+    id: text("id").primaryKey(),
+    modelSlug: text("model_slug").notNull(),
+    generationSlug: text("generation_slug").notNull(),
+    modelId: text("model_id")
+      .notNull()
+      .references(() => catalogueModel.id),
+    generationId: text("generation_id")
+      .notNull()
+      .references(() => catalogueGeneration.id),
+  },
+  (table) => [uniqueIndex("catalogue_route_redirect_pair").on(table.modelSlug, table.generationSlug)],
+);
+
+export const catalogueModelAlias = pgTable(
+  "catalogue_model_alias",
+  {
+    id: text("id").primaryKey(),
+    modelId: text("model_id")
+      .notNull()
+      .references(() => catalogueModel.id),
+    normalizedName: text("normalized_name").notNull(),
+  },
+  (table) => [
+    uniqueIndex("catalogue_model_alias_pair").on(table.modelId, table.normalizedName),
+    index("catalogue_model_alias_name_idx").on(table.normalizedName.op("text_pattern_ops")),
+  ],
+);
+
+export const catalogueGenerationAlias = pgTable(
+  "catalogue_generation_alias",
+  {
+    id: text("id").primaryKey(),
+    generationId: text("generation_id")
+      .notNull()
+      .references(() => catalogueGeneration.id),
+    normalizedName: text("normalized_name").notNull(),
+  },
+  (table) => [
+    uniqueIndex("catalogue_generation_alias_pair").on(table.generationId, table.normalizedName),
+    index("catalogue_generation_alias_name_idx").on(table.normalizedName.op("text_pattern_ops")),
   ],
 );

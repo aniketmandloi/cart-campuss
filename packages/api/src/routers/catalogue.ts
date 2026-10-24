@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { catalogueStatus, readCatalogueCar, searchCatalogue } from "../catalogue";
+import { catalogueStatus, readCatalogueCar, readCatalogueModel, searchCatalogue } from "../catalogue";
+import { DOSSIER_SECTIONS } from "../dossier";
 import { publicProcedure, router } from "../index";
 
 const slug = z
@@ -31,9 +32,22 @@ export const catalogueRouter = router({
         market: canonicalId.optional(),
         year: canonicalId.optional(),
         variant: canonicalId.optional(),
+        section: z.enum(DOSSIER_SECTIONS).optional(),
+        registration: canonicalId.optional(),
       }),
     )
     .query(({ ctx, input }) =>
       readCatalogueCar(ctx.db, ctx.access, input, ctx.now ?? (() => new Date())),
+    ),
+  readModel: publicProcedure
+    .input(
+      z.object({
+        modelSlug: slug,
+        section: z.enum(DOSSIER_SECTIONS).optional(),
+        registration: canonicalId.optional(),
+      }),
+    )
+    .query(({ ctx, input }) =>
+      readCatalogueModel(ctx.db, ctx.access, input, ctx.now ?? (() => new Date())),
     ),
 });

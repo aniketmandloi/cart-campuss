@@ -1,5 +1,8 @@
+import type { DossierSection } from "@cart-campuss/api/dossier";
+
 const slugPattern = /^[a-z0-9-]+$/;
 const idPattern = /^[a-z0-9_-]+$/;
+const dossierSections = ["overview", "specs", "market", "cost", "sources"] as const;
 
 export type CatalogueToken =
   | { status: "absent" }
@@ -12,6 +15,8 @@ export type CatalogueReadInput = {
   market?: string;
   year?: string;
   variant?: string;
+  section?: DossierSection;
+  registration?: string;
 };
 
 export function parseCatalogueToken(
@@ -35,12 +40,16 @@ export function parseCatalogueRead(input: {
   market?: string;
   year?: string;
   variant?: string;
+  section?: string;
+  registration?: string;
 }): { status: "invalid" } | { status: "ready"; value: CatalogueReadInput } {
   const modelSlug = parseCatalogueToken(input.modelSlug, "slug");
   const generationSlug = parseCatalogueToken(input.generationSlug, "slug");
   const market = parseCatalogueToken(input.market, "id");
   const year = parseCatalogueToken(input.year, "id");
   const variant = parseCatalogueToken(input.variant, "id");
+  const section = parseDossierSectionToken(input.section);
+  const registration = parseCatalogueToken(input.registration, "id");
   if (
     modelSlug.status !== "present" ||
     generationSlug.status !== "present" ||
@@ -58,6 +67,14 @@ export function parseCatalogueRead(input: {
       ...(market.status === "present" ? { market: market.value } : {}),
       ...(year.status === "present" ? { year: year.value } : {}),
       ...(variant.status === "present" ? { variant: variant.value } : {}),
+      ...(section ? { section } : {}),
+      ...(registration.status === "present" ? { registration: registration.value } : {}),
     },
   };
+}
+
+function parseDossierSectionToken(value: string | undefined): DossierSection | undefined {
+  const token = parseCatalogueToken(value, "id");
+  if (token.status !== "present") return undefined;
+  return dossierSections.find((section) => section === token.value);
 }
