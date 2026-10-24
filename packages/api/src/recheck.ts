@@ -4,6 +4,7 @@ import { z } from "zod";
 import { commitNeonHttpBatch, type Database } from "@cart-campuss/db";
 import {
   publishingAuditEvent,
+  publishingProjectionPointer,
   publishingPublishedAssertion,
   publishingRecheckTarget,
   publishingSourcePolicy,
@@ -16,6 +17,8 @@ import {
 import {
   PublishingRejected,
   assertOperatorAuthorized,
+  assertionCapturedAt,
+  publicPolicyAllows,
   publishingWriteLock,
   type PublicFact,
   type PublishingDeps,
@@ -211,6 +214,7 @@ export async function runScheduledRecheck(
   const finals = [...byKey.values()];
   const inserted = seeds.map((seed) => byKey.get(targetKey(seed)) ?? seed);
   const updates = finals.filter((target) => existing.some((item) => item.id === target.id) && changed(existing, target));
+  const insertedIds = inserted.map((target) => target.id);
   try {
     await commitNeonHttpBatch(deps.db, [
       publishingWriteLock(deps.db),
@@ -218,6 +222,8 @@ export async function runScheduledRecheck(
       ...updates.map((target) =>
         deps.db.update(publishingRecheckTarget).set(targetPatch(target)).where(eq(publishingRecheckTarget.id, target.id)),
       ),
+      // The snapshots were planned before the lock. A withdrawal can remove the source while this command waits.
+      ...(insertedIds.length > 0 ? [dropUnpermittedSnapshots(deps.db, insertedIds, now)] : []),
       ...(audits.length > 0 ? [deps.db.insert(publishingAuditEvent).values(audits.map((audit) => auditRow(audit, now)))] : []),
     ]);
   } catch (error) {
@@ -301,6 +307,24 @@ export async function withdrawPublishedContent(
       "The withdrawal did not commit, and the previous public projection was left unchanged.",
     );
   }
+}
+
+function dropUnpermittedSnapshots(db: Database, ids: string[], now: Date) {
+  return db.delete(publishingRecheckTarget).where(sql`
+    ${publishingRecheckTarget.id} in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})
+    and not exists (
+      select 1
+      from ${publishingPublishedAssertion}
+      inner join ${publishingProjectionPointer}
+        on ${publishingPublishedAssertion.generationId} = ${publishingProjectionPointer.generationId}
+        and ${publishingProjectionPointer.id} = 1
+      inner join ${publishingSourcePolicy}
+        on ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
+      where ${publishingPublishedAssertion.providerKey} = ${publishingRecheckTarget.providerKey}
+        and ${publishingPublishedAssertion.externalId} = ${publishingRecheckTarget.externalId}
+        and ${publicPolicyAllows(assertionCapturedAt(), now)}
+    )
+  `);
 }
 
 function parseReport(report: unknown): z.infer<typeof reportSchema> {

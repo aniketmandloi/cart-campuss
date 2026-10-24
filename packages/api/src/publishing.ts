@@ -1160,7 +1160,7 @@ function sourceCopyDue(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
   )`;
 }
 
-function publicPolicyAllows(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
+export function publicPolicyAllows(capturedAt: SQLWrapper, now: Date | SQLWrapper) {
   return sql`(
     ${publishingSourcePolicy.factPermission} = 'permitted'
     and ${publishingSourcePolicy.reviewerRef} is not null
@@ -1221,7 +1221,7 @@ export function currentScopedProjectionCovers(
   )`;
 }
 
-function assertionCapturedAt(): SQL {
+export function assertionCapturedAt(): SQL {
   return sql`least(${publishingPublishedAssertion.capturedAt},
     publishing_price_captured_at(${publishingPublishedAssertion.priceReference}))`;
 }

@@ -6,7 +6,12 @@ import { cleanupPublishingCopies, PublishingRejected } from "@cart-campuss/api/p
 import { runScheduledRecheck } from "@cart-campuss/api/recheck";
 import { appRouter } from "@cart-campuss/api/routers/index";
 import { sql, type Database } from "@cart-campuss/db";
-import { publishingAuditEvent, publishingSourcePolicy } from "@cart-campuss/db/schema/publishing";
+import {
+  publishingAuditEvent,
+  publishingPublishedAssertion,
+  publishingRecheckTarget,
+  publishingSourcePolicy,
+} from "@cart-campuss/db/schema/publishing";
 
 import { createApp, type AppDeps } from "../src/app";
 import { startPublishingDatabase } from "./ephemeral-postgres";
@@ -40,11 +45,13 @@ const PRIVATE = {
 
 let db: Database;
 let app: ReturnType<typeof createApp>;
+let holdAdvisoryLock: Awaited<ReturnType<typeof startPublishingDatabase>>["holdAdvisoryLock"];
 let stopDatabase: (() => Promise<void>) | undefined;
 
 before(async () => {
   const started = await startPublishingDatabase();
   db = started.db;
+  holdAdvisoryLock = started.holdAdvisoryLock;
   stopDatabase = started.stop;
   app = createApp({
     db,
@@ -291,10 +298,67 @@ describe("recheck, expiry, and withdrawal", { timeout: 120_000 }, () => {
     assert.equal(JSON.stringify(audits).includes(PRIVATE.payload), false);
   });
 
+  it("does not restore source copies when the record is withdrawn while recheck waits for the lock", async () => {
+    const input = catalogueImport("Raced Withdrawal");
+    const record = input.records[0];
+    assert.ok(record);
+    record.document.sourceDirectory = [
+      {
+        title: "Raced directory page",
+        url: "https://example.test/sources/raced-directory",
+        observedAt: REVIEWED,
+        retrievedAt: REVIEWED,
+        reviewedAt: REVIEWED,
+      },
+    ];
+    assert.equal((await caller().publishing.submit(input)).status, "published");
+    const release = await holdAdvisoryLock(1128354388);
+    const pending = runScheduledRecheck(deps(), OPERATOR_TOKEN, null).then(
+      (value) => ({ value, error: null as null }),
+      (error: unknown) => ({ value: null, error }),
+    );
+    try {
+      await until(async () => {
+        const [row] = await db
+          .select({
+            waiting: sql<boolean>`exists (
+              select 1 from pg_locks where locktype = 'advisory' and objid = ${1128354388} and not granted
+            )`,
+          })
+          .from(sql`(select 1) as lock_probe`);
+        return row?.waiting === true;
+      });
+      await db
+        .delete(publishingPublishedAssertion)
+        .where(sql`${publishingPublishedAssertion.externalId} = ${"ext-raced-withdrawal"}`);
+    } finally {
+      await release();
+    }
+    const finished = await pending;
+    assert.equal(finished.error, null);
+    await cleanupPublishingCopies(deps(), OPERATOR_TOKEN);
+    const copies = await db
+      .select({ id: publishingRecheckTarget.id, targetKey: publishingRecheckTarget.targetKey })
+      .from(publishingRecheckTarget)
+      .where(sql`${publishingRecheckTarget.externalId} = ${"ext-raced-withdrawal"}`);
+    assert.deepEqual(copies, []);
+    assert.equal(await caller().publishing.detail({ subjectId: "subject-raced-withdrawal" }), null);
+    const search = await requestJson("GET", "/api/trpc/catalogue.search", { q: "raced withdrawal" });
+    assert.doesNotMatch(search.text, /Raced directory page|example\.test\/sources\/raced-directory/);
+  });
+
   it("rejects an unauthorised recheck", async () => {
     await assert.rejects(() => runScheduledRecheck(deps(), undefined, null), PublishingRejected);
   });
 });
+
+async function until(predicate: () => Promise<boolean>) {
+  const deadline = Date.now() + 10_000;
+  while (!(await predicate())) {
+    assert.ok(Date.now() < deadline, "Timed out waiting for the database synchronization condition");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
 
 function deps(now: () => Date = () => new Date(NOON)) {
   return { db, operatorToken: OPERATOR_TOKEN, now };
