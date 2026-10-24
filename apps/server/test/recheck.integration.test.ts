@@ -381,6 +381,33 @@ describe("recheck, expiry, and withdrawal", { timeout: 120_000 }, () => {
     assert.match(html, /Revoked asking card/);
   });
 
+  it("follows a revised feed contract instead of the previous refresh interval", async () => {
+    const input = catalogueImport("Hourly Feed");
+    input.sourcePolicy.refreshIntervalSeconds = 86_400;
+    const record = input.records[0];
+    assert.ok(record);
+    record.document.listings = [listing("lot-hourly", "Hourly asking card", "active")];
+    assert.equal((await caller().publishing.submit(input)).status, "published");
+    const first = await runScheduledRecheck(deps(), OPERATOR_TOKEN, null);
+    assert.equal(first.targets.find((target) => target.targetKey === "lot-hourly")?.intervalSeconds, 86_400);
+    assert.equal(first.targets.find((target) => target.targetKey === "lot-hourly")?.nextRecheckAt, FEED_DUE);
+
+    const revised = structuredClone(input);
+    revised.idempotencyKey = "recheck-hourly-feed-hour";
+    revised.sourcePolicy.id = crypto.randomUUID();
+    revised.sourcePolicy.refreshIntervalSeconds = 3_600;
+    assert.equal((await caller().publishing.submit(revised)).status, "published");
+    const second = await runScheduledRecheck(deps(), OPERATOR_TOKEN, null);
+    const feed = second.targets.find((target) => target.targetKey === "lot-hourly");
+    assert.equal(feed?.intervalSeconds, 3_600);
+    assert.equal(feed?.nextRecheckAt, "2026-10-22T01:00:00.000Z");
+    assert.equal(feed?.freshness, "stale");
+    assert.equal(feed?.suppressed, true);
+    const html = await renderCar("hourly feed");
+    assert.match(html, /Not a current listing/);
+    assert.doesNotMatch(html, /Active as last observed/);
+  });
+
   it("rejects an unauthorised recheck", async () => {
     await assert.rejects(() => runScheduledRecheck(deps(), undefined, null), PublishingRejected);
   });

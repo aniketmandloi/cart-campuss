@@ -157,7 +157,21 @@ export async function runScheduledRecheck(
     if (!assertion.public) continue;
     for (const draft of targetsFromAssertion(assertion)) {
       const key = targetKey(draft);
-      if (byKey.has(key)) continue;
+      const current = byKey.get(key);
+      if (current) {
+        if (current.intervalSeconds !== draft.intervalSeconds) {
+          const anchor =
+            parseInstant(current.lastReviewedAt) ??
+            parseInstant(current.lastSuccessfulProviderSyncAt) ??
+            parseInstant(draft.lastReviewedAt);
+          byKey.set(key, {
+            ...current,
+            intervalSeconds: draft.intervalSeconds,
+            nextRecheckAt: anchor ? addSeconds(anchor, draft.intervalSeconds) : current.nextRecheckAt,
+          });
+        }
+        continue;
+      }
       const missed = reported.has(key) ? null : markMissed(draft, now);
       const stored = missed?.row ?? draft;
       byKey.set(key, stored);
@@ -696,6 +710,7 @@ function targetPatch(target: TargetDraft) {
     lastSuccessfulProviderSyncAt: target.lastSuccessfulProviderSyncAt,
     lastReviewedAt: target.lastReviewedAt,
     nextRecheckAt: target.nextRecheckAt,
+    intervalSeconds: target.intervalSeconds,
     freshness: target.freshness,
     providerOutcome: target.providerOutcome,
     lifecycle: target.lifecycle,
