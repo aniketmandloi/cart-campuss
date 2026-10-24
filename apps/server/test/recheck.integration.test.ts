@@ -433,6 +433,40 @@ describe("recheck, expiry, and withdrawal", { timeout: 120_000 }, () => {
     assert.doesNotMatch(html, /Active as last observed/);
   });
 
+  it("keeps a confirmed ended listing ended on a later scheduled recheck", async () => {
+    const input = catalogueImport("Confirmed End");
+    const record = input.records[0];
+    assert.ok(record);
+    record.document.listings = [listing("lot-confirmed", "Confirmed asking card", "active")];
+    assert.equal((await caller().publishing.submit(input)).status, "published");
+    await runScheduledRecheck(deps(), OPERATOR_TOKEN, null);
+    const confirmedAt = "2026-10-22T08:00:00.000Z";
+    const confirmed = await runScheduledRecheck(deps(), OPERATOR_TOKEN, {
+      outcomes: [
+        {
+          providerKey: "manual-test",
+          externalId: "ext-confirmed-end",
+          kind: "approved-feed",
+          targetKey: "lot-confirmed",
+          outcome: "succeeded",
+          observedAt: confirmedAt,
+          fetchedAt: confirmedAt,
+          reviewedAt: confirmedAt,
+          confirmedLifecycle: "ended",
+        },
+      ],
+    });
+    assert.equal(confirmed.targets.find((target) => target.targetKey === "lot-confirmed")?.lifecycle, "ended");
+
+    const later = await runScheduledRecheck(deps(), OPERATOR_TOKEN, null);
+    const feed = later.targets.find((target) => target.targetKey === "lot-confirmed");
+    assert.equal(feed?.lifecycle, "ended");
+    assert.equal(feed?.observedAt, confirmedAt);
+    const html = await renderCar("confirmed end");
+    assert.match(html, /Ended\. Last observed 2026-10-22T08:00:00\.000Z/);
+    assert.doesNotMatch(html, /Active as last observed/);
+  });
+
   it("does not store recheck snapshots when permission expires while recheck waits for the lock", async () => {
     const input = catalogueImport("Raced Expiry");
     input.sourcePolicy.permissionExpiresAt = "2030-01-01T00:00:00.000Z";

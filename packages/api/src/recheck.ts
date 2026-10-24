@@ -316,26 +316,50 @@ export async function withdrawPublishedContent(
 
 function reconcilePublishedTarget(current: TargetDraft, draft: TargetDraft): TargetDraft {
   const intervalChanged = current.intervalSeconds !== draft.intervalSeconds;
-  const publishedChanged =
-    current.lifecycle !== draft.lifecycle ||
-    current.observedAt !== draft.observedAt ||
-    current.fetchedAt !== draft.fetchedAt;
-  if (!intervalChanged && !publishedChanged) return current;
+  const supersedes = publicationSupersedes(current, draft);
+  if (!intervalChanged && !supersedes) return current;
   const anchor =
     parseInstant(current.lastReviewedAt) ??
     parseInstant(current.lastSuccessfulProviderSyncAt) ??
     parseInstant(draft.lastReviewedAt);
-  const confirmedEnd = draft.lifecycle === "ended" && current.lifecycle !== "ended";
+  const confirmedEnd = supersedes && draft.lifecycle === "ended" && current.lifecycle !== "ended";
   return {
     ...current,
     intervalSeconds: draft.intervalSeconds,
     nextRecheckAt: intervalChanged && anchor ? addSeconds(anchor, draft.intervalSeconds) : current.nextRecheckAt,
-    lifecycle: draft.lifecycle,
-    observedAt: draft.observedAt,
-    fetchedAt: draft.fetchedAt,
-    publicValue: draft.publicValue,
-    providerOutcome: confirmedEnd ? "succeeded" : current.providerOutcome,
+    ...(supersedes
+      ? {
+          lifecycle: draft.lifecycle,
+          observedAt: draft.observedAt,
+          fetchedAt: draft.fetchedAt,
+          publicValue: draft.publicValue,
+          providerOutcome: confirmedEnd ? "succeeded" : current.providerOutcome,
+        }
+      : {}),
   };
+}
+
+function publicationSupersedes(current: TargetDraft, draft: TargetDraft): boolean {
+  const published = latestInstant([draft.observedAt, draft.fetchedAt, draft.lastReviewedAt]);
+  const checked = latestInstant([
+    current.observedAt,
+    current.fetchedAt,
+    current.lastReviewedAt,
+    current.lastSuccessfulProviderSyncAt,
+  ]);
+  if (!published) return false;
+  if (!checked) return true;
+  return published.getTime() > checked.getTime();
+}
+
+function latestInstant(values: Array<string | null>): Date | null {
+  let latest: Date | null = null;
+  for (const value of values) {
+    const parsed = parseInstant(value);
+    if (!parsed) continue;
+    if (!latest || parsed.getTime() > latest.getTime()) latest = parsed;
+  }
+  return latest;
 }
 
 function dropUnpermittedSnapshots(db: Database, ids: string[]) {
