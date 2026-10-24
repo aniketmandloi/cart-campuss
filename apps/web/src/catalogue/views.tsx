@@ -204,7 +204,7 @@ function QuickFacts({ facts }: { facts: CatalogueFact[] }) {
                 slot.facts.map((fact) => (
                   <div key={`${fact.property}-${fact.measurementStandard ?? fact.rawValue ?? fact.state}`}>
                     <FactState fact={fact} />
-                    <Freshness fact={fact} />
+                    <ReviewState freshness={fact.freshness} reviewedOn={fact.reviewedOn} />
                   </div>
                 ))
               )}
@@ -335,7 +335,7 @@ function CostSection({ page }: { page: DossierPage }) {
                 <p>Last provider sync {price.lastSuccessfulProviderSyncAt}</p>
               ) : null}
               <p>Review: {price.reviewStatus}</p>
-              <PriceFreshness price={price} />
+              <ReviewState freshness={price.freshness} reviewedOn={price.reviewedOn} />
               {price.nextRecheckAt ? <p>Next recheck {price.nextRecheckAt}</p> : null}
               <p>Source policy: {price.policyName}</p>
               <p>Audience: {price.policyAudience}</p>
@@ -464,7 +464,7 @@ function MarketSection({ page }: { page: DossierPage }) {
           <a className="break-all" href={entry.url} rel="noreferrer noopener" target="_blank">
             {entry.url}
           </a>
-          <DirectoryFreshness entry={entry} />
+          <ReviewState freshness={entry.freshness} reviewedOn={entry.lastReviewedAt} />
           {entry.lastSuccessfulProviderSyncAt ? (
             <p>Last provider sync {entry.lastSuccessfulProviderSyncAt}</p>
           ) : null}
@@ -491,15 +491,17 @@ function MarketSection({ page }: { page: DossierPage }) {
   );
 }
 
-function DirectoryFreshness({
-  entry,
+function ReviewState({
+  freshness,
+  reviewedOn,
 }: {
-  entry: { freshness: "current" | "stale" | "not-checked"; lastReviewedAt: string | null };
+  freshness?: "current" | "stale" | "not-checked";
+  reviewedOn: string | null;
 }) {
-  const date = entry.lastReviewedAt ?? "an unknown date";
-  if (entry.freshness === "stale") return <p>Stale. Last reviewed {date}.</p>;
-  if (entry.freshness === "not-checked") return <p>Not checked. Last reviewed {date}.</p>;
-  return entry.lastReviewedAt ? <p>Reviewed {entry.lastReviewedAt}</p> : null;
+  const date = reviewedOn ?? "an unknown date";
+  if (freshness === "stale") return <p>Stale. Last reviewed {date}.</p>;
+  if (freshness === "not-checked") return <p>Not checked. Last reviewed {date}.</p>;
+  return reviewedOn ? <p>Reviewed {reviewedOn}</p> : null;
 }
 
 function ListingState({
@@ -562,7 +564,7 @@ function FactRecord({ fact }: { fact: CatalogueFact }) {
         <p>Last provider sync {fact.lastSuccessfulProviderSyncAt}</p>
       ) : null}
       <p>{fact.reviewStatus}</p>
-      <Freshness fact={fact} />
+      <ReviewState freshness={fact.freshness} reviewedOn={fact.reviewedOn} />
       {fact.nextRecheckAt ? <p>Next recheck {fact.nextRecheckAt}</p> : null}
       {fact.factualReviewerRef ? <p>Factual reviewer: {fact.factualReviewerRef}</p> : null}
       {fact.rightsReviewerRef ? <p>Rights reviewer: {fact.rightsReviewerRef}</p> : null}
@@ -602,24 +604,6 @@ function FactState({ fact }: { fact: CatalogueFact }) {
       {fact.measurementStandard ? <p>{fact.measurementStandard}</p> : null}
     </>
   );
-}
-
-function PriceFreshness({
-  price,
-}: {
-  price: { freshness?: "current" | "stale" | "not-checked"; reviewedOn: string | null };
-}) {
-  const date = price.reviewedOn ?? "an unknown date";
-  if (price.freshness === "stale") return <p>Stale. Last reviewed {date}.</p>;
-  if (price.freshness === "not-checked") return <p>Not checked. Last reviewed {date}.</p>;
-  return price.reviewedOn ? <p>Reviewed {price.reviewedOn}</p> : null;
-}
-
-function Freshness({ fact }: { fact: CatalogueFact }) {
-  const date = fact.reviewedOn ?? "an unknown date";
-  if (fact.freshness === "stale") return <p>Stale. Last reviewed {date}.</p>;
-  if (fact.freshness === "not-checked") return <p>Not checked. Last reviewed {date}.</p>;
-  return fact.reviewedOn ? <p>Reviewed {fact.reviewedOn}</p> : null;
 }
 
 function ConflictReading({ conflict }: { conflict: CatalogueAssertion }) {
