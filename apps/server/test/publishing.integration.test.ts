@@ -3183,7 +3183,7 @@ async function importCatalogueLoaders(): Promise<{
   ) => Promise<CatalogueDetailState>;
   loadCatalogueModelForContext: (
     runtime: ReturnType<typeof catalogueRuntime>,
-    input: { modelSlug: string },
+    input: { modelSlug: string; section?: string; registration?: string },
   ) => Promise<CatalogueDetailState>;
 }> {
   return import(moduleSpecifier(["..", "..", "web", "src", "catalogue", "load-state.ts"]));

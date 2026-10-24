@@ -2818,7 +2818,7 @@ function componentPolicyView(policy: SourcePolicyInput): ComponentPolicyRow {
 
 const CAPTURE_TIMESTAMP = String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$`;
 
-function componentItemDue(item: SQL, fallbackCapturedAt: SQL, parentPolicyId: SQL, now: SQLWrapper): SQL {
+function componentItemDue(item: SQL, fallbackCapturedAt: SQLWrapper, parentPolicyId: SQLWrapper, now: SQLWrapper): SQL {
   const policyId = sql`coalesce(${item}->>'sourcePolicyId', ${parentPolicyId}::text)`;
   const ownCapture = sql`(case
     when ${item}->>'retrievedAt' is null then null
@@ -2847,7 +2847,7 @@ function componentItemDue(item: SQL, fallbackCapturedAt: SQL, parentPolicyId: SQ
   )`;
 }
 
-function retainedComponentArray(column: SQLWrapper, fallbackCapturedAt: SQL, parentPolicyId: SQLWrapper, now: SQLWrapper): SQL {
+function retainedComponentArray(column: SQLWrapper, fallbackCapturedAt: SQLWrapper, parentPolicyId: SQLWrapper, now: SQLWrapper): SQL {
   return sql`(
     select coalesce(jsonb_agg(component_item order by component_ordinal), '[]'::jsonb)
     from jsonb_array_elements(coalesce(${column}, '[]'::jsonb)) with ordinality as component_row(component_item, component_ordinal)
