@@ -318,24 +318,28 @@ function reconcilePublishedTarget(current: TargetDraft, draft: TargetDraft): Tar
   const intervalChanged = current.intervalSeconds !== draft.intervalSeconds;
   const supersedes = publicationSupersedes(current, draft);
   if (!intervalChanged && !supersedes) return current;
+  if (!supersedes) {
+    const anchor =
+      parseInstant(current.lastReviewedAt) ??
+      parseInstant(current.lastSuccessfulProviderSyncAt) ??
+      parseInstant(draft.lastReviewedAt);
+    return {
+      ...current,
+      intervalSeconds: draft.intervalSeconds,
+      nextRecheckAt: anchor ? addSeconds(anchor, draft.intervalSeconds) : current.nextRecheckAt,
+    };
+  }
   const anchor =
-    parseInstant(current.lastReviewedAt) ??
-    parseInstant(current.lastSuccessfulProviderSyncAt) ??
-    parseInstant(draft.lastReviewedAt);
-  const confirmedEnd = supersedes && draft.lifecycle === "ended" && current.lifecycle !== "ended";
+    parseInstant(draft.lastReviewedAt) ??
+    parseInstant(draft.lastSuccessfulProviderSyncAt) ??
+    parseInstant(draft.fetchedAt);
   return {
-    ...current,
-    intervalSeconds: draft.intervalSeconds,
-    nextRecheckAt: intervalChanged && anchor ? addSeconds(anchor, draft.intervalSeconds) : current.nextRecheckAt,
-    ...(supersedes
-      ? {
-          lifecycle: draft.lifecycle,
-          observedAt: draft.observedAt,
-          fetchedAt: draft.fetchedAt,
-          publicValue: draft.publicValue,
-          providerOutcome: confirmedEnd ? "succeeded" : current.providerOutcome,
-        }
-      : {}),
+    ...draft,
+    id: current.id,
+    nextRecheckAt: anchor ? addSeconds(anchor, draft.intervalSeconds) : current.nextRecheckAt,
+    freshness: "current",
+    suppressed: false,
+    providerOutcome: "succeeded",
   };
 }
 

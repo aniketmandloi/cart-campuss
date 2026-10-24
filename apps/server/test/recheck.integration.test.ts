@@ -467,6 +467,40 @@ describe("recheck, expiry, and withdrawal", { timeout: 120_000 }, () => {
     assert.doesNotMatch(html, /Active as last observed/);
   });
 
+  it("treats a freshly reviewed listing as current after it had gone stale", async () => {
+    const input = catalogueImport("Fresh Review");
+    input.sourcePolicy.refreshIntervalSeconds = 3_600;
+    const record = input.records[0];
+    assert.ok(record);
+    record.document.listings = [listing("lot-fresh", "Fresh asking card", "active")];
+    assert.equal((await caller().publishing.submit(input)).status, "published");
+    const overdue = await runScheduledRecheck(deps(), OPERATOR_TOKEN, null);
+    const stale = overdue.targets.find((target) => target.targetKey === "lot-fresh");
+    assert.equal(stale?.freshness, "stale");
+    assert.equal(stale?.suppressed, true);
+
+    const freshAt = "2026-10-22T12:00:00.000Z";
+    const revised = structuredClone(input);
+    revised.idempotencyKey = "recheck-fresh-review-renewed";
+    revised.sourcePolicy.id = crypto.randomUUID();
+    const revisedListing = revised.records[0]?.document.listings?.[0];
+    assert.ok(revisedListing);
+    revisedListing.observedAt = freshAt;
+    revisedListing.retrievedAt = freshAt;
+    revisedListing.reviewedAt = freshAt;
+    assert.equal((await caller().publishing.submit(revised)).status, "published");
+    const renewed = await runScheduledRecheck(deps(), OPERATOR_TOKEN, null);
+    const feed = renewed.targets.find((target) => target.targetKey === "lot-fresh");
+    assert.equal(feed?.lastReviewedAt, freshAt);
+    assert.equal(feed?.lastSuccessfulProviderSyncAt, freshAt);
+    assert.equal(feed?.nextRecheckAt, "2026-10-22T13:00:00.000Z");
+    assert.equal(feed?.freshness, "current");
+    assert.equal(feed?.suppressed, false);
+    const html = await renderCar("fresh review");
+    assert.match(html, /Active as last observed 2026-10-22T12:00:00\.000Z/);
+    assert.doesNotMatch(html, /Not a current listing/);
+  });
+
   it("does not store recheck snapshots when permission expires while recheck waits for the lock", async () => {
     const input = catalogueImport("Raced Expiry");
     input.sourcePolicy.permissionExpiresAt = "2030-01-01T00:00:00.000Z";
