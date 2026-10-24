@@ -17,10 +17,12 @@ export {
   catalogueSourcedFact,
 } from "./catalogue";
 export {
+  publishingAuditEvent,
   publishingImportBatch,
   publishingProjectionGeneration,
   publishingProjectionPointer,
   publishingPublishedAssertion,
+  publishingRecheckTarget,
   publishingSourcePolicy,
   publishingStagedRecord,
 } from "./publishing";

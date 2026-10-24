@@ -197,6 +197,7 @@ export const publishingPublishedAssertion = pgTable(
     observedAt: timestamp("observed_at", { withTimezone: true, mode: "string" }),
     reviewedAt: timestamp("reviewed_at", { withTimezone: true, mode: "string" }).notNull(),
     priceReference: jsonb("price_reference").$type<PublishingPriceReference | null>(),
+    marketAccess: jsonb("market_access").$type<PublishingMarketAccess | null>(),
     identityScope: text("identity_scope").notNull().default("applicability"),
     rightsGeographies: jsonb("rights_geographies").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
   },
@@ -218,6 +219,61 @@ export const publishingPublishedAssertion = pgTable(
   ],
 );
 
+export type PublishingDirectoryEntry = {
+  title: string;
+  url: string;
+  observedAt: string | null;
+  retrievedAt: string;
+  reviewedAt: string;
+};
+
+export type PublishingListingPriceType =
+  | "asking"
+  | "auction-guide"
+  | "current-bid"
+  | "assumed-hammer"
+  | "hammer"
+  | "buyer-premium"
+  | "completed-sale"
+  | "estimate";
+
+/** A licensed feed card or a reviewed outbound link stored on the approved projection. */
+export type PublishingListing = {
+  externalId: string;
+  title: string;
+  url: string;
+  lifecycle: "active" | "ended" | "unknown";
+  priceType: PublishingListingPriceType;
+  amountMinor: number | null;
+  currency: string | null;
+  minorUnitExponent: number | null;
+  observedAt: string;
+  retrievedAt: string;
+  reviewedAt: string;
+};
+
+export type PublishingMarketAccess = {
+  sourceDirectory: PublishingDirectoryEntry[];
+  listings: PublishingListing[];
+};
+
+export type RecheckKind =
+  | "editorial-specification"
+  | "model-price"
+  | "source-directory-url"
+  | "approved-feed";
+
+export type RecheckPublicValue = {
+  state?: string;
+  rawValue?: string | null;
+  normalizedValue?: string | null;
+  amountMinor?: number | null;
+  currency?: string | null;
+  title?: string;
+  url?: string;
+  priceType?: string;
+};
+
 /** Singleton row. The visitor reads whichever generation this points at. */
 export const publishingProjectionPointer = pgTable(
   "publishing_projection_pointer",
@@ -229,4 +285,84 @@ export const publishingProjectionPointer = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true, mode: "string" }).notNull(),
   },
   (table) => [check("publishing_projection_pointer_singleton", sql`${table.id} = 1`)],
+);
+
+/**
+ * Schedule for one public fact, price, directory URL, or feed card.
+ * The public value is the visitor-facing snapshot. It never stores a private payload.
+ */
+export const publishingRecheckTarget = pgTable(
+  "publishing_recheck_target",
+  {
+    id: text("id").primaryKey(),
+    providerKey: text("provider_key").notNull(),
+    externalId: text("external_id").notNull(),
+    canonicalSubjectId: text("canonical_subject_id").notNull(),
+    kind: text("kind").$type<RecheckKind>().notNull(),
+    targetKey: text("target_key").notNull(),
+    observedAt: timestamp("observed_at", { withTimezone: true, mode: "string" }),
+    fetchedAt: timestamp("fetched_at", { withTimezone: true, mode: "string" }),
+    lastSuccessfulProviderSyncAt: timestamp("last_successful_provider_sync_at", {
+      withTimezone: true,
+      mode: "string",
+    }),
+    lastReviewedAt: timestamp("last_reviewed_at", { withTimezone: true, mode: "string" }),
+    nextRecheckAt: timestamp("next_recheck_at", { withTimezone: true, mode: "string" }).notNull(),
+    intervalSeconds: integer("interval_seconds").notNull(),
+    freshness: text("freshness").notNull(),
+    providerOutcome: text("provider_outcome").notNull(),
+    lifecycle: text("lifecycle"),
+    suppressed: boolean("suppressed").notNull().default(false),
+    publicValue: jsonb("public_value").$type<RecheckPublicValue>().notNull().default(sql`'{}'::jsonb`),
+  },
+  (table) => [
+    unique("publishing_recheck_target_identity").on(
+      table.providerKey,
+      table.externalId,
+      table.kind,
+      table.targetKey,
+    ),
+    index("publishing_recheck_target_source_idx").on(table.providerKey, table.externalId),
+    check(
+      "publishing_recheck_target_kind",
+      sql`${table.kind} in ('editorial-specification', 'model-price', 'source-directory-url', 'approved-feed')`,
+    ),
+    check(
+      "publishing_recheck_target_freshness",
+      sql`${table.freshness} in ('current', 'stale', 'not-checked')`,
+    ),
+    check(
+      "publishing_recheck_target_provider_outcome",
+      sql`${table.providerOutcome} in ('succeeded', 'failed', 'not-attempted')`,
+    ),
+    check(
+      "publishing_recheck_target_lifecycle",
+      sql`${table.lifecycle} is null or ${table.lifecycle} in ('active', 'ended', 'unknown')`,
+    ),
+    check("publishing_recheck_target_interval", sql`${table.intervalSeconds} > 0`),
+  ],
+);
+
+/** Operator-visible record that a recheck, withdrawal, expiry, or suspension happened. */
+export const publishingAuditEvent = pgTable(
+  "publishing_audit_event",
+  {
+    id: text("id").primaryKey(),
+    occurredAt: timestamp("occurred_at", { withTimezone: true, mode: "string" }).notNull(),
+    kind: text("kind").notNull(),
+    canonicalSubjectId: text("canonical_subject_id"),
+    providerKey: text("provider_key"),
+    externalId: text("external_id"),
+    targetKind: text("target_kind"),
+    targetKey: text("target_key"),
+    summary: text("summary").notNull(),
+  },
+  (table) => [
+    check(
+      "publishing_audit_event_kind",
+      sql`${table.kind} in ('recheck-missed', 'recheck-succeeded', 'provider-failure', 'recheck-not-attempted', 'withdrawal', 'expiry', 'suspension')`,
+    ),
+    check("publishing_audit_event_summary", sql`length(btrim(${table.summary})) > 0`),
+    index("publishing_audit_event_subject_idx").on(table.canonicalSubjectId),
+  ],
 );
