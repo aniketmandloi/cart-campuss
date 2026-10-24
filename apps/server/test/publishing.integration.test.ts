@@ -2385,6 +2385,243 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     }
   });
 
+  it("keeps component captures for production claims that share a title", async () => {
+    const oldAt = "2026-10-22T11:01:00.000Z";
+    const restagedAt = "2026-10-22T12:00:30.000Z";
+    const afterOld = "2026-10-22T12:02:00.000Z";
+    const policyId = crypto.randomUUID();
+    const title = "Shared production ledger";
+    const input = reviewedImport("Shared Title Production Coupe");
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.retentionSeconds = 86_400;
+    input.sourcePolicy.permissionExpiresAt = null;
+    input.sourcePolicy.imagePermission = "denied";
+    input.componentPolicies = [{
+      ...input.sourcePolicy,
+      id: policyId,
+      displayName: "Shared title production policy",
+      retentionSeconds: 3_600,
+      permissionExpiresAt: null,
+      permittedFields: ["displayName", "productionClaims"],
+      permittedGeographies: ["IN"],
+      factPermission: "permitted",
+    }];
+    input.records[0]!.document.facts[0]!.retrievedAt = BASE_TIME;
+    input.records[0]!.document.media = [];
+    input.records[0]!.document.productionClaims = [
+      { ...productionClaim(policyId, 12), sourceTitle: title, period: "2026", retrievedAt: BASE_TIME },
+      { ...productionClaim(policyId, 3), sourceTitle: title, period: "2019", retrievedAt: oldAt },
+    ];
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+
+    const published = await caller(null).publishing.detail({ subjectId });
+    assert.equal(published?.productionClaims.length, 2);
+    assert.equal(new Date(published?.productionClaims.find((claim) => claim.period === "2026")?.retrievedAt ?? "").toISOString(), BASE_TIME);
+    assert.equal(new Date(published?.productionClaims.find((claim) => claim.period === "2019")?.retrievedAt ?? "").toISOString(), oldAt);
+    await assertClaimCaptures(subjectId, BASE_TIME, oldAt);
+
+    input.idempotencyKey += "-restage";
+    input.records[0]!.document.productionClaims[0]!.retrievedAt = restagedAt;
+    input.records[0]!.document.productionClaims[1]!.retrievedAt = restagedAt;
+    assert.equal((await caller(OPERATOR_TOKEN, () => new Date(restagedAt)).publishing.submit(input)).status, "published");
+    await assertClaimCaptures(subjectId, BASE_TIME, oldAt);
+
+    const later = () => new Date(afterOld);
+    const visible = await caller(null, later).publishing.detail({ subjectId });
+    assert.deepEqual(visible?.productionClaims.map((claim) => claim.period), ["2026"]);
+    assert.equal(visible?.productionClaims[0]?.count, 12);
+    assert.equal(visible?.facts[0]?.rawValue, "100 PS");
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: later }, OPERATOR_TOKEN);
+    const rows = await assertionRows(subjectId);
+    assert.ok(rows.length >= 2);
+    for (const row of rows) {
+      const claims = row.productionClaims as Array<{ period: string; count: number; retrievedAt: string }>;
+      assert.equal(claims.some((claim) => claim.period === "2019"), false);
+      assert.equal(claims.filter((claim) => claim.period === "2026").length, 1);
+      assert.equal(new Date(claims.find((claim) => claim.period === "2026")?.retrievedAt ?? "").toISOString(), BASE_TIME);
+      assert.equal((row.facts as Array<{ rawValue: string }>).some((fact) => fact.rawValue === "100 PS"), true);
+    }
+    const afterCleanup = await caller(null, later).publishing.detail({ subjectId });
+    assert.deepEqual(afterCleanup?.productionClaims.map((claim) => claim.period), ["2026"]);
+    assert.equal(afterCleanup?.facts[0]?.rawValue, "100 PS");
+  });
+
+  it("keeps the oldest component capture for duplicate production claims", async () => {
+    const oldAt = "2026-10-22T11:01:00.000Z";
+    const afterOld = "2026-10-22T12:02:00.000Z";
+    const policyId = crypto.randomUUID();
+    const title = "Duplicate production ledger";
+    const input = reviewedImport("Duplicate Production Capture Coupe");
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.retentionSeconds = 86_400;
+    input.sourcePolicy.permissionExpiresAt = null;
+    input.sourcePolicy.imagePermission = "denied";
+    input.componentPolicies = [{
+      ...input.sourcePolicy,
+      id: policyId,
+      displayName: "Duplicate production policy",
+      retentionSeconds: 3_600,
+      permissionExpiresAt: null,
+      permittedFields: ["displayName", "productionClaims"],
+      permittedGeographies: ["IN"],
+      factPermission: "permitted",
+    }];
+    input.records[0]!.document.facts[0]!.retrievedAt = BASE_TIME;
+    input.records[0]!.document.media = [];
+    input.records[0]!.document.productionClaims = [
+      { ...productionClaim(policyId, 9), sourceTitle: title, retrievedAt: BASE_TIME },
+      { ...productionClaim(policyId, 9), sourceTitle: title, retrievedAt: oldAt },
+    ];
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    const published = await caller(null).publishing.detail({ subjectId });
+    assert.equal(published?.productionClaims.length, 2);
+    assert.ok(published?.productionClaims.every((claim) => new Date(claim.retrievedAt).toISOString() === oldAt));
+    const stored = await assertionRows(subjectId);
+    assert.equal(stored.length, 1);
+    const claims = stored[0]?.productionClaims as Array<{ retrievedAt: string; sourceTitle: string }>;
+    assert.equal(claims.length, 2);
+    assert.ok(claims.every((claim) => claim.sourceTitle === title && new Date(claim.retrievedAt).toISOString() === oldAt));
+
+    const later = () => new Date(afterOld);
+    assert.deepEqual((await caller(null, later).publishing.detail({ subjectId }))?.productionClaims, []);
+    assert.equal((await caller(null, later).publishing.detail({ subjectId }))?.facts[0]?.rawValue, "100 PS");
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: later }, OPERATOR_TOKEN);
+    const rows = await assertionRows(subjectId);
+    assert.equal(rows.length, 1);
+    assert.deepEqual(rows[0]?.productionClaims, []);
+    assert.equal((rows[0]?.facts as Array<{ rawValue: string }>).some((fact) => fact.rawValue === "100 PS"), true);
+  });
+
+  it("keeps component captures for images that share a URL", async () => {
+    const oldAt = "2026-10-22T11:01:00.000Z";
+    const restagedAt = "2026-10-22T12:00:30.000Z";
+    const afterOld = "2026-10-22T12:02:00.000Z";
+    const freshPolicyId = crypto.randomUUID();
+    const oldPolicyId = crypto.randomUUID();
+    const sharedUrl = "https://example.test/images/shared-capture";
+    const input = reviewedImport("Shared URL Image Coupe");
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.retentionSeconds = 86_400;
+    input.sourcePolicy.permissionExpiresAt = null;
+    input.sourcePolicy.imagePermission = "denied";
+    const imagePolicy = (id: string) => ({
+      ...input.sourcePolicy,
+      id,
+      displayName: "Shared URL image policy",
+      imagePermission: "permitted" as const,
+      retentionSeconds: 3_600,
+      permissionExpiresAt: null,
+      permittedGeographies: ["IN"],
+    });
+    input.componentPolicies = [imagePolicy(freshPolicyId), imagePolicy(oldPolicyId)];
+    input.records[0]!.document.facts[0]!.retrievedAt = BASE_TIME;
+    input.records[0]!.document.media = [
+      retainedImage(sharedUrl, freshPolicyId, BASE_TIME),
+      retainedImage(sharedUrl, oldPolicyId, oldAt),
+    ];
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+    const published = await caller(null).publishing.detail({ subjectId });
+    assert.equal(published?.media.length, 2);
+    assert.equal(new Date(published?.media.find((item) => item.sourcePolicyId === freshPolicyId)?.retrievedAt ?? "").toISOString(), BASE_TIME);
+    assert.equal(new Date(published?.media.find((item) => item.sourcePolicyId === oldPolicyId)?.retrievedAt ?? "").toISOString(), oldAt);
+    await assertImageCaptures(subjectId, freshPolicyId, BASE_TIME, oldPolicyId, oldAt);
+
+    input.idempotencyKey += "-restage";
+    input.records[0]!.document.media[0]!.retrievedAt = restagedAt;
+    input.records[0]!.document.media[1]!.retrievedAt = restagedAt;
+    assert.equal((await caller(OPERATOR_TOKEN, () => new Date(restagedAt)).publishing.submit(input)).status, "published");
+    await assertImageCaptures(subjectId, freshPolicyId, BASE_TIME, oldPolicyId, oldAt);
+
+    const later = () => new Date(afterOld);
+    const visible = await caller(null, later).publishing.detail({ subjectId });
+    assert.deepEqual(visible?.media.map((item) => item.sourcePolicyId), [freshPolicyId]);
+    assert.equal(visible?.facts[0]?.rawValue, "100 PS");
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: later }, OPERATOR_TOKEN);
+    const rows = await assertionRows(subjectId);
+    assert.ok(rows.length >= 2);
+    for (const row of rows) {
+      const media = row.media as Array<{ sourcePolicyId: string; retrievedAt: string; sourceUrl: string }>;
+      assert.equal(media.some((item) => item.sourcePolicyId === oldPolicyId), false);
+      assert.equal(media.length, 1);
+      assert.equal(media[0]?.sourcePolicyId, freshPolicyId);
+      assert.equal(media[0]?.sourceUrl, sharedUrl);
+      assert.equal(new Date(media[0]?.retrievedAt ?? "").toISOString(), BASE_TIME);
+      assert.equal((row.facts as Array<{ rawValue: string }>).some((fact) => fact.rawValue === "100 PS"), true);
+    }
+    assert.deepEqual((await caller(null, later).publishing.detail({ subjectId }))?.media.map((item) => item.sourcePolicyId), [freshPolicyId]);
+  });
+
+  it("keeps a component capture when a policy revision grants longer retention", async () => {
+    const restagedAt = "2026-10-22T12:30:00.000Z";
+    const beforeDeadline = "2026-10-22T12:59:00.000Z";
+    const alphaDeadline = "2026-10-22T13:00:00.000Z";
+    const betaDeadline = "2026-10-22T14:00:00.000Z";
+    const shortenedAt = "2026-10-22T11:00:00.000Z";
+    const alphaPolicyId = crypto.randomUUID();
+    const betaPolicyId = crypto.randomUUID();
+    const sharedUrl = "https://example.test/images/revision-capture";
+    const input = reviewedImport("Policy Revision Image Coupe");
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.retentionSeconds = 86_400;
+    input.sourcePolicy.permissionExpiresAt = null;
+    input.sourcePolicy.imagePermission = "denied";
+    const imagePolicy = (id: string, retentionSeconds: number) => ({
+      ...input.sourcePolicy,
+      id,
+      displayName: "Revision image policy",
+      imagePermission: "permitted" as const,
+      retentionSeconds,
+      permissionExpiresAt: null,
+      permittedGeographies: ["IN"],
+    });
+    input.componentPolicies = [imagePolicy(alphaPolicyId, 3_600), imagePolicy(betaPolicyId, 7_200)];
+    input.records[0]!.document.facts[0]!.retrievedAt = BASE_TIME;
+    input.records[0]!.document.media = [
+      retainedImage(sharedUrl, alphaPolicyId, BASE_TIME, "Alpha credit"),
+      retainedImage(sharedUrl, betaPolicyId, BASE_TIME, "Beta credit"),
+    ];
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const subjectId = input.records[0]!.document.canonicalSubjectId;
+
+    const revisedPolicyId = crypto.randomUUID();
+    input.idempotencyKey += "-revision";
+    input.componentPolicies = [imagePolicy(revisedPolicyId, 7_200), imagePolicy(betaPolicyId, 7_200)];
+    input.records[0]!.document.media = [
+      retainedImage(sharedUrl, revisedPolicyId, restagedAt, "Alpha credit"),
+      retainedImage(sharedUrl, betaPolicyId, restagedAt, "Beta credit"),
+    ];
+    assert.equal((await caller(OPERATOR_TOKEN, () => new Date(restagedAt)).publishing.submit(input)).status, "published");
+    const revised = await assertionRows(subjectId);
+    const current = revised.find((row) => (row.media as Array<{ credit?: string }>).some((item) => item.credit === "Alpha credit" && (item as { sourcePolicyId?: string }).sourcePolicyId === revisedPolicyId));
+    assert.ok(current);
+    const currentMedia = current.media as Array<{ sourcePolicyId: string; credit: string; retrievedAt: string }>;
+    assert.equal(new Date(currentMedia.find((item) => item.sourcePolicyId === revisedPolicyId)?.retrievedAt ?? "").toISOString(), shortenedAt);
+    assert.equal(new Date(currentMedia.find((item) => item.sourcePolicyId === betaPolicyId)?.retrievedAt ?? "").toISOString(), BASE_TIME);
+
+    const stillBoth = await caller(null, () => new Date(beforeDeadline)).publishing.detail({ subjectId });
+    assert.equal(stillBoth?.media.length, 2);
+    const atAlphaDeadline = await caller(null, () => new Date(alphaDeadline)).publishing.detail({ subjectId });
+    assert.deepEqual(atAlphaDeadline?.media.map((item) => item.credit), ["Beta credit"]);
+    const atBetaDeadline = await caller(null, () => new Date(betaDeadline)).publishing.detail({ subjectId });
+    assert.equal(atBetaDeadline?.media.length, 0);
+    assert.equal(atBetaDeadline?.facts[0]?.rawValue, "100 PS");
+
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: () => new Date(alphaDeadline) }, OPERATOR_TOKEN);
+    const rows = await assertionRows(subjectId);
+    assert.ok(rows.length >= 2);
+    for (const row of rows) {
+      const media = row.media as Array<{ sourcePolicyId: string; credit: string; retrievedAt: string }>;
+      assert.equal(media.some((item) => item.credit === "Alpha credit"), false);
+      assert.equal(media.length, 1);
+      assert.equal(media[0]?.sourcePolicyId, betaPolicyId);
+      assert.equal(new Date(media[0]?.retrievedAt ?? "").toISOString(), BASE_TIME);
+    }
+    assert.deepEqual((await caller(null, () => new Date(alphaDeadline)).publishing.detail({ subjectId }))?.media.map((item) => item.credit), ["Beta credit"]);
+  });
+
   it("removes an expired component copy from every generation and does not restore it", async () => {
     const policyId = crypto.randomUUID();
     const input = reviewedImport("Cleanup Component Coupe");
@@ -3000,6 +3237,48 @@ type ReviewedImport = Omit<OperatorImportInput, "records" | "sourcePolicy"> & {
   };
   records: ReviewedRecord[];
 };
+
+function retainedImage(sourceUrl: string, sourcePolicyId: string, retrievedAt: string, credit = "Shared credit") {
+  return {
+    sourceUrl,
+    credit,
+    altText: "Shared photograph",
+    sourcePolicyId,
+    retrievedAt,
+    countryCode: "IN",
+  };
+}
+
+async function assertionRows(subjectId: string) {
+  return db.select().from(publishingPublishedAssertion)
+    .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}`);
+}
+
+async function assertClaimCaptures(subjectId: string, freshAt: string, oldAt: string) {
+  const rows = await assertionRows(subjectId);
+  assert.ok(rows.length >= 1);
+  for (const row of rows) {
+    const claims = row.productionClaims as Array<{ period: string; retrievedAt: string }>;
+    assert.equal(new Date(claims.find((claim) => claim.period === "2026")?.retrievedAt ?? "").toISOString(), freshAt);
+    assert.equal(new Date(claims.find((claim) => claim.period === "2019")?.retrievedAt ?? "").toISOString(), oldAt);
+  }
+}
+
+async function assertImageCaptures(
+  subjectId: string,
+  freshPolicyId: string,
+  freshAt: string,
+  oldPolicyId: string,
+  oldAt: string,
+) {
+  const rows = await assertionRows(subjectId);
+  assert.ok(rows.length >= 1);
+  for (const row of rows) {
+    const media = row.media as Array<{ sourcePolicyId: string; retrievedAt: string }>;
+    assert.equal(new Date(media.find((item) => item.sourcePolicyId === freshPolicyId)?.retrievedAt ?? "").toISOString(), freshAt);
+    assert.equal(new Date(media.find((item) => item.sourcePolicyId === oldPolicyId)?.retrievedAt ?? "").toISOString(), oldAt);
+  }
+}
 
 function productionClaim(sourcePolicyId: string | undefined, count = 7) {
   return {

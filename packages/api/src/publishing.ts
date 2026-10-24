@@ -2913,18 +2913,45 @@ function preservedComponentCaptures(document: ImportRecord["document"], parentPo
   const payload = JSON.stringify(document);
   return sql`(
     select jsonb_set(
-      jsonb_set(incoming.document, '{media}', ${preservedCaptureArray(payload, "media", "sourceUrl", parentPolicyId)}),
+      jsonb_set(incoming.document, '{media}', ${preservedCaptureArray(payload, "media", parentPolicyId)}),
       '{productionClaims}',
-      ${preservedCaptureArray(payload, "productionClaims", "sourceTitle", parentPolicyId)}
+      ${preservedCaptureArray(payload, "productionClaims", parentPolicyId)}
     )
     from (select cast(${payload} as jsonb) as document) as incoming
   )`;
 }
 
+function componentContentEquals(
+  left: "prev" | "elem" | "item",
+  right: "prev" | "elem" | "item",
+  key: "media" | "productionClaims",
+): SQL {
+  if (key === "media") {
+    return sql.raw(`(
+      ${left}->>'sourceUrl' = ${right}->>'sourceUrl'
+      and ${left}->>'credit' = ${right}->>'credit'
+      and ${left}->>'altText' = ${right}->>'altText'
+      and ${left}->>'countryCode' is not distinct from ${right}->>'countryCode'
+    )`);
+  }
+  return sql.raw(`(
+    ${left}->>'scope' = ${right}->>'scope'
+    and ${left}->>'geography' = ${right}->>'geography'
+    and ${left}->>'period' = ${right}->>'period'
+    and ${left}->'count' = ${right}->'count'
+    and ${left}->>'status' = ${right}->>'status'
+    and ${left}->>'counted' = ${right}->>'counted'
+    and ${left}->>'sourceTitle' = ${right}->>'sourceTitle'
+    and ${left}->>'sourceUrl' is not distinct from ${right}->>'sourceUrl'
+    and ${left}->>'observedAt' is not distinct from ${right}->>'observedAt'
+    and ${left}->>'reviewedOn' = ${right}->>'reviewedOn'
+    and ${left}->>'countryCode' is not distinct from ${right}->>'countryCode'
+  )`);
+}
+
 function preservedCaptureArray(
   payload: string,
   key: "media" | "productionClaims",
-  matchKey: "sourceUrl" | "sourceTitle",
   parentPolicyId: string,
 ): SQL {
   return sql`(
@@ -2954,9 +2981,12 @@ function preservedCaptureArray(
         on old_policy.id = coalesce(prev->>'sourcePolicyId', ${publishingStagedRecord.sourcePolicyId})
       left join ${publishingSourcePolicy} as new_policy
         on new_policy.id = coalesce(elem->>'sourcePolicyId', ${parentPolicyId})
-      where prev->>${matchKey} = elem->>${matchKey}
+      where ${componentContentEquals("prev", "elem", key)}
         and prev->>'retrievedAt' ~ ${CAPTURE_TIMESTAMP}
-      order by (prev->>'retrievedAt')::timestamptz
+      order by
+        (coalesce(prev->>'sourcePolicyId', ${publishingStagedRecord.sourcePolicyId})
+          is not distinct from coalesce(elem->>'sourcePolicyId', ${parentPolicyId})) desc,
+        (prev->>'retrievedAt')::timestamptz asc
       limit 1
     ) as prior on true
   )`;
@@ -2969,7 +2999,6 @@ function stagedComponentTimestamps(
   externalId: string,
   batchId: string,
 ): SQL {
-  const matchKey = key === "media" ? "sourceUrl" : "sourceTitle";
   const payload = JSON.stringify(items);
   return sql`(
     select coalesce(jsonb_agg(
@@ -2987,7 +3016,11 @@ function stagedComponentTimestamps(
       where staged.provider_key = ${providerKey}
         and staged.external_id = ${externalId}
         and staged.batch_id = ${batchId}
-        and prev->>${matchKey} = item->>${matchKey}
+        and ${componentContentEquals("prev", "item", key)}
+        and coalesce(prev->>'sourcePolicyId', staged.source_policy_id)
+          = coalesce(item->>'sourcePolicyId', staged.source_policy_id)
+        and prev->>'retrievedAt' ~ ${CAPTURE_TIMESTAMP}
+      order by (prev->>'retrievedAt')::timestamptz asc
       limit 1
     ) as matched on true
   )`;
