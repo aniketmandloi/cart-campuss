@@ -2119,6 +2119,185 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     }
   });
 
+  it("enforces image capture and geography for the record policy and a separate policy", async () => {
+    const old = reviewedImport("Old Same Policy Image Coupe");
+    old.sourcePolicy.id = crypto.randomUUID();
+    old.records[0]!.document.facts[0]!.retrievedAt = BASE_TIME;
+    old.records[0]!.document.media[0]!.retrievedAt = "2020-01-01T00:00:00.000Z";
+    old.records[0]!.document.media[0]!.countryCode = "IN";
+    await assert.rejects(() => caller(OPERATOR_TOKEN).publishing.submit(old), /retention deadline/);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === old.records[0]!.externalId), false);
+    assert.equal(await caller(null).publishing.detail({ subjectId: old.records[0]!.document.canonicalSubjectId }), null);
+    old.records[0]!.document.media = [];
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(old)).status, "published");
+    assert.equal((await caller(null).publishing.detail({ subjectId: old.records[0]!.document.canonicalSubjectId }))?.facts[0]?.rawValue, "100 PS");
+
+    const excluded = reviewedImport("Excluded Same Policy Image Coupe");
+    excluded.sourcePolicy.id = crypto.randomUUID();
+    const excludedMedia = excluded.records[0]!.document.media[0];
+    assert.ok(excludedMedia);
+    excludedMedia.retrievedAt = BASE_TIME;
+    excludedMedia.countryCode = "DE";
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(excluded)).status, "published");
+    const excludedDetail = await caller(null).publishing.detail({ subjectId: excluded.records[0]!.document.canonicalSubjectId });
+    assert.equal(excludedDetail?.facts.length, 1);
+    assert.deepEqual(excludedDetail?.media, []);
+    const excludedStage = (await db.select().from(publishingStagedRecord)).find((row) => row.externalId === excluded.records[0]!.externalId);
+    assert.equal(JSON.stringify(excludedStage?.document).includes(excludedMedia.sourceUrl), false);
+    assert.equal(JSON.stringify(excludedDetail).includes(excludedMedia.sourceUrl), false);
+
+    const separateOld = reviewedImport("Old Separate Image Coupe");
+    const separatePolicyId = crypto.randomUUID();
+    separateOld.sourcePolicy.id = crypto.randomUUID();
+    separateOld.sourcePolicy.imagePermission = "denied";
+    separateOld.componentPolicies = [{
+      ...separateOld.sourcePolicy,
+      id: separatePolicyId,
+      imagePermission: "permitted",
+      retentionSeconds: 86_400,
+      permittedGeographies: ["IN"],
+    }];
+    separateOld.records[0]!.document.media[0]!.sourcePolicyId = separatePolicyId;
+    separateOld.records[0]!.document.media[0]!.retrievedAt = "2020-01-01T00:00:00.000Z";
+    separateOld.records[0]!.document.media[0]!.countryCode = "IN";
+    await assert.rejects(() => caller(OPERATOR_TOKEN).publishing.submit(separateOld), /retention deadline/);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === separateOld.records[0]!.externalId), false);
+
+    const separateExcluded = reviewedImport("Excluded Separate Image Coupe");
+    const excludedPolicyId = crypto.randomUUID();
+    separateExcluded.sourcePolicy.id = crypto.randomUUID();
+    separateExcluded.componentPolicies = [{
+      ...separateExcluded.sourcePolicy,
+      id: excludedPolicyId,
+      imagePermission: "permitted",
+      permittedGeographies: ["IN"],
+    }];
+    separateExcluded.records[0]!.document.media[0]!.sourcePolicyId = excludedPolicyId;
+    separateExcluded.records[0]!.document.media[0]!.retrievedAt = BASE_TIME;
+    separateExcluded.records[0]!.document.media[0]!.countryCode = "DE";
+    const held = await caller(OPERATOR_TOKEN).publishing.submit(separateExcluded);
+    assert.equal(held.status, "held");
+    assert.equal(held.rejection?.code, "rights");
+    const heldStage = (await db.select().from(publishingStagedRecord)).find((row) => row.externalId === separateExcluded.records[0]!.externalId);
+    const separateImageUrl = separateExcluded.records[0]!.document.media[0]!.sourceUrl;
+    assert.equal(JSON.stringify(heldStage?.document).includes(separateImageUrl), false);
+    assert.equal(await caller(null).publishing.detail({ subjectId: separateExcluded.records[0]!.document.canonicalSubjectId }), null);
+
+    const inherited = reviewedImport("Inherited Image Capture Coupe");
+    inherited.sourcePolicy.id = crypto.randomUUID();
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(inherited)).status, "published");
+    const inheritedSubject = inherited.records[0]!.document.canonicalSubjectId;
+    const inheritedDetail = await caller(null).publishing.detail({ subjectId: inheritedSubject });
+    assert.equal(inheritedDetail?.media.length, 1);
+    assert.equal(inheritedDetail?.media[0]?.retrievedAt, null);
+    assert.equal(inheritedDetail?.media[0]?.countryCode, null);
+    const [inheritedRow] = await db.select().from(publishingPublishedAssertion)
+      .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${inheritedSubject}`);
+    assert.ok(inheritedRow);
+    const storedMedia = inheritedRow.media as Array<Record<string, unknown>>;
+    await db.update(publishingPublishedAssertion).set({
+      media: [{ ...storedMedia[0], retrievedAt: "2020-01-01T00:00:00.000Z", countryCode: "IN" }],
+    }).where(sql`${publishingPublishedAssertion.id} = ${inheritedRow.id}`);
+    assert.deepEqual((await caller(null).publishing.detail({ subjectId: inheritedSubject }))?.media, []);
+    assert.equal((await caller(null).publishing.detail({ subjectId: inheritedSubject }))?.facts.length, 1);
+    await db.update(publishingPublishedAssertion).set({
+      media: [{ ...storedMedia[0], retrievedAt: BASE_TIME, countryCode: "DE" }],
+    }).where(sql`${publishingPublishedAssertion.id} = ${inheritedRow.id}`);
+    assert.deepEqual((await caller(null).publishing.detail({ subjectId: inheritedSubject }))?.media, []);
+    await db.update(publishingPublishedAssertion).set({
+      media: [{ ...storedMedia[0], retrievedAt: null, countryCode: null }],
+    }).where(sql`${publishingPublishedAssertion.id} = ${inheritedRow.id}`);
+    assert.equal((await caller(null).publishing.detail({ subjectId: inheritedSubject }))?.media.length, 1);
+
+    const renewed = reviewedImport("Unrenewed Separate Image Coupe");
+    const renewedPolicyId = crypto.randomUUID();
+    renewed.sourcePolicy.id = crypto.randomUUID();
+    renewed.sourcePolicy.retentionSeconds = 86_400;
+    renewed.sourcePolicy.imagePermission = "denied";
+    renewed.componentPolicies = [{
+      ...renewed.sourcePolicy,
+      id: renewedPolicyId,
+      displayName: "Short image policy",
+      imagePermission: "permitted",
+      retentionSeconds: 60,
+      permittedGeographies: ["IN"],
+    }];
+    renewed.records[0]!.document.facts[0]!.retrievedAt = BASE_TIME;
+    renewed.records[0]!.document.media[0]!.sourcePolicyId = renewedPolicyId;
+    renewed.records[0]!.document.media[0]!.retrievedAt = BASE_TIME;
+    renewed.records[0]!.document.media[0]!.countryCode = "IN";
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(renewed)).status, "published");
+    const later = () => new Date(testClock().getTime() + 30_000);
+    renewed.idempotencyKey += "-later-capture";
+    renewed.records[0]!.document.media[0]!.retrievedAt = later().toISOString();
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(renewed)).status, "published");
+    const renewedSubject = renewed.records[0]!.document.canonicalSubjectId;
+    const renewedRows = (await db.select().from(publishingPublishedAssertion))
+      .filter((row) => row.canonicalSubjectId === renewedSubject);
+    assert.ok(renewedRows.length >= 1);
+    for (const row of renewedRows) {
+      const media = row.media as Array<{ retrievedAt?: string }>;
+      assert.equal(new Date(media[0]?.retrievedAt ?? "").toISOString(), BASE_TIME);
+    }
+    const cutoff = () => new Date(testClock().getTime() + 60_000);
+    const expiredImage = await caller(null, cutoff).publishing.detail({ subjectId: renewedSubject });
+    assert.deepEqual(expiredImage?.media, []);
+    assert.equal(expiredImage?.facts[0]?.rawValue, "100 PS");
+    renewed.idempotencyKey += "-after-deadline";
+    renewed.records[0]!.document.media[0]!.retrievedAt = cutoff().toISOString();
+    await assert.rejects(() => caller(OPERATOR_TOKEN, cutoff).publishing.submit(renewed), /did not commit|retention deadline/);
+    assert.deepEqual((await caller(null, cutoff).publishing.detail({ subjectId: renewedSubject }))?.media, []);
+  });
+
+  it("rejects a component copy that expires while waiting for the publishing lock", async () => {
+    const lockKey = 1128354388;
+    const [clock] = await db.select({ currentTime: sql<string>`clock_timestamp()` }).from(sql`(select 1) as clock_probe`);
+    assert.ok(clock);
+    const input = reviewedImport("Component Lock Image Coupe");
+    const policyId = crypto.randomUUID();
+    const capturedAt = new Date(clock.currentTime).toISOString();
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.retentionSeconds = 86_400;
+    input.sourcePolicy.imagePermission = "denied";
+    input.sourcePolicy.permissionExpiresAt = null;
+    input.componentPolicies = [{
+      ...input.sourcePolicy,
+      id: policyId,
+      imagePermission: "permitted",
+      retentionSeconds: 2,
+      permissionExpiresAt: null,
+      permittedGeographies: ["IN"],
+    }];
+    input.records[0]!.document.facts[0]!.retrievedAt = capturedAt;
+    input.records[0]!.document.media[0]!.sourcePolicyId = policyId;
+    input.records[0]!.document.media[0]!.retrievedAt = capturedAt;
+    input.records[0]!.document.media[0]!.countryCode = "IN";
+    const before = await db.select().from(publishingProjectionPointer);
+    const release = await holdAdvisoryLock(lockKey);
+    const outcome = runOperatorCommand({ db, operatorToken: OPERATOR_TOKEN }, JSON.stringify(input))
+      .then((value) => ({ value, error: null }), (error: unknown) => ({ value: null, error }));
+    try {
+      await until(async () => {
+        const [row] = await db.select({ waiting: sql<boolean>`exists (
+          select 1 from pg_locks where locktype = 'advisory' and objid = ${lockKey} and not granted
+        )` }).from(sql`(select 1) as lock_probe`);
+        return row?.waiting === true;
+      });
+      await until(async () => {
+        const [row] = await db.select({
+          due: sql<boolean>`clock_timestamp() >= cast(${capturedAt} as timestamptz) + interval '2 seconds'`,
+        }).from(sql`(select 1) as clock_probe`);
+        return row?.due === true;
+      });
+    } finally { await release(); }
+    const result = await outcome;
+    assert.ok(result.error instanceof PublishingRejected);
+    assert.equal(result.error.code, "partial");
+    assert.deepEqual(await db.select().from(publishingProjectionPointer), before);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+    assert.equal(await caller(null).publishing.detail({ subjectId: input.records[0]!.document.canonicalSubjectId }), null);
+  });
+
   it("reads an incomplete generation only from its approved projection", async () => {
     await db.insert(catalogueSourcePolicy).values({
       id: "policy-flag-generation",

@@ -41,6 +41,8 @@ A record has one of `catalogue`, `generationCatalogue`, or `modelCatalogue`.
 
 A production count is public only when the governing policy, main or separate, lists `productionClaims` in `permittedFields`. That one field covers the whole claim: scope, geography, period, count, status, what was counted, and the source metadata. Fact permission alone does not publish it. Without `productionClaims`, the count is left out of the assertion and the page, and the other permitted facts stay.
 
+An image uses its own `retrievedAt` and `countryCode` whether it cites the record policy or a separate policy. A missing value inherits the record's effective capture time and country, which is also how older rows without those fields are read. The page shows the image only when that capture is still inside the governing policy's retention and that country is permitted. A later import cannot move an existing capture later. An image that is already past retention rejects the import before a private payload is stored. An image outside the permitted country is omitted; permitted facts can still publish.
+
 `productionClaims` items are `{ scope, geography, period, count, status, counted, sourceTitle, sourceUrl, observedAt, retrievedAt, reviewedOn, countryCode, sourcePolicyId? }`. `status` is `planned` or `completed`. `counted` must not be sales, registrations, or exports.
 
 Fact fields:

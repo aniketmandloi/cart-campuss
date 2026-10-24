@@ -592,6 +592,7 @@ export async function readPublishedCatalogueDetail(
       publishedAt: publishingProjectionGeneration.publishedAt,
       priceReference: publishingPublishedAssertion.priceReference,
       identityScope: publishingPublishedAssertion.identityScope,
+      effectiveCapturedAt: sql<string>`least(${publishingPublishedAssertion.capturedAt}, publishing_price_captured_at(${publishingPublishedAssertion.priceReference}))`,
       imagePermission: publishingSourcePolicy.imagePermission,
       factPermission: publishingSourcePolicy.factPermission,
       policySuspended: publishingSourcePolicy.suspended,
@@ -645,6 +646,7 @@ export async function readPublishedCatalogueDetail(
   };
   const parsedMedia = asPublicMedia(row.media);
   const parsedClaims = asPublicProductionClaims(row.productionClaims);
+  const effectiveCapturedAt = toIso(row.effectiveCapturedAt);
   const extraIds = [
     ...new Set(
       [...parsedMedia, ...parsedClaims]
@@ -657,15 +659,10 @@ export async function readPublishedCatalogueDetail(
   const media = parsedMedia.flatMap((item) => {
     const policy = policyFor(item.sourcePolicyId);
     const separate = item.sourcePolicyId !== row.sourcePolicyId;
-    const visible = separate
-      ? componentPolicyAllows(
-          policy,
-          { retrievedAt: item.retrievedAt, countryCode: item.countryCode ?? row.salesMarket },
-          "image",
-          clock,
-        )
-      : row.imagePermission === "permitted";
-    if (!visible) return [];
+    const inheritedCapture = item.retrievedAt ?? effectiveCapturedAt;
+    const retrievedAt = separate ? inheritedCapture : earlierIso(inheritedCapture, effectiveCapturedAt);
+    const countryCode = item.countryCode ?? row.salesMarket;
+    if (!componentPolicyAllows(policy, { retrievedAt, countryCode }, "image", clock)) return [];
     return [
       {
         ...item,
@@ -673,14 +670,16 @@ export async function readPublishedCatalogueDetail(
       },
     ];
   });
-  const productionClaims = parsedClaims.filter((claim) =>
-    componentPolicyAllows(
+  const productionClaims = parsedClaims.filter((claim) => {
+    const separate = claim.sourcePolicyId !== row.sourcePolicyId;
+    const retrievedAt = separate ? claim.retrievedAt : earlierIso(claim.retrievedAt, effectiveCapturedAt);
+    return componentPolicyAllows(
       policyFor(claim.sourcePolicyId),
-      { retrievedAt: claim.retrievedAt, countryCode: claim.countryCode },
+      { retrievedAt, countryCode: claim.countryCode },
       "fact",
       clock,
-    ),
-  );
+    );
+  });
   return {
     canonicalSubjectId: row.canonicalSubjectId,
     displayName: row.displayName,
@@ -725,6 +724,7 @@ export async function applyOperatorImport(
   )) {
     throw new PublishingRejected("expired", "The source copy is already beyond its retention deadline.");
   }
+  assertComponentRetention(parsed, now);
 
   const current = await readCurrentProjection(deps.db);
   const contexts = await canonicalContexts(deps.db, parsed.records.map((record) => record.document.canonicalSubjectId));
@@ -818,9 +818,26 @@ export async function applyOperatorImport(
       const actual = canonicalContexts(deps.db, [subjectId]).as("canonical_context");
       statements.push(rejectBatchWhen(deps.db, sql`(select ${actual.signature} from ${actual})
         is distinct from ${context ? sql`cast(${JSON.stringify(context.signature)} as jsonb)` : sql`null`}`));
+      const published = publicAssertion(
+        record,
+        parsed.sourcePolicy,
+        policyId,
+        generationId,
+        createdAt,
+        parsed.componentPolicies,
+        now,
+      );
       statements.push(
         deps.db.insert(publishingPublishedAssertion).values({
-          ...publicAssertion(record, parsed.sourcePolicy, policyId, generationId, createdAt, parsed.componentPolicies),
+          ...published,
+          media: stagedComponentTimestamps(published.media, "media", parsed.providerKey, record.externalId, batchId),
+          productionClaims: stagedComponentTimestamps(
+            published.productionClaims,
+            "productionClaims",
+            parsed.providerKey,
+            record.externalId,
+            batchId,
+          ),
           capturedAt: sql`(select ${publishingStagedRecord.capturedAt}
             from ${publishingStagedRecord}
             where ${publishingStagedRecord.batchId} = ${batchId}
@@ -849,6 +866,7 @@ export async function applyOperatorImport(
   }
 
   statements.push(rejectDueImport(deps.db, batchId, writeTime, status === "published"));
+  if (status === "published") statements.push(rejectDueComponents(deps.db, batchId, writeTime));
   if (status !== "published") {
     statements.push(deps.db.delete(publishingStagedRecord).where(and(
       eq(publishingStagedRecord.batchId, batchId),
@@ -1336,12 +1354,13 @@ function evaluateRecord(
 
 function evaluateComponents(record: ImportRecord, parsed: OperatorImport, now: Date): GateFailure | null {
   const externalId = record.externalId;
+  const recordCapture = sourceCapturedAt(record, now.toISOString());
   const components = [
     ...record.document.media.map((item) => ({
       kind: "image" as const,
       sourcePolicyId: item.sourcePolicyId,
       countryCode: item.countryCode ?? record.document.salesMarket,
-      retrievedAt: item.retrievedAt,
+      retrievedAt: item.retrievedAt ?? recordCapture,
     })),
     ...record.document.productionClaims.map((claim) => ({
       kind: "fact" as const,
@@ -1352,10 +1371,24 @@ function evaluateComponents(record: ImportRecord, parsed: OperatorImport, now: D
   ];
   for (const component of components) {
     const policy = componentPolicy(parsed, component.sourcePolicyId);
-    if (!policy) continue;
+    if (!policy) {
+      return { externalId, code: "rights", message: "Image or production content cites a source policy that is not in this import." };
+    }
     const separate = component.sourcePolicyId !== undefined && component.sourcePolicyId !== parsed.sourcePolicy.id;
-    if (!separate) continue;
-    if (!policy.reviewerRef || !policy.reviewedAt) {
+    const retrievedAt = separate ? component.retrievedAt : earlierIso(component.retrievedAt, recordCapture);
+    // These omissions keep the record. Retention and a separate policy's geography still block it.
+    if (component.kind === "fact" && !policy.permittedFields.includes("productionClaims")) continue;
+    if (!separate && component.kind === "image" && policy.imagePermission !== "permitted") continue;
+    if (!separate && !policy.permittedGeographies.includes(component.countryCode)) continue;
+    if (componentPolicyAllows(
+      componentPolicyView(policy),
+      { retrievedAt, countryCode: component.countryCode },
+      component.kind,
+      now,
+    )) {
+      continue;
+    }
+    if (!policy.reviewerRef || !policy.reviewedAt || policy.attribution.trim().length === 0) {
       return { externalId, code: "rights", message: "A component source policy has not been reviewed." };
     }
     if (policy.suspended) {
@@ -1364,25 +1397,17 @@ function evaluateComponents(record: ImportRecord, parsed: OperatorImport, now: D
     if (isExpired(policy.permissionExpiresAt, now)) {
       return { externalId, code: "expired", message: "The source permission has expired." };
     }
-    if (policy.retentionSeconds <= 0 || !component.retrievedAt) {
-      return { externalId, code: "expired", message: "The source copy is already beyond its retention deadline." };
-    }
-    const retrieved = new Date(component.retrievedAt).getTime();
-    if (Number.isNaN(retrieved) || retrieved + policy.retentionSeconds * 1000 <= now.getTime()) {
+    const retrieved = new Date(retrievedAt).getTime();
+    if (policy.retentionSeconds <= 0 || Number.isNaN(retrieved) || retrieved + policy.retentionSeconds * 1000 <= now.getTime()) {
       return { externalId, code: "expired", message: "The source copy is already beyond its retention deadline." };
     }
     if (!policy.permittedGeographies.includes(component.countryCode)) {
       return { externalId, code: "rights", message: "The component geography is outside the permitted geography." };
     }
-    if (policy.attribution.trim().length === 0) {
-      return { externalId, code: "rights", message: "A permitted component needs attribution." };
-    }
-    if (component.kind === "image" && policy.imagePermission !== "permitted") {
+    if (component.kind === "image") {
       return { externalId, code: "rights", message: "Image permission is denied." };
     }
-    if (component.kind === "fact" && policy.factPermission !== "permitted") {
-      return { externalId, code: "rights", message: "Fact permission is denied." };
-    }
+    return { externalId, code: "rights", message: "Fact permission is denied." };
   }
   return null;
 }
@@ -1594,7 +1619,7 @@ function upsertStaged(
     contentHash,
     privatePayload: record.privatePayload,
     provenance: record.provenance,
-    document: record.document,
+    document: projectionDocument(record, parsed),
     identityOutcome: record.identity.outcome,
     identitySubjectId: record.identity.canonicalSubjectId,
     identityReviewerRef: record.identity.reviewerRef,
@@ -1617,7 +1642,7 @@ function upsertStaged(
         contentHash: values.contentHash,
         privatePayload: values.privatePayload,
         provenance: values.provenance,
-        document: values.document,
+        document: preservedComponentCaptures(values.document, policyId),
         identityOutcome: values.identityOutcome,
         identitySubjectId: values.identitySubjectId,
         identityReviewerRef: values.identityReviewerRef,
@@ -1647,9 +1672,11 @@ function publicAssertion(
   generationId: string,
   publishedAt: string,
   componentPolicies: OperatorImport["componentPolicies"],
+  now: Date,
 ) {
   const factualReviewerRef = record.factualReview.reviewerRef ?? "";
   const rightsReviewerRef = record.rightsReview.reviewerRef ?? "";
+  const recordCapture = sourceCapturedAt(record, publishedAt);
   const facts = record.document.facts
     .filter((fact) => !IDENTITY_FACT_PROPERTIES.has(fact.property))
     .filter((fact) => policy.permittedFields.includes(fact.property))
@@ -1657,9 +1684,23 @@ function publicAssertion(
     .map((fact) => presentFact(fact, policyId, factualReviewerRef, rightsReviewerRef));
   const media = record.document.media.flatMap((item) => {
     const governing = governingPolicy(policy, policyId, item.sourcePolicyId, componentPolicies);
-    if (!governing || governing.policy.imagePermission !== "permitted") return [];
+    if (!governing) return [];
     if (textLeaksIdentifier([item.sourceUrl, item.altText, item.credit, governing.policy.attribution])) return [];
     const separate = governing.id !== policyId;
+    const retrievedAt = item.retrievedAt ?? null;
+    const countryCode = item.countryCode ?? null;
+    const effectiveRetrieved = separate
+      ? retrievedAt ?? recordCapture
+      : earlierIso(retrievedAt ?? recordCapture, recordCapture);
+    const effectiveCountry = countryCode ?? record.document.salesMarket;
+    if (!componentPolicyAllows(
+      componentPolicyView(governing.policy),
+      { retrievedAt: effectiveRetrieved, countryCode: effectiveCountry },
+      "image",
+      now,
+    )) {
+      return [];
+    }
     return [
       {
         sourceUrl: item.sourceUrl,
@@ -1667,8 +1708,8 @@ function publicAssertion(
         altText: item.altText,
         sourcePolicyId: governing.id,
         rightsReviewerRef,
-        retrievedAt: separate ? item.retrievedAt ?? null : null,
-        countryCode: separate ? item.countryCode ?? record.document.salesMarket : null,
+        retrievedAt,
+        countryCode,
         attribution: governing.policy.attribution,
       },
     ];
@@ -1678,6 +1719,16 @@ function publicAssertion(
     if (!governing || governing.policy.factPermission !== "permitted") return [];
     // One permission covers the count and its scope, geography, period, and source metadata.
     if (!governing.policy.permittedFields.includes("productionClaims")) return [];
+    const separate = governing.id !== policyId;
+    const retrievedAt = separate ? claim.retrievedAt : earlierIso(claim.retrievedAt, recordCapture);
+    if (!componentPolicyAllows(
+      componentPolicyView(governing.policy),
+      { retrievedAt, countryCode: claim.countryCode },
+      "fact",
+      now,
+    )) {
+      return [];
+    }
     if (/(sale|registration|export)/i.test(claim.counted)) return [];
     if (
       textLeaksIdentifier([
@@ -2662,6 +2713,209 @@ type ComponentPolicyRow = {
   factPermission: string;
   attribution: string;
 };
+
+function assertComponentRetention(parsed: OperatorImport, now: Date): void {
+  for (const record of parsed.records) {
+    const recordCapture = sourceCapturedAt(record, now.toISOString());
+    const copies = [
+      ...record.document.media.map((item) => ({
+        sourcePolicyId: item.sourcePolicyId,
+        retrievedAt: item.retrievedAt ?? recordCapture,
+        separate: item.sourcePolicyId !== undefined && item.sourcePolicyId !== parsed.sourcePolicy.id,
+      })),
+      ...record.document.productionClaims.map((claim) => ({
+        sourcePolicyId: claim.sourcePolicyId,
+        retrievedAt: claim.retrievedAt,
+        separate: claim.sourcePolicyId !== undefined && claim.sourcePolicyId !== parsed.sourcePolicy.id,
+      })),
+    ];
+    for (const copy of copies) {
+      const policy = componentPolicy(parsed, copy.sourcePolicyId);
+      if (!policy) {
+        throw new PublishingRejected("rights", "Image or production content cites a source policy that is not in this import.");
+      }
+      const retrievedAt = copy.separate ? copy.retrievedAt : earlierIso(copy.retrievedAt, recordCapture);
+      const retrieved = new Date(retrievedAt).getTime();
+      if (policy.retentionSeconds <= 0 || Number.isNaN(retrieved) || retrieved + policy.retentionSeconds * 1000 <= now.getTime()) {
+        throw new PublishingRejected("expired", "The source copy is already beyond its retention deadline.");
+      }
+    }
+  }
+}
+
+function projectionDocument(record: ImportRecord, parsed: OperatorImport): ImportRecord["document"] {
+  return {
+    ...record.document,
+    media: record.document.media.filter((item) => {
+      const policy = componentPolicy(parsed, item.sourcePolicyId);
+      const country = item.countryCode ?? record.document.salesMarket;
+      return Boolean(policy?.permittedGeographies.includes(country));
+    }),
+    productionClaims: record.document.productionClaims.filter((claim) => {
+      const policy = componentPolicy(parsed, claim.sourcePolicyId);
+      return Boolean(
+        policy?.permittedFields.includes("productionClaims") &&
+          policy.permittedGeographies.includes(claim.countryCode),
+      );
+    }),
+  };
+}
+
+function componentPolicyView(policy: SourcePolicyInput): ComponentPolicyRow {
+  return {
+    suspended: policy.suspended,
+    reviewerRef: policy.reviewerRef,
+    reviewedAt: policy.reviewedAt,
+    permissionExpiresAt: policy.permissionExpiresAt,
+    retentionSeconds: policy.retentionSeconds,
+    permittedGeographies: policy.permittedGeographies,
+    permittedFields: policy.permittedFields,
+    imagePermission: policy.imagePermission,
+    factPermission: policy.factPermission,
+    attribution: policy.attribution,
+  };
+}
+
+const CAPTURE_TIMESTAMP = String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$`;
+
+function componentItemDue(item: SQL, fallbackCapturedAt: SQL, parentPolicyId: SQL, now: SQLWrapper): SQL {
+  const policyId = sql`coalesce(${item}->>'sourcePolicyId', ${parentPolicyId}::text)`;
+  const ownCapture = sql`(case
+    when ${item}->>'retrievedAt' is null then null
+    when ${item}->>'retrievedAt' ~ ${CAPTURE_TIMESTAMP} then (${item}->>'retrievedAt')::timestamptz
+    else '-infinity'::timestamptz
+  end)`;
+  const captured = sql`(case
+    when ${policyId} = ${parentPolicyId}::text then least(coalesce(${ownCapture}, ${fallbackCapturedAt}), ${fallbackCapturedAt})
+    else coalesce(${ownCapture}, ${fallbackCapturedAt})
+  end)`;
+  return sql`(
+    not exists (
+      select 1 from ${publishingSourcePolicy} as component_policy
+      where component_policy.id = ${policyId}
+    )
+    or exists (
+      select 1 from ${publishingSourcePolicy} as component_policy
+      where component_policy.id = ${policyId}
+        and (
+          component_policy.suspended
+          or component_policy.retention_seconds <= 0
+          or component_policy.permission_expires_at <= ${now}
+          or ${captured} + component_policy.retention_seconds * interval '1 second' <= ${now}
+        )
+    )
+  )`;
+}
+
+function rejectDueComponents(db: Database, batchId: string, now: SQLWrapper) {
+  return rejectBatchWhen(db, sql`exists (
+    select 1
+    from ${publishingStagedRecord}
+    cross join lateral jsonb_array_elements(
+      coalesce(${publishingStagedRecord.document}->'media', '[]'::jsonb)
+      || coalesce(${publishingStagedRecord.document}->'productionClaims', '[]'::jsonb)
+    ) as component_item
+    where ${publishingStagedRecord.batchId} = ${batchId}
+      and ${componentItemDue(
+        sql`component_item`,
+        sql`${publishingStagedRecord.capturedAt}`,
+        sql`${publishingStagedRecord.sourcePolicyId}`,
+        now,
+      )}
+  )`);
+}
+
+function preservedComponentCaptures(document: ImportRecord["document"], parentPolicyId: string): SQL {
+  const payload = JSON.stringify(document);
+  return sql`(
+    select jsonb_set(
+      jsonb_set(incoming.document, '{media}', ${preservedCaptureArray(payload, "media", "sourceUrl", parentPolicyId)}),
+      '{productionClaims}',
+      ${preservedCaptureArray(payload, "productionClaims", "sourceTitle", parentPolicyId)}
+    )
+    from (select cast(${payload} as jsonb) as document) as incoming
+  )`;
+}
+
+function preservedCaptureArray(
+  payload: string,
+  key: "media" | "productionClaims",
+  matchKey: "sourceUrl" | "sourceTitle",
+  parentPolicyId: string,
+): SQL {
+  return sql`(
+    select coalesce(jsonb_agg(
+      case
+        when prior.retrieved_at is null or elem->>'retrievedAt' is null then elem
+        else jsonb_set(elem, '{retrievedAt}', to_jsonb(to_char(
+          least((elem->>'retrievedAt')::timestamptz, prior.retrieved_at, prior.deadline) at time zone 'UTC',
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        )))
+      end
+      order by ordinality
+    ), '[]'::jsonb)
+    from jsonb_array_elements(cast(${payload} as jsonb)->${key}) with ordinality as component_row(elem, ordinality)
+    left join lateral (
+      select
+        (prev->>'retrievedAt')::timestamptz as retrieved_at,
+        case
+          when old_policy.suspended then '-infinity'::timestamptz
+          else least(
+            (prev->>'retrievedAt')::timestamptz + old_policy.retention_seconds * interval '1 second',
+            coalesce(old_policy.permission_expires_at, 'infinity'::timestamptz)
+          ) - coalesce(new_policy.retention_seconds, old_policy.retention_seconds) * interval '1 second'
+        end as deadline
+      from jsonb_array_elements(coalesce(${publishingStagedRecord.document}->${key}, '[]'::jsonb)) as prev
+      join ${publishingSourcePolicy} as old_policy
+        on old_policy.id = coalesce(prev->>'sourcePolicyId', ${publishingStagedRecord.sourcePolicyId})
+      left join ${publishingSourcePolicy} as new_policy
+        on new_policy.id = coalesce(elem->>'sourcePolicyId', ${parentPolicyId})
+      where prev->>${matchKey} = elem->>${matchKey}
+        and prev->>'retrievedAt' ~ ${CAPTURE_TIMESTAMP}
+      order by (prev->>'retrievedAt')::timestamptz
+      limit 1
+    ) as prior on true
+  )`;
+}
+
+function stagedComponentTimestamps(
+  items: unknown[],
+  key: "media" | "productionClaims",
+  providerKey: string,
+  externalId: string,
+  batchId: string,
+): SQL {
+  const matchKey = key === "media" ? "sourceUrl" : "sourceTitle";
+  const payload = JSON.stringify(items);
+  return sql`(
+    select coalesce(jsonb_agg(
+      case
+        when matched.retrieved_at is null then item
+        else jsonb_set(item, '{retrievedAt}', to_jsonb(matched.retrieved_at))
+      end
+      order by ordinality
+    ), '[]'::jsonb)
+    from jsonb_array_elements(cast(${payload} as jsonb)) with ordinality as public_item(item, ordinality)
+    left join lateral (
+      select prev->>'retrievedAt' as retrieved_at
+      from ${publishingStagedRecord} as staged
+      cross join lateral jsonb_array_elements(coalesce(staged.document->${key}, '[]'::jsonb)) as prev
+      where staged.provider_key = ${providerKey}
+        and staged.external_id = ${externalId}
+        and staged.batch_id = ${batchId}
+        and prev->>${matchKey} = item->>${matchKey}
+      limit 1
+    ) as matched on true
+  )`;
+}
+
+function earlierIso(left: string, right: string): string {
+  const leftTime = new Date(left).getTime();
+  const rightTime = new Date(right).getTime();
+  if (Number.isNaN(leftTime)) return Number.isNaN(rightTime) ? left : right;
+  if (Number.isNaN(rightTime)) return left;
+  return leftTime <= rightTime ? left : right;
+}
 
 function componentPolicyAllows(
   policy: ComponentPolicyRow | undefined,
