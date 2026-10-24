@@ -877,6 +877,9 @@ export async function applyOperatorImport(
   }
 
   statements.push(rejectDueImport(deps.db, batchId, writeTime, status === "published"));
+  // Retention is checked for every staged, held, and published write. Main-policy
+  // suspension and permission expiry stay on the held result and its copy delete.
+  statements.push(rejectExpiredComponentRetention(deps.db, batchId, writeTime));
   if (status === "published") statements.push(rejectDueComponents(deps.db, batchId, writeTime));
   if (status !== "published") {
     statements.push(deps.db.delete(publishingStagedRecord).where(and(
@@ -2818,17 +2821,26 @@ function componentPolicyView(policy: SourcePolicyInput): ComponentPolicyRow {
 
 const CAPTURE_TIMESTAMP = String.raw`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$`;
 
-function componentItemDue(item: SQL, fallbackCapturedAt: SQLWrapper, parentPolicyId: SQLWrapper, now: SQLWrapper): SQL {
-  const policyId = sql`coalesce(${item}->>'sourcePolicyId', ${parentPolicyId}::text)`;
+function componentPolicyId(item: SQL, parentPolicyId: SQLWrapper): SQL {
+  return sql`coalesce(${item}->>'sourcePolicyId', ${parentPolicyId}::text)`;
+}
+
+function componentCapturedAt(item: SQL, fallbackCapturedAt: SQLWrapper, parentPolicyId: SQLWrapper): SQL {
+  const policyId = componentPolicyId(item, parentPolicyId);
   const ownCapture = sql`(case
     when ${item}->>'retrievedAt' is null then null
     when ${item}->>'retrievedAt' ~ ${CAPTURE_TIMESTAMP} then (${item}->>'retrievedAt')::timestamptz
     else '-infinity'::timestamptz
   end)`;
-  const captured = sql`(case
+  return sql`(case
     when ${policyId} = ${parentPolicyId}::text then least(coalesce(${ownCapture}, ${fallbackCapturedAt}), ${fallbackCapturedAt})
     else coalesce(${ownCapture}, ${fallbackCapturedAt})
   end)`;
+}
+
+function componentItemDue(item: SQL, fallbackCapturedAt: SQLWrapper, parentPolicyId: SQLWrapper, now: SQLWrapper): SQL {
+  const policyId = componentPolicyId(item, parentPolicyId);
+  const captured = componentCapturedAt(item, fallbackCapturedAt, parentPolicyId);
   return sql`(
     not exists (
       select 1 from ${publishingSourcePolicy} as component_policy
@@ -2853,6 +2865,30 @@ function retainedComponentArray(column: SQLWrapper, fallbackCapturedAt: SQLWrapp
     from jsonb_array_elements(coalesce(${column}, '[]'::jsonb)) with ordinality as component_row(component_item, component_ordinal)
     where not ${componentItemDue(sql`component_item`, fallbackCapturedAt, parentPolicyId, now)}
   )`;
+}
+
+function rejectExpiredComponentRetention(db: Database, batchId: string, now: SQLWrapper) {
+  const item = sql`component_item`;
+  const fallback = sql`${publishingStagedRecord.capturedAt}`;
+  const parent = sql`${publishingStagedRecord.sourcePolicyId}`;
+  return rejectBatchWhen(db, sql`exists (
+    select 1
+    from ${publishingStagedRecord}
+    cross join lateral jsonb_array_elements(
+      coalesce(${publishingStagedRecord.document}->'media', '[]'::jsonb)
+      || coalesce(${publishingStagedRecord.document}->'productionClaims', '[]'::jsonb)
+    ) as component_item
+    where ${publishingStagedRecord.batchId} = ${batchId}
+      and exists (
+        select 1 from ${publishingSourcePolicy} as component_policy
+        where component_policy.id = ${componentPolicyId(item, parent)}
+          and (
+            component_policy.retention_seconds <= 0
+            or ${componentCapturedAt(item, fallback, parent)}
+              + component_policy.retention_seconds * interval '1 second' <= ${now}
+          )
+      )
+  )`);
 }
 
 function rejectDueComponents(db: Database, batchId: string, now: SQLWrapper) {

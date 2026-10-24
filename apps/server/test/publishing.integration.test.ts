@@ -23,6 +23,7 @@ import {
 } from "@cart-campuss/db/schema/catalogue";
 import {
   publishingPublishedAssertion,
+  publishingImportBatch,
   publishingProjectionGeneration,
   publishingProjectionPointer,
   publishingSourcePolicy,
@@ -2297,6 +2298,91 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.deepEqual(await db.select().from(publishingProjectionPointer), before);
     assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
     assert.equal(await caller(null).publishing.detail({ subjectId: input.records[0]!.document.canonicalSubjectId }), null);
+  });
+
+  it("rejects an expired separate image for staged and held imports waiting on the publishing lock", async () => {
+    const baseline = reviewedImport("Component Lock Baseline Coupe");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(baseline)).status, "published");
+    const baselineSubject = baseline.records[0]!.document.canonicalSubjectId;
+    const beforeDetail = await caller(null).publishing.detail({ subjectId: baselineSubject });
+    const beforePointer = await db.select().from(publishingProjectionPointer);
+    assert.ok(beforeDetail);
+
+    for (const mode of ["staged", "held"] as const) {
+      const lockKey = 1128354388;
+      const [clock] = await db.select({ currentTime: sql<string>`clock_timestamp()` }).from(sql`(select 1) as clock_probe`);
+      assert.ok(clock);
+      const capturedAt = new Date(clock.currentTime).toISOString();
+      const policyId = crypto.randomUUID();
+      const imageUrl = `https://example.test/images/lock-${mode}`;
+      const marker = `PRIVATE-LOCK-${mode.toUpperCase()}`;
+      const input = reviewedImport(`Component Lock ${mode} Coupe`);
+      input.publish = mode === "staged" ? false : true;
+      if (mode === "held") input.records[0]!.identity.outcome = "uncertain";
+      input.sourcePolicy.id = crypto.randomUUID();
+      input.sourcePolicy.retentionSeconds = 86_400;
+      input.sourcePolicy.imagePermission = "denied";
+      input.sourcePolicy.permissionExpiresAt = null;
+      input.componentPolicies = [{
+        ...input.sourcePolicy,
+        id: policyId,
+        imagePermission: "permitted",
+        retentionSeconds: 2,
+        permissionExpiresAt: null,
+        permittedGeographies: ["IN"],
+      }];
+      input.records[0]!.document.facts[0]!.retrievedAt = capturedAt;
+      input.records[0]!.document.media = [{
+        sourceUrl: imageUrl,
+        credit: "Lock credit",
+        altText: "Lock photograph",
+        sourcePolicyId: policyId,
+        retrievedAt: capturedAt,
+        countryCode: "IN",
+      }];
+      input.records[0]!.privatePayload = { marker };
+      const release = await holdAdvisoryLock(lockKey);
+      const outcome = runOperatorCommand({ db, operatorToken: OPERATOR_TOKEN }, JSON.stringify(input))
+        .then((value) => ({ value, error: null }), (error: unknown) => ({ value: null, error }));
+      try {
+        await until(async () => {
+          const [row] = await db.select({ waiting: sql<boolean>`exists (
+            select 1 from pg_locks where locktype = 'advisory' and objid = ${lockKey} and not granted
+          )` }).from(sql`(select 1) as lock_probe`);
+          return row?.waiting === true;
+        });
+        await until(async () => {
+          const [row] = await db.select({
+            due: sql<boolean>`clock_timestamp() >= cast(${capturedAt} as timestamptz) + interval '2 seconds'`,
+          }).from(sql`(select 1) as clock_probe`);
+          return row?.due === true;
+        });
+      } finally { await release(); }
+      const result = await outcome;
+      assert.ok(result.error instanceof PublishingRejected, mode);
+      assert.equal(result.error.code, "partial", mode);
+      assert.equal(result.error.message.includes(marker), false, mode);
+      assert.equal(result.error.message.includes(imageUrl), false, mode);
+      assert.doesNotMatch(result.error.message, /params:|insert into|private_payload/i);
+      assert.deepEqual(await db.select().from(publishingProjectionPointer), beforePointer);
+      assert.deepEqual(await caller(null).publishing.detail({ subjectId: baselineSubject }), beforeDetail);
+      assert.equal(await caller(null).publishing.detail({ subjectId: input.records[0]!.document.canonicalSubjectId }), null);
+      const staged = await db.select().from(publishingStagedRecord);
+      assert.equal(staged.some((row) => JSON.stringify(row).includes(marker) || JSON.stringify(row.document).includes(imageUrl)), false, mode);
+      const assertions = await db.select().from(publishingPublishedAssertion);
+      assert.equal(assertions.some((row) => JSON.stringify(row).includes(imageUrl) || JSON.stringify(row).includes(marker)), false, mode);
+      assert.equal((await db.select().from(publishingImportBatch)).some((row) => row.idempotencyKey === input.idempotencyKey), false, mode);
+      await assert.rejects(
+        () => runOperatorCommand({ db, operatorToken: OPERATOR_TOKEN }, JSON.stringify(input)),
+        (error: unknown) => {
+          assert.ok(error instanceof PublishingRejected);
+          assert.equal(error.code, "expired");
+          assert.match(error.message, /retention deadline/);
+          assert.equal(error.message.includes(marker), false);
+          return true;
+        },
+      );
+    }
   });
 
   it("removes an expired component copy from every generation and does not restore it", async () => {
