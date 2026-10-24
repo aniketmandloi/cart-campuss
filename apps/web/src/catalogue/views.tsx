@@ -115,16 +115,27 @@ function DossierPageView({ page }: { page: DossierPage }) {
   const selected = page.availability === "visible";
   const cost = page.sections.find((section) => section.id === "cost");
   return (
-    <main id="catalogue" className="mx-auto w-full max-w-[1120px] px-4 py-8">
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="flex min-w-0 flex-col gap-8">
+    <main id="catalogue" className="mx-auto w-full max-w-[1120px] px-4 pt-8 pb-20 sm:pt-12">
+      <div className="grid gap-x-12 gap-y-14 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-w-0 flex-col gap-12">
           {page.privatePreview ? <PreviewNotice /> : null}
           {page.synthetic ? <p>Synthetic fixture. Not a manufacturer publication.</p> : null}
           <TextLink href="/">Search the catalogue</TextLink>
-          <header className="flex flex-col gap-2">
-            <p className="text-sm text-muted-foreground">{page.identity.brandName}</p>
-            <h1 className="text-2xl font-medium">{page.identity.modelName}</h1>
-            {"generationName" in page.identity ? <p>{page.identity.generationName}</p> : null}
+          <header className="flex flex-col gap-5">
+            <p className="rise text-sm text-muted-foreground" style={stagger(0)}>
+              {page.identity.brandName}
+            </p>
+            <h1
+              className="rise text-5xl leading-[0.92] font-semibold tracking-[-0.045em] text-balance sm:text-7xl"
+              style={stagger(1)}
+            >
+              {page.identity.modelName}
+            </h1>
+            {"generationName" in page.identity ? (
+              <p className="rise text-lg text-muted-foreground" style={stagger(2)}>
+                {page.identity.generationName}
+              </p>
+            ) : null}
             {page.availability === "scoped" ? (
               <p>
                 {page.scope === "model"
@@ -153,9 +164,10 @@ function DossierPageView({ page }: { page: DossierPage }) {
           {cost ? (
             <a
               href={cost.href}
-              className="inline-flex min-h-11 items-center bg-primary px-5 text-sm font-medium text-primary-foreground lg:hidden"
+              className="flex h-14 items-center justify-between bg-primary px-5 text-base font-medium text-primary-foreground transition-transform duration-200 active:scale-[0.99] lg:hidden"
             >
               Estimate India cost
+              <span aria-hidden="true">↓</span>
             </a>
           ) : null}
           <ApplicabilitySelector page={page} />
@@ -184,12 +196,12 @@ function SelectedIdentity({
 }) {
   const body = page.facts.find((fact) => fact.property === "Body" && fact.state === "known");
   return (
-    <section className="flex flex-col gap-2" aria-labelledby="model-year">
-      <h2 id="model-year" className="text-base font-medium">
+    <section className="rise-on-scroll flex flex-col gap-4 border-t border-border pt-8" aria-labelledby="model-year">
+      <h2 id="model-year" className="text-2xl font-semibold tracking-tight">
         Model year {page.identity.modelYearLabel}
       </h2>
       <p>{page.identity.modelYearConvention}</p>
-      <p>
+      <p className="text-muted-foreground">
         {page.identity.variantName} · {page.identity.salesMarketName}
       </p>
       {body?.rawValue ? <p>{body.rawValue}</p> : null}
@@ -199,23 +211,23 @@ function SelectedIdentity({
 
 function QuickFacts({ facts }: { facts: CatalogueFact[] }) {
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="quick-facts">
-      <h2 id="quick-facts" className="text-base font-medium">
+    <section className="rise-on-scroll flex flex-col gap-4" aria-labelledby="quick-facts">
+      <h2 id="quick-facts" className="text-2xl font-semibold tracking-tight">
         Quick facts
       </h2>
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+      <dl className="grid grid-cols-2 gap-px border border-border bg-border sm:grid-cols-3">
         {quickFactSlots(facts).map((slot) => (
-          <div key={slot.label} className="min-w-0">
+          <div key={slot.label} className="min-w-0 bg-background p-4">
             <dt className="text-sm text-muted-foreground">{slot.label}</dt>
-            <dd className="text-sm">
+            <dd className="mt-2 text-base">
               {slot.facts.length === 0 ? (
                 <Blank />
               ) : (
                 slot.facts.map((fact) => (
-                  <div key={`${fact.property}-${fact.measurementStandard ?? fact.rawValue ?? fact.state}`}>
+                  <Rail key={`${fact.property}-${fact.measurementStandard ?? fact.rawValue ?? fact.state}`} freshness={fact.freshness}>
                     <FactState fact={fact} />
                     <ReviewState freshness={fact.freshness} reviewedOn={fact.reviewedOn} />
-                  </div>
+                  </Rail>
                 ))
               )}
             </dd>
@@ -228,8 +240,8 @@ function QuickFacts({ facts }: { facts: CatalogueFact[] }) {
 
 function ApplicabilitySelector({ page }: { page: DossierPage }) {
   return (
-    <section id="overview" className="flex flex-col gap-4" aria-labelledby="catalogue-selection">
-      <h2 id="catalogue-selection" className="text-base font-medium">
+    <section id="overview" className="rise-on-scroll flex flex-col gap-6 scroll-mt-28" aria-labelledby="catalogue-selection">
+      <h2 id="catalogue-selection" className="text-2xl font-semibold tracking-tight">
         Overview
       </h2>
       {page.availability === "incompatible" ? (
@@ -243,16 +255,18 @@ function ApplicabilitySelector({ page }: { page: DossierPage }) {
       ) : (
         <p>Choose another market, model year, or variant to read that record.</p>
       )}
-      <SelectorGroup label="Generation" links={page.selector.generations} />
-      <SelectorGroup label="Sales market" links={page.selector.markets} />
-      <SelectorGroup label="Model year" links={page.selector.years} />
-      <SelectorGroup label="Market variant" links={page.selector.variants} />
+      <div className="grid gap-6 sm:grid-cols-2">
+        <SelectorGroup label="Generation" links={page.selector.generations} />
+        <SelectorGroup label="Sales market" links={page.selector.markets} />
+        <SelectorGroup label="Model year" links={page.selector.years} />
+        <SelectorGroup label="Market variant" links={page.selector.variants} />
+      </div>
       {page.selector.records.length > 0 ? (
-        <div className="flex flex-col gap-2">
-          <h3 className="text-sm font-medium">Records</h3>
-          <ul>
+        <div className="flex flex-col gap-3">
+          <h3 className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">Records</h3>
+          <ul className="flex flex-col border-t border-border">
             {page.selector.records.map((record) => (
-              <li key={record.href} className="border-b border-border py-2">
+              <li key={record.href} className="border-b border-border py-3">
                 <RecordLink record={record} />
               </li>
             ))}
@@ -270,14 +284,18 @@ function ApplicabilitySelector({ page }: { page: DossierPage }) {
 function SelectorGroup({ label, links }: { label: string; links: DossierLink[] }) {
   if (links.length === 0) return null;
   return (
-    <div className="flex flex-col gap-1">
-      <h3 className="text-sm font-medium">{label}</h3>
-      <ul>
+    <div className="flex flex-col gap-3">
+      <h3 className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">{label}</h3>
+      <ul className="flex flex-wrap gap-2">
         {links.map((link) => (
           <li key={link.href}>
-            <TextLink href={link.href} current={link.current}>
+            <a
+              href={link.href}
+              aria-current={link.current ? "true" : undefined}
+              className="inline-flex min-h-11 items-center border border-border px-4 text-sm transition-colors duration-200 hover:border-foreground aria-[current=true]:border-foreground aria-[current=true]:bg-foreground aria-[current=true]:text-background"
+            >
               {link.label}
-            </TextLink>
+            </a>
           </li>
         ))}
       </ul>
@@ -298,8 +316,11 @@ function RecordLink({ record }: { record: DossierRecordLink }) {
 
 function SectionNav({ page }: { page: DossierPage }) {
   return (
-    <nav aria-label="Dossier sections">
-      <ul className="flex flex-wrap gap-x-4">
+    <nav
+      aria-label="Dossier sections"
+      className="sticky top-14 z-10 -mx-4 overflow-x-auto border-y border-border bg-background/85 px-4 backdrop-blur-md"
+    >
+      <ul className="flex gap-6 whitespace-nowrap">
         {page.sections.map((section) => (
           <li key={section.id}>
             <TextLink href={section.href} current={section.current}>
@@ -665,11 +686,11 @@ function PolicyBlock({ policy }: { policy: CataloguePolicy }) {
 function Photograph({ image }: { image: CatalogueImage | null }) {
   if (!image) {
     return (
-      <figure className="bg-card">
-        <div className="flex h-36 items-center justify-center" aria-hidden="true">
+      <figure className="rise border border-dashed border-border bg-card" style={stagger(3)}>
+        <div className="flex aspect-[16/9] items-center justify-center text-muted-foreground" aria-hidden="true">
           <DossierMark />
         </div>
-        <figcaption className="px-4 py-3 text-sm">
+        <figcaption className="border-t border-dashed border-border px-4 py-3 text-sm">
           No catalogue photograph
           <span className="mt-1 block text-muted-foreground">
             This record has no rights-cleared image.
@@ -679,9 +700,9 @@ function Photograph({ image }: { image: CatalogueImage | null }) {
     );
   }
   return (
-    <figure className="bg-card">
+    <figure className="rise border border-border bg-card" style={stagger(3)}>
       <img src={image.assetUrl} alt={image.altText} className="h-auto w-full" />
-      <figcaption className="flex flex-col gap-1 px-4 py-3 text-sm">
+      <figcaption className="flex flex-col gap-1 border-t border-border px-4 py-3 text-sm text-muted-foreground">
         <p>{image.credit}</p>
         <p>{image.licence}</p>
         {image.sourceUrl && /^https?:\/\//i.test(image.sourceUrl) ? (
@@ -818,7 +839,7 @@ function TextLink({
     <a
       href={href}
       aria-current={current ? "true" : undefined}
-      className="inline-flex min-h-11 items-center break-words hover:underline"
+      className="link-draw inline-flex min-h-11 items-center break-words"
     >
       {children}
     </a>
@@ -828,6 +849,26 @@ function TextLink({
 function MaybeValue({ value }: { value: string | null }) {
   if (!value) return <Blank />;
   return value;
+}
+
+const RAIL_TONE = {
+  current: "border-foreground/30",
+  stale: "border-stale",
+  "not-checked": "border-dashed border-faint",
+} as const;
+
+function Rail({
+  freshness = "current",
+  children,
+}: {
+  freshness?: "current" | "stale" | "not-checked";
+  children: ReactNode;
+}) {
+  return (
+    <div className={`mb-4 flex min-w-0 flex-col gap-1 border-l-2 pl-4 last:mb-0 ${RAIL_TONE[freshness]}`}>
+      {children}
+    </div>
+  );
 }
 
 function Blank() {
