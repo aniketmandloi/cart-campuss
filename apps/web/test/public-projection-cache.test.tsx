@@ -5,7 +5,7 @@ import { QueryObserver } from "@tanstack/react-query";
 
 test("a catalogue subject leaves the visitor cache when the page stops reading it", async () => {
   process.env.NEXT_PUBLIC_SERVER_URL = "http://127.0.0.1:3000";
-  const { queryClient } = await import("../src/utils/trpc.ts");
+  const { queryClient } = await import("../src/utils/trpc");
   const queryKey = ["catalogue", "subject-departed"];
   queryClient.setQueryData(queryKey, {
     displayName: "Departed Roadster",
