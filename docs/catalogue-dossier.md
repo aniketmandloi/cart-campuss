@@ -43,6 +43,8 @@ A production count is public only when the governing policy, main or separate, l
 
 An image uses its own `retrievedAt` and `countryCode` whether it cites the record policy or a separate policy. A missing value inherits the record's effective capture time and country, which is also how older rows without those fields are read. The page shows the image only when that capture is still inside the governing policy's retention and that country is permitted. A later import cannot move an existing capture later. An image that is already past retention rejects the import before a private payload is stored. An image outside the permitted country is omitted; permitted facts can still publish.
 
+The cleanup command in [publishing-setup.md](publishing-setup.md) is manual. When an image or production policy expires, is suspended, passes retention, or is missing, that command removes the copy from every stored generation and deletes the staged or held import that still contains it. Facts and identity that remain permitted stay. There is no scheduler on this branch.
+
 `productionClaims` items are `{ scope, geography, period, count, status, counted, sourceTitle, sourceUrl, observedAt, retrievedAt, reviewedOn, countryCode, sourcePolicyId? }`. `status` is `planned` or `completed`. `counted` must not be sales, registrations, or exports.
 
 Fact fields:

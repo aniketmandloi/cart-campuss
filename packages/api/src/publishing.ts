@@ -790,13 +790,24 @@ export async function applyOperatorImport(
     );
     for (const assertion of current.assertions) {
       if (replaced.has(sourceKey(assertion.providerKey, assertion.externalId))) continue;
-      statements.push(
-        deps.db.insert(publishingPublishedAssertion).select(
+      const carried = deps.db.insert(publishingPublishedAssertion).select(
           deps.db
             .select({
               ...getTableColumns(publishingPublishedAssertion),
               id: sql<string>`${randomId()}`.as("id"),
               generationId: sql<string>`${generationId}`.as("generation_id"),
+              media: retainedComponentArray(
+                publishingPublishedAssertion.media,
+                assertionCapturedAt(),
+                publishingPublishedAssertion.sourcePolicyId,
+                writeTime,
+              ).as("media"),
+              productionClaims: retainedComponentArray(
+                publishingPublishedAssertion.productionClaims,
+                assertionCapturedAt(),
+                publishingPublishedAssertion.sourcePolicyId,
+                writeTime,
+              ).as("production_claims"),
             })
             .from(publishingPublishedAssertion)
             .innerJoin(
@@ -809,8 +820,8 @@ export async function applyOperatorImport(
                 publicPolicyAllows(assertionCapturedAt(), writeTime),
               ),
             ),
-        ),
-      );
+        );
+      statements.push(carried);
     }
     for (const record of publishable) {
       const subjectId = record.document.canonicalSubjectId;
@@ -917,16 +928,45 @@ export async function cleanupPublishingCopies(
   try {
     const [, staged, assertions] = await deps.db.batch([
       publishingWriteLock(deps.db),
-      deps.db.delete(publishingStagedRecord).where(sql`exists (
-        select 1 from ${publishingSourcePolicy}
-        where ${publishingSourcePolicy.id} = ${publishingStagedRecord.sourcePolicyId}
-          and ${sourceCopyDue(publishingStagedRecord.capturedAt, now)}
-      )`).returning({ id: publishingStagedRecord.id }),
+      deps.db.delete(publishingStagedRecord).where(sql`
+        exists (
+          select 1 from ${publishingSourcePolicy}
+          where ${publishingSourcePolicy.id} = ${publishingStagedRecord.sourcePolicyId}
+            and ${sourceCopyDue(publishingStagedRecord.capturedAt, now)}
+        )
+        or exists (
+          select 1
+          from jsonb_array_elements(
+            coalesce(${publishingStagedRecord.document}->'media', '[]'::jsonb)
+            || coalesce(${publishingStagedRecord.document}->'productionClaims', '[]'::jsonb)
+          ) as component_item
+          where ${componentItemDue(
+            sql`component_item`,
+            sql`${publishingStagedRecord.capturedAt}`,
+            sql`${publishingStagedRecord.sourcePolicyId}`,
+            now,
+          )}
+        )
+      `).returning({ id: publishingStagedRecord.id }),
       deps.db.delete(publishingPublishedAssertion).where(sql`exists (
         select 1 from ${publishingSourcePolicy}
         where ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
           and ${sourceCopyDue(assertionCapturedAt(), now)}
       )`).returning({ id: publishingPublishedAssertion.id }),
+      deps.db.update(publishingPublishedAssertion).set({
+        media: retainedComponentArray(
+          publishingPublishedAssertion.media,
+          assertionCapturedAt(),
+          publishingPublishedAssertion.sourcePolicyId,
+          now,
+        ),
+        productionClaims: retainedComponentArray(
+          publishingPublishedAssertion.productionClaims,
+          assertionCapturedAt(),
+          publishingPublishedAssertion.sourcePolicyId,
+          now,
+        ),
+      }),
     ]);
     return { stagedDeleted: staged.length, assertionsDeleted: assertions.length };
   } catch {
@@ -2804,6 +2844,14 @@ function componentItemDue(item: SQL, fallbackCapturedAt: SQL, parentPolicyId: SQ
           or ${captured} + component_policy.retention_seconds * interval '1 second' <= ${now}
         )
     )
+  )`;
+}
+
+function retainedComponentArray(column: SQLWrapper, fallbackCapturedAt: SQL, parentPolicyId: SQLWrapper, now: SQLWrapper): SQL {
+  return sql`(
+    select coalesce(jsonb_agg(component_item order by component_ordinal), '[]'::jsonb)
+    from jsonb_array_elements(coalesce(${column}, '[]'::jsonb)) with ordinality as component_row(component_item, component_ordinal)
+    where not ${componentItemDue(sql`component_item`, fallbackCapturedAt, parentPolicyId, now)}
   )`;
 }
 

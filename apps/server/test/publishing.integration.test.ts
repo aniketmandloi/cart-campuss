@@ -2298,6 +2298,180 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.equal(await caller(null).publishing.detail({ subjectId: input.records[0]!.document.canonicalSubjectId }), null);
   });
 
+  it("removes an expired component copy from every generation and does not restore it", async () => {
+    const policyId = crypto.randomUUID();
+    const input = reviewedImport("Cleanup Component Coupe");
+    const imageUrl = input.records[0]!.document.media[0]!.sourceUrl;
+    const productionTitle = "Cleanup component production";
+    input.sourcePolicy.id = crypto.randomUUID();
+    input.sourcePolicy.imagePermission = "denied";
+    input.sourcePolicy.permittedFields = [...input.sourcePolicy.permittedFields, "productionClaims"];
+    input.componentPolicies = [{
+      ...input.sourcePolicy,
+      id: policyId,
+      imagePermission: "permitted",
+      retentionSeconds: 1,
+      permittedFields: ["displayName", "productionClaims"],
+      permittedGeographies: ["IN"],
+    }];
+    input.records[0]!.document.media[0]!.sourcePolicyId = policyId;
+    input.records[0]!.document.media[0]!.retrievedAt = BASE_TIME;
+    input.records[0]!.document.media[0]!.countryCode = "IN";
+    input.records[0]!.document.productionClaims = [{ ...productionClaim(policyId, 3), sourceTitle: productionTitle }];
+    input.records[0]!.privatePayload = { marker: "PRIVATE-CLEANUP-COMPONENT" };
+    const subject = input.records[0]!.document.canonicalSubjectId;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+
+    const later = () => new Date(new Date(BASE_TIME).getTime() + 2_000);
+    const neighbor = reviewedImport("Cleanup Component Neighbor Coupe");
+    neighbor.sourcePolicy.id = crypto.randomUUID();
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(neighbor)).status, "published");
+    const generations = await db.select().from(publishingProjectionGeneration);
+    const latest = generations.reduce((current, row) => row.generation > current.generation ? row : current);
+    const copies = await db.select().from(publishingPublishedAssertion)
+      .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subject}`);
+    const currentCopy = copies.find((row) => row.generationId === latest.id);
+    const previousCopy = copies.find((row) => row.generationId !== latest.id);
+    assert.equal(copies.length, 2);
+    assert.equal(JSON.stringify(currentCopy?.media).includes(imageUrl), false);
+    assert.equal(JSON.stringify(currentCopy?.productionClaims).includes(productionTitle), false);
+    assert.equal(JSON.stringify(previousCopy?.media).includes(imageUrl), true);
+    assert.equal(JSON.stringify(previousCopy?.productionClaims).includes(productionTitle), true);
+    assert.equal((currentCopy?.facts as Array<{ rawValue: string }>).some((fact) => fact.rawValue === "100 PS"), true);
+
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: later }, OPERATOR_TOKEN);
+    const after = await db.select().from(publishingPublishedAssertion)
+      .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subject}`);
+    assert.equal(after.length, 2);
+    assert.equal(after.every((row) => !JSON.stringify(row.media).includes(imageUrl)), true);
+    assert.equal(after.every((row) => !JSON.stringify(row.productionClaims).includes(productionTitle)), true);
+    assert.equal(after.every((row) => (row.facts as Array<{ rawValue: string }>).some((fact) => fact.rawValue === "100 PS")), true);
+    const staged = await db.select().from(publishingStagedRecord);
+    assert.equal(staged.some((row) => row.externalId === input.records[0]!.externalId), false);
+    assert.equal(staged.some((row) => JSON.stringify(row.privatePayload).includes("PRIVATE-CLEANUP-COMPONENT")), false);
+    const detail = await caller(null, later).publishing.detail({ subjectId: subject });
+    assert.equal(detail?.media.length, 0);
+    assert.equal(detail?.facts.some((fact) => fact.rawValue === "100 PS"), true);
+
+    assert.equal((await caller(OPERATOR_TOKEN, later).publishing.submit(input)).status, "replayed");
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => JSON.stringify(row.privatePayload).includes("PRIVATE-CLEANUP-COMPONENT")), false);
+    const restage = structuredClone(input);
+    restage.idempotencyKey += "-restage";
+    await assert.rejects(() => caller(OPERATOR_TOKEN, later).publishing.submit(restage), /retention deadline/);
+    const restored = await db.select().from(publishingPublishedAssertion)
+      .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subject}`);
+    assert.equal(restored.every((row) => !JSON.stringify(row.media).includes(imageUrl)), true);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => row.externalId === input.records[0]!.externalId), false);
+  });
+
+  it("removes suspended or missing component copies and expired copies that lapse during cleanup", async () => {
+    const suspendedPolicyId = crypto.randomUUID();
+    const suspended = reviewedImport("Cleanup Suspended Component Coupe");
+    const suspendedImage = suspended.records[0]!.document.media[0]!.sourceUrl;
+    suspended.sourcePolicy.id = crypto.randomUUID();
+    suspended.sourcePolicy.imagePermission = "denied";
+    suspended.componentPolicies = [{
+      ...suspended.sourcePolicy,
+      id: suspendedPolicyId,
+      imagePermission: "permitted",
+      retentionSeconds: 86_400,
+      permittedGeographies: ["IN"],
+    }];
+    suspended.records[0]!.document.media[0]!.sourcePolicyId = suspendedPolicyId;
+    suspended.records[0]!.document.media[0]!.retrievedAt = BASE_TIME;
+    suspended.records[0]!.document.media[0]!.countryCode = "IN";
+    suspended.records[0]!.privatePayload = { marker: "PRIVATE-SUSPENDED-COMPONENT" };
+    const suspendedSubject = suspended.records[0]!.document.canonicalSubjectId;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(suspended)).status, "published");
+    await db.update(publishingSourcePolicy).set({ suspended: true }).where(sql`${publishingSourcePolicy.id} = ${suspendedPolicyId}`);
+
+    const missingPolicyId = crypto.randomUUID();
+    const missing = reviewedImport("Cleanup Missing Component Coupe");
+    const missingImage = missing.records[0]!.document.media[0]!.sourceUrl;
+    missing.sourcePolicy.id = crypto.randomUUID();
+    missing.sourcePolicy.imagePermission = "denied";
+    missing.componentPolicies = [{
+      ...missing.sourcePolicy,
+      id: missingPolicyId,
+      imagePermission: "permitted",
+      retentionSeconds: 86_400,
+      permittedGeographies: ["IN"],
+    }];
+    missing.records[0]!.document.media[0]!.sourcePolicyId = missingPolicyId;
+    missing.records[0]!.document.media[0]!.retrievedAt = BASE_TIME;
+    missing.records[0]!.document.media[0]!.countryCode = "IN";
+    missing.records[0]!.privatePayload = { marker: "PRIVATE-MISSING-COMPONENT" };
+    const missingSubject = missing.records[0]!.document.canonicalSubjectId;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(missing)).status, "published");
+    await db.delete(publishingSourcePolicy).where(sql`${publishingSourcePolicy.id} = ${missingPolicyId}`);
+
+    await cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: testClock }, OPERATOR_TOKEN);
+    for (const [subject, imageUrl, marker] of [
+      [suspendedSubject, suspendedImage, "PRIVATE-SUSPENDED-COMPONENT"],
+      [missingSubject, missingImage, "PRIVATE-MISSING-COMPONENT"],
+    ] as const) {
+      const rows = await db.select().from(publishingPublishedAssertion)
+        .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${subject}`);
+      assert.ok(rows.length >= 1);
+      assert.equal(rows.every((row) => !JSON.stringify(row.media).includes(imageUrl)), true);
+      assert.equal(rows.every((row) => (row.facts as Array<{ rawValue: string }>).some((fact) => fact.rawValue === "100 PS")), true);
+      assert.equal((await db.select().from(publishingStagedRecord)).some((row) => JSON.stringify(row.privatePayload).includes(marker)), false);
+    }
+
+    const [clock] = await db.select({ currentTime: sql<string>`clock_timestamp()` }).from(sql`(select 1) as clock_probe`);
+    assert.ok(clock);
+    const capturedAt = new Date(clock.currentTime).toISOString();
+    const waitingPolicyId = crypto.randomUUID();
+    const waiting = reviewedImport("Cleanup Lock Component Coupe");
+    const waitingImage = waiting.records[0]!.document.media[0]!.sourceUrl;
+    waiting.sourcePolicy.id = crypto.randomUUID();
+    waiting.sourcePolicy.imagePermission = "denied";
+    waiting.sourcePolicy.permissionExpiresAt = null;
+    waiting.sourcePolicy.retentionSeconds = 86_400;
+    waiting.componentPolicies = [{
+      ...waiting.sourcePolicy,
+      id: waitingPolicyId,
+      imagePermission: "permitted",
+      retentionSeconds: 2,
+      permissionExpiresAt: null,
+      permittedGeographies: ["IN"],
+    }];
+    waiting.records[0]!.document.facts[0]!.retrievedAt = capturedAt;
+    waiting.records[0]!.document.media[0]!.sourcePolicyId = waitingPolicyId;
+    waiting.records[0]!.document.media[0]!.retrievedAt = capturedAt;
+    waiting.records[0]!.document.media[0]!.countryCode = "IN";
+    waiting.records[0]!.privatePayload = { marker: "PRIVATE-LOCK-COMPONENT" };
+    const waitingSubject = waiting.records[0]!.document.canonicalSubjectId;
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(waiting)).status, "published");
+    assert.equal((await db.select().from(publishingPublishedAssertion).where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${waitingSubject}`)).some((row) => JSON.stringify(row.media).includes(waitingImage)), true);
+
+    const lockKey = 1128354388;
+    const release = await holdAdvisoryLock(lockKey);
+    const outcome = cleanupPublishingCopies({ db, operatorToken: OPERATOR_TOKEN, now: () => new Date(capturedAt) }, OPERATOR_TOKEN)
+      .then((value) => ({ value, error: null }), (error: unknown) => ({ value: null, error }));
+    try {
+      await until(async () => {
+        const [row] = await db.select({ waiting: sql<boolean>`exists (
+          select 1 from pg_locks where locktype = 'advisory' and objid = ${lockKey} and not granted
+        )` }).from(sql`(select 1) as lock_probe`);
+        return row?.waiting === true;
+      });
+      await until(async () => {
+        const [row] = await db.select({
+          due: sql<boolean>`clock_timestamp() >= cast(${capturedAt} as timestamptz) + interval '3 seconds'`,
+        }).from(sql`(select 1) as clock_probe`);
+        return row?.due === true;
+      });
+    } finally { await release(); }
+    const result = await outcome;
+    assert.equal(result.error, null);
+    const waitingRows = await db.select().from(publishingPublishedAssertion)
+      .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${waitingSubject}`);
+    assert.equal(waitingRows.every((row) => !JSON.stringify(row.media).includes(waitingImage)), true);
+    assert.equal(waitingRows.every((row) => (row.facts as Array<{ rawValue: string }>).some((fact) => fact.rawValue === "100 PS")), true);
+    assert.equal((await db.select().from(publishingStagedRecord)).some((row) => JSON.stringify(row.privatePayload).includes("PRIVATE-LOCK-COMPONENT")), false);
+  });
+
   it("reads an incomplete generation only from its approved projection", async () => {
     await db.insert(catalogueSourcePolicy).values({
       id: "policy-flag-generation",
