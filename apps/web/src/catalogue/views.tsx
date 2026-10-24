@@ -179,7 +179,7 @@ function DossierPageView({ page }: { page: DossierPage }) {
           ) : null}
         </div>
         <CostSection page={page} />
-        <div className="flex min-w-0 flex-col gap-8">
+        <div className="flex min-w-0 flex-col gap-14 lg:col-start-1 lg:row-start-2">
           <SpecsSection page={page} />
           <MarketSection page={page} />
           <SourcesSection page={page} />
@@ -336,41 +336,47 @@ function SectionNav({ page }: { page: DossierPage }) {
 function CostSection({ page }: { page: DossierPage }) {
   const price = page.availability === "visible" ? page.priceReference : null;
   return (
-    <section id="cost" className="flex min-w-0 flex-col gap-2 lg:row-span-2" aria-labelledby="india-cost">
-      <h2 id="india-cost" className="text-base font-medium">
+    <section
+      id="cost"
+      className="rise-on-scroll flex min-w-0 scroll-mt-28 flex-col gap-6 border border-border bg-card p-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
+      aria-labelledby="india-cost"
+    >
+      <h2 id="india-cost" className="text-2xl font-semibold tracking-tight">
         India cost
       </h2>
       {page.availability === "incompatible" ? (
         <p>This market, model year, and variant are not a record of this car.</p>
       ) : page.availability === "visible" ? (
         <>
-          <h3 id="price-reference" className="text-base font-medium">
+          <h3 id="price-reference" className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
             Price reference
           </h3>
           {price ? (
             <>
-              <p className="text-2xl font-medium tabular-nums leading-none text-[var(--data)]">
+              <p className="text-5xl leading-none font-semibold tracking-tight text-data tabular-nums">
                 {price.displayAmount}
               </p>
-              <p className="text-sm text-muted-foreground">
-                {price.amountMinor} {price.currency} minor units, exponent {price.minorUnitExponent}
-              </p>
-              <p>{price.basis}</p>
-              <p>Tax inclusivity: {price.taxInclusivity}</p>
-              <p>Source: {sourceText(price.sourceTitle, price.sourceUrl)}</p>
-              {price.sourceIdentifier ? <p>Source identifier: {price.sourceIdentifier}</p> : null}
-              <p>Observed {price.observedOn}</p>
-              <p>Retrieved {price.retrievedOn}</p>
-              {price.fetchedAt ? <p>Fetched {price.fetchedAt}</p> : null}
-              {price.lastSuccessfulProviderSyncAt ? (
-                <p>Last provider sync {price.lastSuccessfulProviderSyncAt}</p>
-              ) : null}
-              <p>Review: {price.reviewStatus}</p>
-              <ReviewState freshness={price.freshness} reviewedOn={price.reviewedOn} />
-              {price.nextRecheckAt ? <p>Next recheck {price.nextRecheckAt}</p> : null}
-              <p>Source policy: {price.policyName}</p>
-              <p>Audience: {price.policyAudience}</p>
-              <p className="break-words">{price.policyAttribution}</p>
+              <div className="flex flex-col gap-2 border-t border-border pt-5 text-sm text-muted-foreground">
+                <p>
+                  {price.amountMinor} {price.currency} minor units, exponent {price.minorUnitExponent}
+                </p>
+                <p>{price.basis}</p>
+                <p>Tax inclusivity: {price.taxInclusivity}</p>
+                <p>Source: {sourceText(price.sourceTitle, price.sourceUrl)}</p>
+                {price.sourceIdentifier ? <p>Source identifier: {price.sourceIdentifier}</p> : null}
+                <p>Observed {price.observedOn}</p>
+                <p>Retrieved {price.retrievedOn}</p>
+                {price.fetchedAt ? <p>Fetched {price.fetchedAt}</p> : null}
+                {price.lastSuccessfulProviderSyncAt ? (
+                  <p>Last provider sync {price.lastSuccessfulProviderSyncAt}</p>
+                ) : null}
+                <p>Review: {price.reviewStatus}</p>
+                <ReviewState freshness={price.freshness} reviewedOn={price.reviewedOn} />
+                {price.nextRecheckAt ? <p>Next recheck {price.nextRecheckAt}</p> : null}
+                <p>Source policy: {price.policyName}</p>
+                <p>Audience: {price.policyAudience}</p>
+                <p className="break-words">{price.policyAttribution}</p>
+              </div>
             </>
           ) : (
             <p>No reviewed price reference.</p>
@@ -390,8 +396,8 @@ function SpecsSection({ page }: { page: DossierPage }) {
   const facts = evidenced ? page.facts : [];
   const claims = evidenced ? page.productionClaims : [];
   return (
-    <section id="specs" className="flex flex-col gap-6" aria-labelledby="specs-heading">
-      <h2 id="specs-heading" className="text-base font-medium">
+    <section id="specs" className="rise-on-scroll flex scroll-mt-28 flex-col gap-10" aria-labelledby="specs-heading">
+      <h2 id="specs-heading" className="text-2xl font-semibold tracking-tight">
         Specs
       </h2>
       {evidenced ? (
@@ -413,8 +419,8 @@ function SpecsSection({ page }: { page: DossierPage }) {
 
 function FactGroup({ label, facts }: { label: string; facts: CatalogueFact[] }) {
   return (
-    <section className="flex flex-col gap-3">
-      <h3 className="text-sm font-medium">{label}</h3>
+    <section className="flex flex-col">
+      <h3 className="pb-3 text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">{label}</h3>
       {facts.length === 0 ? <p><Blank /></p> : facts.map((fact, index) => (
         <FactRecord key={`${fact.property}-${index}`} fact={fact} />
       ))}
@@ -424,8 +430,8 @@ function FactGroup({ label, facts }: { label: string; facts: CatalogueFact[] }) 
 
 function ProductionHistory({ claims }: { claims: CatalogueProductionClaim[] }) {
   return (
-    <section id="production-history" className="flex flex-col gap-3" aria-labelledby="production-heading">
-      <h3 id="production-heading" className="text-sm font-medium">
+    <section id="production-history" className="flex flex-col gap-4" aria-labelledby="production-heading">
+      <h3 id="production-heading" className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
         Production history
       </h3>
       {claims.length === 0 ? (
@@ -460,8 +466,8 @@ function ProductionHistory({ claims }: { claims: CatalogueProductionClaim[] }) {
 function SeparateCounts({ facts }: { facts: CatalogueFact[] }) {
   if (facts.length === 0) return null;
   return (
-    <section className="flex flex-col gap-3" aria-labelledby="separate-counts">
-      <h3 id="separate-counts" className="text-sm font-medium">
+    <section className="flex flex-col gap-4" aria-labelledby="separate-counts">
+      <h3 id="separate-counts" className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
         Sales, registrations, and exports
       </h3>
       <p>These counts are not production.</p>
@@ -477,11 +483,11 @@ function MarketSection({ page }: { page: DossierPage }) {
   const listings = page.availability === "visible" ? (page.marketListings ?? []) : [];
   const label = page.availability === "visible" ? page.marketLabel : "No market data";
   return (
-    <section id="market" className="flex flex-col gap-2" aria-labelledby="market-heading">
-      <h2 id="market-heading" className="text-base font-medium">
+    <section id="market" className="rise-on-scroll flex scroll-mt-28 flex-col gap-4" aria-labelledby="market-heading">
+      <h2 id="market-heading" className="text-2xl font-semibold tracking-tight">
         Market
       </h2>
-      <h3 id="market-data" className="text-base font-medium">
+      <h3 id="market-data" className="text-lg font-medium">
         {label}
       </h3>
       {directory.length === 0 && listings.length === 0 ? (
@@ -490,9 +496,9 @@ function MarketSection({ page }: { page: DossierPage }) {
         </p>
       ) : null}
       {directory.map((entry) => (
-        <div key={entry.url} className="flex flex-col gap-1 text-sm">
+        <div key={entry.url} className="flex flex-col gap-1 border-b border-border py-4 text-sm">
           <p>{entry.title}</p>
-          <a className="break-all" href={entry.url} rel="noreferrer noopener" target="_blank">
+          <a className="link-draw break-all" href={entry.url} rel="noreferrer noopener" target="_blank">
             {entry.url}
           </a>
           <ReviewState freshness={entry.freshness} reviewedOn={entry.lastReviewedAt} />
@@ -503,9 +509,9 @@ function MarketSection({ page }: { page: DossierPage }) {
         </div>
       ))}
       {listings.map((listing) => (
-        <div key={listing.url} className="flex flex-col gap-1 text-sm">
+        <div key={listing.url} className="flex flex-col gap-1 border-b border-border py-4 text-sm">
           <p>{listing.title}</p>
-          <a className="break-all" href={listing.url} rel="noreferrer noopener" target="_blank">
+          <a className="link-draw break-all" href={listing.url} rel="noreferrer noopener" target="_blank">
             {listing.url}
           </a>
           <p>{listing.priceType}</p>
@@ -550,13 +556,13 @@ function ListingState({
 
 function SourcesSection({ page }: { page: DossierPage }) {
   return (
-    <section id="sources" className="flex flex-col gap-3" aria-labelledby="sources-heading">
-      <h2 id="sources-heading" className="text-base font-medium">
+    <section id="sources" className="rise-on-scroll flex scroll-mt-28 flex-col gap-6" aria-labelledby="sources-heading">
+      <h2 id="sources-heading" className="text-2xl font-semibold tracking-tight">
         Sources
       </h2>
       <PolicyBlock policy={page.policy} />
       <p>
-        <a href={page.correctionHref} className="inline-flex min-h-11 items-center break-words">
+        <a href={page.correctionHref} className="link-draw inline-flex min-h-11 items-center break-words">
           Report a correction
         </a>
       </p>
@@ -566,40 +572,44 @@ function SourcesSection({ page }: { page: DossierPage }) {
 
 function FactRecord({ fact }: { fact: CatalogueFact }) {
   return (
-    <div className="flex flex-col gap-1 border-b border-border py-3 text-sm">
+    <div
+      className={`grid gap-x-8 gap-y-3 border-b border-l-2 py-5 pl-4 text-sm sm:grid-cols-[minmax(0,12rem)_minmax(0,1fr)] ${RAIL_TONE[fact.freshness ?? "current"]}`}
+    >
       <h4 className="font-medium">{fact.property}</h4>
-      <FactState fact={fact} />
-      {fact.curatedReason ? <p>{fact.curatedReason}</p> : null}
-      {fact.state === "known" || fact.state === "unknown" ? (
-        <>
-          <p>
-            Normalized: <MaybeValue value={fact.state === "known" ? fact.normalizedValue : null} />
-          </p>
-          <p>
-            Unit: <MaybeValue value={fact.state === "known" ? fact.unit : null} />
-          </p>
-          <p>
-            Standard:{" "}
-            <MaybeValue value={fact.state === "known" ? fact.measurementStandard : null} />
-          </p>
-        </>
-      ) : null}
-      <p className="break-words">{sourceText(fact.sourceTitle, fact.sourceUrl)}</p>
-      <p>{fact.policyName}</p>
-      <p>Audience: {fact.policyAudience}</p>
-      <p className="break-words">{fact.policyAttribution}</p>
-      <p>Retrieved {fact.retrievedOn}</p>
-      {fact.observedOn ? <p>Observed {fact.observedOn}</p> : null}
-      {fact.fetchedAt ? <p>Fetched {fact.fetchedAt}</p> : null}
-      {fact.lastSuccessfulProviderSyncAt ? (
-        <p>Last provider sync {fact.lastSuccessfulProviderSyncAt}</p>
-      ) : null}
-      <p>{fact.reviewStatus}</p>
-      <ReviewState freshness={fact.freshness} reviewedOn={fact.reviewedOn} />
-      {fact.nextRecheckAt ? <p>Next recheck {fact.nextRecheckAt}</p> : null}
-      {fact.factualReviewerRef ? <p>Factual reviewer: {fact.factualReviewerRef}</p> : null}
-      {fact.rightsReviewerRef ? <p>Rights reviewer: {fact.rightsReviewerRef}</p> : null}
-      {fact.conflict ? <ConflictReading conflict={fact.conflict} /> : null}
+      <div className="flex min-w-0 flex-col gap-1 text-muted-foreground">
+        <FactState fact={fact} />
+        {fact.curatedReason ? <p>{fact.curatedReason}</p> : null}
+        {fact.state === "known" || fact.state === "unknown" ? (
+          <>
+            <p>
+              Normalized: <MaybeValue value={fact.state === "known" ? fact.normalizedValue : null} />
+            </p>
+            <p>
+              Unit: <MaybeValue value={fact.state === "known" ? fact.unit : null} />
+            </p>
+            <p>
+              Standard:{" "}
+              <MaybeValue value={fact.state === "known" ? fact.measurementStandard : null} />
+            </p>
+          </>
+        ) : null}
+        <p className="break-words">{sourceText(fact.sourceTitle, fact.sourceUrl)}</p>
+        <p>{fact.policyName}</p>
+        <p>Audience: {fact.policyAudience}</p>
+        <p className="break-words">{fact.policyAttribution}</p>
+        <p>Retrieved {fact.retrievedOn}</p>
+        {fact.observedOn ? <p>Observed {fact.observedOn}</p> : null}
+        {fact.fetchedAt ? <p>Fetched {fact.fetchedAt}</p> : null}
+        {fact.lastSuccessfulProviderSyncAt ? (
+          <p>Last provider sync {fact.lastSuccessfulProviderSyncAt}</p>
+        ) : null}
+        <p>{fact.reviewStatus}</p>
+        <ReviewState freshness={fact.freshness} reviewedOn={fact.reviewedOn} />
+        {fact.nextRecheckAt ? <p>Next recheck {fact.nextRecheckAt}</p> : null}
+        {fact.factualReviewerRef ? <p>Factual reviewer: {fact.factualReviewerRef}</p> : null}
+        {fact.rightsReviewerRef ? <p>Rights reviewer: {fact.rightsReviewerRef}</p> : null}
+        {fact.conflict ? <ConflictReading conflict={fact.conflict} /> : null}
+      </div>
     </div>
   );
 }
@@ -631,7 +641,7 @@ function FactState({ fact }: { fact: CatalogueFact }) {
   }
   return (
     <>
-      <p>{fact.rawValue}</p>
+      <p className="text-base text-foreground">{fact.rawValue}</p>
       {fact.measurementStandard ? <p>{fact.measurementStandard}</p> : null}
     </>
   );
@@ -670,7 +680,7 @@ function ConflictReading({ conflict }: { conflict: CatalogueAssertion }) {
 function PolicyBlock({ policy }: { policy: CataloguePolicy }) {
   return (
     <section className="flex flex-col gap-2" aria-labelledby="source-policy">
-      <h2 id="source-policy" className="text-base font-medium">
+      <h2 id="source-policy" className="text-lg font-semibold">
         Source policy
       </h2>
       <p>{policy.name}</p>
@@ -852,9 +862,9 @@ function MaybeValue({ value }: { value: string | null }) {
 }
 
 const RAIL_TONE = {
-  current: "border-foreground/30",
-  stale: "border-stale",
-  "not-checked": "border-dashed border-faint",
+  current: "border-l-foreground/40",
+  stale: "border-l-stale",
+  "not-checked": "border-l-faint/35",
 } as const;
 
 function Rail({
@@ -883,7 +893,7 @@ function Blank() {
 function sourceText(title: string, url: string | null) {
   if (url && /^https?:\/\//i.test(url)) {
     return (
-      <a href={url} rel="noreferrer">
+      <a href={url} rel="noreferrer" className="link-draw">
         {title}
       </a>
     );
