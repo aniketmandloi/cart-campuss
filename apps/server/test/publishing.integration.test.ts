@@ -2280,6 +2280,60 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
     assert.doesNotMatch(html, /invented-unit|not-a-measurement|hidden-length|secret-unit/);
   });
 
+  it("reads a model shell from its approved projection without inventing a generation", async () => {
+    const input = modelCatalogueImport("Model Shell Coupe");
+    assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(input)).status, "published");
+    const hits = (await caller(null).catalogue.search({ q: "model shell coupe" })).hits;
+    assert.equal(hits.length, 1);
+    const hit = hits[0];
+    assert.ok(hit);
+    assert.equal(hit.scope, "model");
+    if (hit.scope !== "model") return;
+    assert.equal(hit.applicabilityId, null);
+    assert.equal(hit.generationId, null);
+    assert.equal(hit.modelId, "model-model-shell-coupe");
+    assert.equal(hit.href, "/cars/model-model-shell-coupe");
+
+    const page = await caller(null).catalogue.readModel({ modelSlug: "model-model-shell-coupe" });
+    assert.equal(page.availability, "scoped");
+    if (page.availability !== "scoped" || page.scope !== "model") return;
+    assert.equal(page.identity.modelName, "Model Shell Coupe Model");
+    assert.equal("generationName" in page.identity, false);
+    assert.equal(page.selector.generations.length, 0);
+    assert.equal(page.selector.markets.length, 0);
+    assert.equal(page.selector.years.length, 0);
+    assert.equal(page.selector.variants.length, 0);
+    assert.equal(page.facts.some((item) => item.rawValue === "100 PS"), true);
+    assert.equal(page.sections.map((section) => section.label).join(","), "Overview,Specs,Market,India cost,Sources");
+    assert.match(decodeURIComponent(page.correctionHref.replaceAll("+", " ")), /Generation: not selected/);
+
+    const loaders = await importCatalogueLoaders();
+    const views = await importCatalogueViews();
+    const html = renderToStaticMarkup(
+      createElement(views.CatalogueDetailView, {
+        state: await loaders.loadCatalogueModelForContext(catalogueRuntime(), { modelSlug: "model-model-shell-coupe" }),
+      }),
+    );
+    assert.match(html, /100 PS/);
+    assert.match(html, /No generation, model year, or variant is part of this record/);
+    assert.match(html, /Comparison and finance wait until a market, model year, and variant are selected/);
+    assert.match(html, /No generation is part of this record/);
+    assert.doesNotMatch(html, /Model year|Labeled Mark|Base/);
+    assert.match(html, /id="specs"/);
+    assert.match(html, /id="cost"/);
+    assert.match(html, /id="sources"/);
+
+    await db
+      .update(publishingSourcePolicy)
+      .set({ suspended: true })
+      .where(sql`${publishingSourcePolicy.id} = ${input.sourcePolicy.id}`);
+    assert.equal((await caller(null).catalogue.search({ q: "model shell coupe" })).hits.length, 0);
+    assert.equal(
+      (await caller(null).catalogue.readModel({ modelSlug: "model-model-shell-coupe" })).availability,
+      "not-in-public-catalogue",
+    );
+  });
+
 });
 
 function pauseNextBatch(database: Database) {
@@ -2431,6 +2485,26 @@ function reviewedImport(name: string): ReviewedImport {
   };
 }
 
+function modelCatalogueImport(name: string): ReviewedImport {
+  const input = labelledCatalogueImport(name);
+  const slug = name.toLowerCase().replaceAll(" ", "-");
+  const modelId = `model-${slug}`;
+  input.sourcePolicy.permittedFields = ["displayName", "alias", "power", "torque", "brand", "model"];
+  const record = input.records[0];
+  assert.ok(record);
+  record.document.canonicalSubjectId = modelId;
+  record.document.modelYearLabel = null;
+  record.document.aliases = [`${name} model alias`];
+  record.identity.canonicalSubjectId = modelId;
+  record.catalogue = undefined;
+  record.modelCatalogue = {
+    brand: { id: `brand-${slug}`, name, slug: `brand-${slug}` },
+    model: { id: modelId, name: `${name} Model`, slug: `model-${slug}` },
+    aliases: [{ kind: "model", name: `${name} Model` }],
+  };
+  return input;
+}
+
 function generationCatalogueImport(name: string): ReviewedImport {
   const input = labelledCatalogueImport(name);
   const slug = name.toLowerCase().replaceAll(" ", "-");
@@ -2565,6 +2639,10 @@ async function importCatalogueLoaders(): Promise<{
   loadCatalogueCarForContext: (
     runtime: ReturnType<typeof catalogueRuntime>,
     input: ReturnType<typeof catalogueReadInput>,
+  ) => Promise<CatalogueDetailState>;
+  loadCatalogueModelForContext: (
+    runtime: ReturnType<typeof catalogueRuntime>,
+    input: { modelSlug: string },
   ) => Promise<CatalogueDetailState>;
 }> {
   return import(moduleSpecifier(["..", "..", "web", "src", "catalogue", "load-state.ts"]));

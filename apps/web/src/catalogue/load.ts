@@ -5,10 +5,10 @@ import type { Context } from "@cart-campuss/api/context";
 
 import { ENV } from "@/env.server";
 
-import { loadCatalogueCarForContext, loadCatalogueSearchForContext } from "./load-state";
+import { loadCatalogueCarForContext, loadCatalogueModelForContext, loadCatalogueSearchForContext } from "./load-state";
 import type { CatalogueDetailState, CatalogueSearchState } from "./views";
 
-export { loadCatalogueCarForContext, loadCatalogueSearchForContext } from "./load-state";
+export { loadCatalogueCarForContext, loadCatalogueModelForContext, loadCatalogueSearchForContext } from "./load-state";
 
 type Runtime = Context;
 
@@ -26,6 +26,14 @@ export const loadCatalogueSearch = cache(async (query: string): Promise<Catalogu
   if (!runtime) return { kind: "unconfigured", query: trimmed, privatePreview };
   return loadCatalogueSearchForContext(runtime, trimmed);
 });
+
+export const loadCatalogueModel = cache(
+  async (input: { modelSlug: string; section?: string; registration?: string }): Promise<CatalogueDetailState> => {
+    const runtime = catalogueRuntime();
+    if (!runtime) return { kind: "unconfigured" };
+    return loadCatalogueModelForContext(runtime, input);
+  },
+);
 
 export const loadCatalogueCar = cache(
   async (input: {

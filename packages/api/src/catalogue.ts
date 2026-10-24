@@ -4,6 +4,7 @@ import {
   catalogueBrand,
   catalogueGeneration,
   catalogueGenerationAlias,
+  catalogueModelAlias,
   catalogueImage,
   catalogueMarketVariant,
   catalogueModel,
@@ -23,7 +24,9 @@ import type { CatalogueAccess } from "./context";
 import {
   buildApplicabilitySelector,
   catalogueContextHref,
+  catalogueModelHref,
   correctionIssueUrl,
+  dossierModelSections,
   dossierSections,
   parseDossierSection,
   type DossierSection,
@@ -62,6 +65,11 @@ export type CatalogueSearchHit =
       generationId: string;
       generationName: string;
       generationSlug: string;
+    })
+  | (CatalogueSearchIdentity & {
+      scope: "model";
+      applicabilityId: null;
+      generationId: null;
     });
 
 export type CatalogueSearchResult = {
@@ -176,6 +184,8 @@ type GenerationIdentity = Pick<
   "brandName" | "modelName" | "generationName" | "modelSlug" | "generationSlug"
 >;
 
+type ModelIdentity = Pick<CatalogueIdentity, "brandName" | "modelName" | "modelSlug">;
+
 type DossierShell = {
   privatePreview: boolean;
   synthetic: boolean;
@@ -212,6 +222,13 @@ export type CatalogueCarPage =
       availability: "scoped";
       scope: "generation";
       identity: GenerationIdentity;
+      facts: CatalogueFact[];
+      productionClaims: CatalogueProductionClaim[];
+    } & DossierShell
+  | {
+      availability: "scoped";
+      scope: "model";
+      identity: ModelIdentity;
       facts: CatalogueFact[];
       productionClaims: CatalogueProductionClaim[];
     } & DossierShell
@@ -365,6 +382,15 @@ export async function searchCatalogue(
     const generations = await searchBareGenerations(db, access, normalized, now());
     for (const hit of generations) {
       if (hits.length === 20) break;
+      hits.push(hit);
+    }
+  }
+  if (hits.length < 20) {
+    const seenModels = new Set(hits.map((hit) => hit.modelId));
+    const models = await searchBareModels(db, access, normalized, now());
+    for (const hit of models) {
+      if (hits.length === 20 || seenModels.has(hit.modelId)) continue;
+      seenModels.add(hit.modelId);
       hits.push(hit);
     }
   }
@@ -592,6 +618,114 @@ export async function readCatalogueCar(
     marketLabel: "No market data",
     productionClaims,
   };
+}
+
+export type ModelSelection = {
+  modelSlug: string;
+  section?: DossierSection;
+  registration?: string;
+};
+
+export async function readCatalogueModel(
+  db: Database,
+  access: CatalogueAccess,
+  selection: ModelSelection,
+  now: () => Date = () => new Date(),
+): Promise<CatalogueCarPage> {
+  const privatePreview = access.allowFixtures;
+  const clock = now();
+  const section = parseDossierSection(selection.section);
+  const located = await findModelBySlug(db, selection.modelSlug);
+  if (!located) return { availability: "not-in-public-catalogue", privatePreview };
+  const projection = await readPublishedCatalogueDetail(db, located.modelId, () => clock);
+  if (
+    !projection ||
+    projection.identityScope !== "model" ||
+    !["brand", "model"].every((field) => projection.permittedFields.includes(field))
+  ) {
+    return { availability: "not-in-public-catalogue", privatePreview };
+  }
+  const rows = await loadVisibleApplicability(db, access, located.modelId, clock);
+  const generations = await listVisibleGenerations(db, access, located.modelId, rows, clock);
+  if (rows.length > 0 || generations.length > 0) {
+    return { availability: "not-in-public-catalogue", privatePreview };
+  }
+  const policy = policyFromProjection(
+    { name: projection.policyName ?? "", audience: "public", attribution: projection.attribution },
+    projection,
+  );
+  const requested = {
+    market: null,
+    year: null,
+    variant: null,
+    section,
+    registration: selection.registration ?? null,
+  };
+  const pagePath = catalogueModelHref({
+    modelSlug: located.modelSlug,
+    section,
+    registration: requested.registration,
+  });
+  return {
+    availability: "scoped",
+    scope: "model",
+    privatePreview,
+    synthetic: false,
+    policy,
+    selector: buildApplicabilitySelector({
+      modelSlug: located.modelSlug,
+      generations: [],
+      currentGenerationId: "",
+      currentGenerationSlug: "",
+      rows: [],
+      requested,
+    }),
+    sections: dossierModelSections({
+      modelSlug: located.modelSlug,
+      section,
+      registration: requested.registration,
+    }),
+    context: requested,
+    rebadge: await readRebadge(db, access, located.rebadgeOfModelId, clock),
+    aliases: projection.permittedFields.includes("alias") ? projection.aliases : [],
+    image: imageFromMedia(projection.media[0], policy),
+    correctionHref: correctionIssueUrl({
+      brandName: located.brandName,
+      modelName: located.modelName,
+      generationName: "not selected",
+      applicabilityId: null,
+      salesMarketId: null,
+      modelYearId: null,
+      variantId: null,
+      pagePath,
+    }),
+    identity: {
+      brandName: located.brandName,
+      modelName: located.modelName,
+      modelSlug: located.modelSlug,
+    },
+    facts: projectionFacts(projection, policy),
+    productionClaims: projectionProduction(projection, policy),
+  };
+}
+
+async function findModelBySlug(
+  db: Database,
+  modelSlug: string,
+): Promise<{ modelId: string; modelName: string; modelSlug: string; brandName: string; rebadgeOfModelId: string | null } | null> {
+  const [row] = await db
+    .select({
+      modelId: catalogueModel.id,
+      modelName: catalogueModel.name,
+      modelSlug: catalogueModel.slug,
+      brandName: catalogueBrand.name,
+      rebadgeOfModelId: catalogueModel.rebadgeOfModelId,
+    })
+    .from(catalogueModel)
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .where(eq(catalogueModel.slug, modelSlug))
+    .limit(1);
+  return row ?? null;
 }
 
 type GenerationRecord = {
@@ -1150,6 +1284,85 @@ async function searchBareGenerations(
         modelSlug: row.modelSlug,
         generationSlug: row.generationSlug,
       }),
+    });
+  }
+  return hits;
+}
+
+async function searchBareModels(
+  db: Database,
+  access: CatalogueAccess,
+  normalized: string,
+  now: Date,
+): Promise<CatalogueSearchHit[]> {
+  const upper = prefixUpperBound(normalized);
+  const rows = await db
+    .select({
+      modelId: catalogueModel.id,
+      modelName: catalogueModel.name,
+      modelSlug: catalogueModel.slug,
+      brandName: catalogueBrand.name,
+      normalizedName: catalogueModelAlias.normalizedName,
+    })
+    .from(catalogueModelAlias)
+    .innerJoin(catalogueModel, eq(catalogueModelAlias.modelId, catalogueModel.id))
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .where(
+      and(
+        sql`${catalogueModelAlias.normalizedName} ~>=~ ${normalized}`,
+        sql`${catalogueModelAlias.normalizedName} ~<~ ${upper}`,
+        currentScopedProjectionCovers(catalogueModel.id, "model", now),
+      ),
+    )
+    .orderBy(
+      sql`case when ${catalogueModelAlias.normalizedName} = ${normalized} then 0 else 1 end`,
+      asc(catalogueModel.id),
+    )
+    .limit(20);
+  if (rows.length === 0) return [];
+  const ids = rows.map((row) => row.modelId);
+  const generationRows = await db
+    .select({ modelId: catalogueGeneration.modelId })
+    .from(catalogueGeneration)
+    .leftJoin(
+      catalogueSourcePolicy,
+      eq(catalogueGeneration.sourcePolicyId, catalogueSourcePolicy.id),
+    )
+    .where(and(inArray(catalogueGeneration.modelId, ids), selfVisibleGenerationSql(access, now)));
+  const applicabilityRows = await db
+    .select({ modelId: catalogueModel.id })
+    .from(catalogueApplicability)
+    .innerJoin(
+      catalogueMarketVariant,
+      eq(catalogueApplicability.marketVariantId, catalogueMarketVariant.id),
+    )
+    .innerJoin(catalogueGeneration, eq(catalogueMarketVariant.generationId, catalogueGeneration.id))
+    .innerJoin(catalogueModel, eq(catalogueGeneration.modelId, catalogueModel.id))
+    .innerJoin(
+      catalogueSourcePolicy,
+      eq(catalogueApplicability.sourcePolicyId, catalogueSourcePolicy.id),
+    )
+    .where(and(inArray(catalogueModel.id, ids), visibleRecord(access, now)));
+  const occupied = new Set([
+    ...generationRows.map((row) => row.modelId),
+    ...applicabilityRows.map((row) => row.modelId),
+  ]);
+  const seen = new Set<string>();
+  const hits: CatalogueSearchHit[] = [];
+  for (const row of rows) {
+    if (occupied.has(row.modelId) || seen.has(row.modelId)) continue;
+    seen.add(row.modelId);
+    hits.push({
+      scope: "model",
+      applicabilityId: null,
+      generationId: null,
+      modelId: row.modelId,
+      brandName: row.brandName,
+      modelName: row.modelName,
+      modelSlug: row.modelSlug,
+      match: row.normalizedName === normalized ? "exact" : "prefix",
+      synthetic: false,
+      href: catalogueModelHref({ modelSlug: row.modelSlug }),
     });
   }
   return hits;

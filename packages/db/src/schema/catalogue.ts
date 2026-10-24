@@ -393,6 +393,21 @@ export const catalogueRouteRedirect = pgTable(
   (table) => [uniqueIndex("catalogue_route_redirect_pair").on(table.modelSlug, table.generationSlug)],
 );
 
+export const catalogueModelAlias = pgTable(
+  "catalogue_model_alias",
+  {
+    id: text("id").primaryKey(),
+    modelId: text("model_id")
+      .notNull()
+      .references(() => catalogueModel.id),
+    normalizedName: text("normalized_name").notNull(),
+  },
+  (table) => [
+    uniqueIndex("catalogue_model_alias_pair").on(table.modelId, table.normalizedName),
+    index("catalogue_model_alias_name_idx").on(table.normalizedName.op("text_pattern_ops")),
+  ],
+);
+
 export const catalogueGenerationAlias = pgTable(
   "catalogue_generation_alias",
   {

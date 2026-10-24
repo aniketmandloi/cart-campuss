@@ -7,6 +7,7 @@ export {
   catalogueImage,
   catalogueMarketVariant,
   catalogueModel,
+  catalogueModelAlias,
   catalogueModelYear,
   cataloguePriceReference,
   catalogueProductionClaim,

@@ -103,7 +103,6 @@ export function CatalogueDetailView({ state }: { state: CatalogueDetailState }) 
 
 function DossierPageView({ page }: { page: DossierPage }) {
   const selected = page.availability === "visible";
-  const scoped = page.availability === "scoped";
   const cost = page.sections.find((section) => section.id === "cost");
   return (
     <main id="catalogue" className="mx-auto w-full max-w-[1120px] px-4 py-8">
@@ -115,8 +114,14 @@ function DossierPageView({ page }: { page: DossierPage }) {
           <header className="flex flex-col gap-2">
             <p className="text-sm text-muted-foreground">{page.identity.brandName}</p>
             <h1 className="text-2xl font-medium">{page.identity.modelName}</h1>
-            <p>{page.identity.generationName}</p>
-            {scoped ? <p>No market, model year, or variant is part of this record.</p> : null}
+            {"generationName" in page.identity ? <p>{page.identity.generationName}</p> : null}
+            {page.availability === "scoped" ? (
+              <p>
+                {page.scope === "model"
+                  ? "No generation, model year, or variant is part of this record."
+                  : "No market, model year, or variant is part of this record."}
+              </p>
+            ) : null}
             {page.aliases.map((alias) => (
               <p key={alias}>Also called {alias}</p>
             ))}
@@ -221,6 +226,10 @@ function ApplicabilitySelector({ page }: { page: DossierPage }) {
         <p>This market, model year, and variant are not a record of this car.</p>
       ) : page.availability === "overview" ? (
         <p>Specifications are shown only after you choose a market, model year, and variant.</p>
+      ) : page.availability === "scoped" && page.scope === "model" ? (
+        <p>This record is the model. It does not name a generation, model year, or variant.</p>
+      ) : page.availability === "scoped" ? (
+        <p>This record is the generation. It does not name a market, model year, or variant.</p>
       ) : (
         <p>Choose another market, model year, or variant to read that record.</p>
       )}
@@ -239,6 +248,8 @@ function ApplicabilitySelector({ page }: { page: DossierPage }) {
             ))}
           </ul>
         </div>
+      ) : page.availability === "scoped" && page.scope === "model" ? (
+        <p>No generation is part of this record.</p>
       ) : (
         <p>No applicability record is published for this generation.</p>
       )}
@@ -654,11 +665,16 @@ function SearchStatus({ state }: { state: CatalogueSearchState }) {
   return (
     <ul id="catalogue-results">
       {state.result.hits.map((hit) => (
-        <li key={`${hit.scope}-${hit.scope === "applicability" ? hit.applicabilityId : hit.generationId}`} className="border-b border-border py-3">
+        <li
+          key={`${hit.scope}-${hit.scope === "applicability" ? hit.applicabilityId : hit.scope === "generation" ? hit.generationId : hit.modelId}`}
+          className="border-b border-border py-3"
+        >
           <TextLink href={hit.href}>
             {hit.brandName} {hit.modelName}
           </TextLink>
-          {hit.scope === "generation" ? (
+          {hit.scope === "model" ? (
+            <p className="text-sm text-muted-foreground">No generation is selected.</p>
+          ) : hit.scope === "generation" ? (
             <p className="text-sm text-muted-foreground">
               {hit.generationName}. No variant is selected.
             </p>

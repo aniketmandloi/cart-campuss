@@ -26,6 +26,33 @@ export function parseDossierSection(value: string | undefined): DossierSection {
   return "overview";
 }
 
+export function catalogueModelHref(input: {
+  modelSlug: string;
+  section?: DossierSection | null;
+  registration?: string | null;
+}): string {
+  const params = new URLSearchParams();
+  if (input.section && input.section !== "overview") params.set("section", input.section);
+  if (input.registration) params.set("registration", input.registration);
+  const query = params.toString();
+  const path = `/cars/${input.modelSlug}`;
+  return query ? `${path}?${query}` : path;
+}
+
+export function dossierModelSections(input: {
+  modelSlug: string;
+  section?: DossierSection | null;
+  registration?: string | null;
+}): DossierLink[] {
+  const section = input.section ?? "overview";
+  return DOSSIER_SECTIONS.map((id) => ({
+    id,
+    label: SECTION_LABELS[id],
+    href: `${catalogueModelHref({ ...input, section: id })}#${id}`,
+    current: section === id,
+  }));
+}
+
 export function catalogueContextHref(input: {
   modelSlug: string;
   generationSlug: string;
