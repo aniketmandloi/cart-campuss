@@ -877,16 +877,16 @@ export async function applyOperatorImport(
   }
 
   statements.push(rejectDueImport(deps.db, batchId, writeTime, status === "published"));
-  // Retention is checked for every staged, held, and published write. Main-policy
-  // suspension and permission expiry stay on the held result and its copy delete.
+  // Retention expiry rolls back staged, held, and published writes. Suspension or
+  // permission expiry keeps the staged or held result, then drops that copy. A due
+  // image or production policy does the same, including a component that field or
+  // geography rights omitted from the stored document.
   statements.push(rejectExpiredComponentRetention(deps.db, batchId, writeTime));
   if (status === "published") statements.push(rejectDueComponents(deps.db, batchId, writeTime));
   if (status !== "published") {
     statements.push(deps.db.delete(publishingStagedRecord).where(and(
       eq(publishingStagedRecord.batchId, batchId),
-      sql`exists (select 1 from ${publishingSourcePolicy}
-        where ${publishingSourcePolicy.id} = ${publishingStagedRecord.sourcePolicyId}
-          and ${sourceCopyDue(publishingStagedRecord.capturedAt, writeTime)})`,
+      nonpublishedStagedCopyDue(parsed, writeTime),
     )));
   }
 
@@ -931,26 +931,7 @@ export async function cleanupPublishingCopies(
   try {
     const [, staged, assertions] = await deps.db.batch([
       publishingWriteLock(deps.db),
-      deps.db.delete(publishingStagedRecord).where(sql`
-        exists (
-          select 1 from ${publishingSourcePolicy}
-          where ${publishingSourcePolicy.id} = ${publishingStagedRecord.sourcePolicyId}
-            and ${sourceCopyDue(publishingStagedRecord.capturedAt, now)}
-        )
-        or exists (
-          select 1
-          from jsonb_array_elements(
-            coalesce(${publishingStagedRecord.document}->'media', '[]'::jsonb)
-            || coalesce(${publishingStagedRecord.document}->'productionClaims', '[]'::jsonb)
-          ) as component_item
-          where ${componentItemDue(
-            sql`component_item`,
-            sql`${publishingStagedRecord.capturedAt}`,
-            sql`${publishingStagedRecord.sourcePolicyId}`,
-            now,
-          )}
-        )
-      `).returning({ id: publishingStagedRecord.id }),
+      deps.db.delete(publishingStagedRecord).where(storedStagedCopyDue(now)).returning({ id: publishingStagedRecord.id }),
       deps.db.delete(publishingPublishedAssertion).where(sql`exists (
         select 1 from ${publishingSourcePolicy}
         where ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
@@ -2836,6 +2817,53 @@ function componentCapturedAt(item: SQL, fallbackCapturedAt: SQLWrapper, parentPo
     when ${policyId} = ${parentPolicyId}::text then least(coalesce(${ownCapture}, ${fallbackCapturedAt}), ${fallbackCapturedAt})
     else coalesce(${ownCapture}, ${fallbackCapturedAt})
   end)`;
+}
+
+function storedStagedCopyDue(now: SQLWrapper): SQL {
+  return sql`(
+    exists (
+      select 1 from ${publishingSourcePolicy}
+      where ${publishingSourcePolicy.id} = ${publishingStagedRecord.sourcePolicyId}
+        and ${sourceCopyDue(publishingStagedRecord.capturedAt, now)}
+    )
+    or ${componentsDue(sql`
+      coalesce(${publishingStagedRecord.document}->'media', '[]'::jsonb)
+      || coalesce(${publishingStagedRecord.document}->'productionClaims', '[]'::jsonb)
+    `, now)}
+  )`;
+}
+
+function nonpublishedStagedCopyDue(parsed: OperatorImport, now: SQLWrapper): SQL {
+  return sql`(${storedStagedCopyDue(now)} or ${incomingComponentsDue(parsed, now)})`;
+}
+
+/** Field or geography omissions are not in the stored document, so the import's own copies are checked too. */
+function incomingComponentsDue(parsed: OperatorImport, now: SQLWrapper): SQL {
+  const checks: SQL[] = [];
+  for (const record of parsed.records) {
+    const items = [...record.document.media, ...record.document.productionClaims];
+    if (items.length === 0) continue;
+    checks.push(sql`(
+      ${publishingStagedRecord.providerKey} = ${parsed.providerKey}
+      and ${publishingStagedRecord.externalId} = ${record.externalId}
+      and ${componentsDue(sql`cast(${JSON.stringify(items)} as jsonb)`, now)}
+    )`);
+  }
+  if (checks.length === 0) return sql`false`;
+  return sql`(${sql.join(checks, sql` or `)})`;
+}
+
+function componentsDue(items: SQL, now: SQLWrapper): SQL {
+  return sql`exists (
+    select 1
+    from jsonb_array_elements(${items}) as component_item
+    where ${componentItemDue(
+      sql`component_item`,
+      sql`${publishingStagedRecord.capturedAt}`,
+      sql`${publishingStagedRecord.sourcePolicyId}`,
+      now,
+    )}
+  )`;
 }
 
 function componentItemDue(item: SQL, fallbackCapturedAt: SQLWrapper, parentPolicyId: SQLWrapper, now: SQLWrapper): SQL {
