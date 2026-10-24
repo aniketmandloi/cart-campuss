@@ -1,4 +1,5 @@
 import type { AppRouter } from "@cart-campuss/api/routers/index";
+import { publicProjectionQueryOptions } from "@/catalogue/public-cache";
 import { QueryCache, QueryClient } from "@tanstack/react-query";
 import { createTRPCClient, httpBatchLink } from "@trpc/client";
 import { createTRPCOptionsProxy } from "@trpc/tanstack-react-query";
@@ -33,6 +34,7 @@ function getServerUrl(url: string) {
 }
 
 export const queryClient = new QueryClient({
+  defaultOptions: { queries: publicProjectionQueryOptions },
   queryCache: new QueryCache({
     onError: (error, query) => {
       toast.error(error.message, {
