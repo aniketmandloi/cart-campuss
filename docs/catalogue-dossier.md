@@ -39,6 +39,8 @@ A record has one of `catalogue`, `generationCatalogue`, or `modelCatalogue`.
 
 `componentPolicies` is an array of source policies, each with its own `id`. Media and `productionClaims` may set `sourcePolicyId`. Omitting it uses the record policy. A separate policy needs `retrievedAt`. When that policy expires, is suspended, loses retention, or leaves the country, the public page hides that image or production count and keeps the identity facts.
 
+A production count is public only when the governing policy, main or separate, lists `productionClaims` in `permittedFields`. That one field covers the whole claim: scope, geography, period, count, status, what was counted, and the source metadata. Fact permission alone does not publish it. Without `productionClaims`, the count is left out of the assertion and the page, and the other permitted facts stay.
+
 `productionClaims` items are `{ scope, geography, period, count, status, counted, sourceTitle, sourceUrl, observedAt, retrievedAt, reviewedOn, countryCode, sourcePolicyId? }`. `status` is `planned` or `completed`. `counted` must not be sales, registrations, or exports.
 
 Fact fields:

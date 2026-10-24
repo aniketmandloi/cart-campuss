@@ -638,6 +638,7 @@ export async function readPublishedCatalogueDetail(
     permissionExpiresAt: row.permissionExpiresAt,
     retentionSeconds: row.retentionSeconds,
     permittedGeographies: row.permittedGeographies,
+    permittedFields: row.permittedFields,
     imagePermission: row.imagePermission,
     factPermission: row.factPermission,
     attribution: row.attribution,
@@ -1675,6 +1676,8 @@ function publicAssertion(
   const productionClaims = record.document.productionClaims.flatMap((claim) => {
     const governing = governingPolicy(policy, policyId, claim.sourcePolicyId, componentPolicies);
     if (!governing || governing.policy.factPermission !== "permitted") return [];
+    // One permission covers the count and its scope, geography, period, and source metadata.
+    if (!governing.policy.permittedFields.includes("productionClaims")) return [];
     if (/(sale|registration|export)/i.test(claim.counted)) return [];
     if (
       textLeaksIdentifier([
@@ -2654,6 +2657,7 @@ type ComponentPolicyRow = {
   permissionExpiresAt: string | null;
   retentionSeconds: number;
   permittedGeographies: string[];
+  permittedFields: string[];
   imagePermission: string;
   factPermission: string;
   attribution: string;
@@ -2673,6 +2677,7 @@ function componentPolicyAllows(
   if (!policy.permittedGeographies.includes(item.countryCode)) return false;
   if (kind === "image" && policy.imagePermission !== "permitted") return false;
   if (kind === "fact" && policy.factPermission !== "permitted") return false;
+  if (kind === "fact" && !policy.permittedFields.includes("productionClaims")) return false;
   if (policy.attribution.trim().length === 0) return false;
   return true;
 }
@@ -2688,6 +2693,7 @@ async function readComponentPolicies(db: Database, ids: string[]): Promise<Map<s
       permissionExpiresAt: publishingSourcePolicy.permissionExpiresAt,
       retentionSeconds: publishingSourcePolicy.retentionSeconds,
       permittedGeographies: publishingSourcePolicy.permittedGeographies,
+      permittedFields: publishingSourcePolicy.permittedFields,
       imagePermission: publishingSourcePolicy.imagePermission,
       factPermission: publishingSourcePolicy.factPermission,
       attribution: publishingSourcePolicy.attribution,

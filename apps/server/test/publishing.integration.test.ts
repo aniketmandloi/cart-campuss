@@ -1877,7 +1877,7 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
         factPermission: "permitted",
         imagePermission: "permitted",
         attribution: "Policy B attribution",
-        permittedFields: ["displayName"],
+        permittedFields: ["displayName", "productionClaims"],
         permittedGeographies: ["IN"],
       },
     ];
@@ -2023,6 +2023,99 @@ describe("reviewed catalogue publishing", { concurrency: 1, timeout: 120_000 }, 
       assert.equal(moved.image, null);
       assert.deepEqual(moved.productionClaims, []);
       assert.equal((await caller(null).catalogue.search({ q: "separate rights coupe" })).hits.length, 1);
+    }
+  });
+
+  it("publishes a production claim only when productionClaims is permitted", async () => {
+    for (const separate of [false, true]) {
+      const withheld = labelledCatalogueImport(`Production Field ${separate} Coupe`);
+      const withheldPolicyId = crypto.randomUUID();
+      if (separate) {
+        withheld.componentPolicies = [
+          {
+            ...withheld.sourcePolicy,
+            id: withheldPolicyId,
+            displayName: "Production field policy",
+            permittedFields: ["displayName"],
+            permittedGeographies: ["IN"],
+          },
+        ];
+      }
+      const withheldRecord = withheld.records[0];
+      assert.ok(withheldRecord);
+      withheldRecord.document.productionClaims = [
+        productionClaim(separate ? withheldPolicyId : undefined),
+      ];
+      assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(withheld)).status, "published");
+      const withheldSubject = withheldRecord.document.canonicalSubjectId;
+      const withheldDetail = await caller(null).publishing.detail({ subjectId: withheldSubject });
+      assert.ok(withheldDetail);
+      assert.deepEqual(withheldDetail.productionClaims, []);
+      assert.equal(withheldDetail.facts.some((fact) => fact.rawValue === "100 PS"), true);
+      const [withheldRow] = await db
+        .select({ productionClaims: publishingPublishedAssertion.productionClaims })
+        .from(publishingPublishedAssertion)
+        .where(sql`${publishingPublishedAssertion.canonicalSubjectId} = ${withheldSubject}`);
+      assert.deepEqual(withheldRow?.productionClaims, []);
+
+      const published = labelledCatalogueImport(`Production Permitted ${separate} Coupe`);
+      const publishedPolicyId = crypto.randomUUID();
+      if (separate) {
+        published.componentPolicies = [
+          {
+            ...published.sourcePolicy,
+            id: publishedPolicyId,
+            displayName: "Production field policy",
+            permittedFields: ["displayName", "productionClaims"],
+            permittedGeographies: ["IN"],
+          },
+        ];
+      } else {
+        published.sourcePolicy.permittedFields = [...published.sourcePolicy.permittedFields, "productionClaims"];
+      }
+      const publishedRecord = published.records[0];
+      assert.ok(publishedRecord);
+      publishedRecord.document.productionClaims = [
+        productionClaim(separate ? publishedPolicyId : undefined, 42),
+      ];
+      assert.equal((await caller(OPERATOR_TOKEN).publishing.submit(published)).status, "published");
+      const subjectId = publishedRecord.document.canonicalSubjectId;
+      const detail = await caller(null).publishing.detail({ subjectId });
+      assert.equal(detail?.productionClaims.length, 1);
+      assert.equal(detail?.productionClaims[0]?.count, 42);
+      assert.equal(detail?.productionClaims[0]?.sourceTitle, "Labeled production note");
+      const hits = await caller(null).catalogue.search({ q: `production permitted ${separate} coupe` });
+      assert.equal(hits.hits.length, 1);
+      const page = await caller(null).catalogue.read(catalogueReadInput(hits.hits[0]?.href ?? ""));
+      assert.equal(page.availability, "visible");
+      if (page.availability !== "visible") return;
+      assert.equal(page.productionClaims[0]?.count, 42);
+      assert.equal(page.facts.some((fact) => fact.rawValue === "100 PS"), true);
+
+      const governingId = separate ? publishedPolicyId : published.sourcePolicy.id;
+      const remainingFields = separate
+        ? ["displayName"]
+        : published.sourcePolicy.permittedFields.filter((field) => field !== "productionClaims");
+      await db
+        .update(publishingSourcePolicy)
+        .set({ permittedFields: remainingFields })
+        .where(sql`${publishingSourcePolicy.id} = ${governingId ?? ""}`);
+      const hidden = await caller(null).publishing.detail({ subjectId });
+      assert.deepEqual(hidden?.productionClaims, []);
+      assert.equal(hidden?.facts.some((fact) => fact.rawValue === "100 PS"), true);
+      const hiddenPage = await caller(null).catalogue.read(catalogueReadInput(hits.hits[0]?.href ?? ""));
+      assert.equal(hiddenPage.availability, "visible");
+      if (hiddenPage.availability !== "visible") return;
+      assert.deepEqual(hiddenPage.productionClaims, []);
+      const loaders = await importCatalogueLoaders();
+      const views = await importCatalogueViews();
+      const html = renderToStaticMarkup(
+        createElement(views.CatalogueDetailView, {
+          state: await loaders.loadCatalogueCarForContext(catalogueRuntime(), catalogueReadInput(hits.hits[0]?.href ?? "")),
+        }),
+      );
+      assert.doesNotMatch(html, /Labeled production note|Completed 42/);
+      assert.match(html, /100 PS/);
     }
   });
 
@@ -2391,6 +2484,24 @@ type ReviewedImport = Omit<OperatorImportInput, "records" | "sourcePolicy"> & {
   };
   records: ReviewedRecord[];
 };
+
+function productionClaim(sourcePolicyId: string | undefined, count = 7) {
+  return {
+    scope: "Labeled generation",
+    geography: "India",
+    period: "2024",
+    count,
+    status: "completed" as const,
+    counted: "cars built",
+    sourceTitle: "Labeled production note",
+    sourceUrl: "https://example.test/production/labeled",
+    observedAt: BASE_TIME,
+    retrievedAt: BASE_TIME,
+    reviewedOn: "2026-10-22",
+    countryCode: "IN",
+    ...(sourcePolicyId ? { sourcePolicyId } : {}),
+  };
+}
 
 function fact(input: ReviewedImport, property: string, rawValue: string): InputFact {
   const template = input.records[0]?.document.facts[0];
