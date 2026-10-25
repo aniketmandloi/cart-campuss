@@ -5,10 +5,24 @@ import type { Context } from "@cart-campuss/api/context";
 
 import { ENV } from "@/env.server";
 
-import { loadCatalogueCarForContext, loadCatalogueModelForContext, loadCatalogueSearchForContext } from "./load-state";
+import {
+  loadCatalogueBrandForContext,
+  loadCatalogueCarForContext,
+  loadCatalogueHomeForContext,
+  loadCatalogueModelForContext,
+  loadCatalogueSearchForContext,
+} from "./load-state";
+import type { CatalogueBrandState, CatalogueBrowseState } from "./load-state";
 import type { CatalogueDetailState, CatalogueSearchState } from "./views";
 
-export { loadCatalogueCarForContext, loadCatalogueModelForContext, loadCatalogueSearchForContext } from "./load-state";
+export {
+  loadCatalogueBrandForContext,
+  loadCatalogueCarForContext,
+  loadCatalogueHomeForContext,
+  loadCatalogueModelForContext,
+  loadCatalogueSearchForContext,
+} from "./load-state";
+export type { CatalogueBrandState, CatalogueBrowseState } from "./load-state";
 
 type Runtime = Context;
 
@@ -17,6 +31,25 @@ let cached: { databaseUrl: string; allowFixtures: boolean; runtime: Runtime } | 
 export function catalogueAllowsFixtures(): boolean {
   return ENV.CATALOGUE_ALLOW_FIXTURES === true;
 }
+
+export const loadCatalogueHome = cache(async (registration?: string): Promise<CatalogueBrowseState> => {
+  const runtime = catalogueRuntime();
+  if (!runtime) return { kind: "unconfigured" };
+  return loadCatalogueHomeForContext(runtime, { registration });
+});
+
+export const loadCatalogueBrand = cache(
+  async (input: {
+    brandSlug: string;
+    generation?: string;
+    status?: string;
+    registration?: string;
+  }): Promise<CatalogueBrandState> => {
+    const runtime = catalogueRuntime();
+    if (!runtime) return { kind: "unconfigured" };
+    return loadCatalogueBrandForContext(runtime, input);
+  },
+);
 
 export const loadCatalogueSearch = cache(async (query: string): Promise<CatalogueSearchState> => {
   const trimmed = query.trim();
