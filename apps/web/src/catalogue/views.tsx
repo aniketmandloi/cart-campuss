@@ -182,7 +182,6 @@ function DossierPageView({ page }: { page: DossierPage }) {
             </a>
           ) : null}
           <ApplicabilitySelector page={page} />
-          <SectionNav page={page} />
           {page.context.registration ? (
             <p>
               Registration jurisdiction: {page.context.registration}. Not a tax calculation.
@@ -191,6 +190,7 @@ function DossierPageView({ page }: { page: DossierPage }) {
         </div>
         <CostSection page={page} />
         <div className="flex min-w-0 flex-col gap-14 lg:col-start-1 lg:row-start-2">
+          <SectionNav page={page} />
           <SpecsSection page={page} />
           <MarketSection page={page} />
           <SourcesSection page={page} />
