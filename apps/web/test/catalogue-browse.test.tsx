@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
+import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+
+Object.assign(globalThis, { React });
 
 import { insertSyntheticPreviewFixture } from "@cart-campuss/api/catalogue-fixture";
 import { createCatalogueContextFromClient } from "@cart-campuss/api/catalogue-runtime";
@@ -124,14 +127,14 @@ describe(
       assert.match(chosen.html, /href="\/brands\/harbor-probe\?registration=in-mh"/);
       assert.match(chosen.html, /href="\/cars\/plain-sedan\/mark-one\?registration=in-mh"/);
       assert.match(chosen.html, /name="registration" value="in-mh"/);
-      assert.doesNotMatch(chosen.html, /income|debt|deposit|take-home|emi|market=|year=|variant=/);
+      assert.doesNotMatch(chosen.html, personalScenario);
       assert.doesNotMatch(chosen.html, hidden);
 
       const dropped = await renderHome(publicContext, "income");
       assert.equal(dropped.home.kind, "ready");
       if (dropped.home.kind !== "ready") return;
       assert.equal(dropped.home.home.registration, null);
-      assert.doesNotMatch(dropped.html, /income|debt|deposit|take-home|emi/);
+      assert.doesNotMatch(dropped.html, personalScenario);
     });
 
     test("a brand page groups published models by generation and status", async () => {
@@ -200,8 +203,10 @@ describe(
       assert.equal(home.home.coverage.brands, 1);
       assert.equal(home.home.coverage.models, 2);
       assert.equal(home.home.coverage.applicabilityRecords, 1);
-      assert.equal(home.home.fixtureBrands.length, 1);
-      assert.equal(home.home.fixtureBrands[0]?.name, "Kestrel Fixture");
+      assert.deepEqual(
+        home.home.fixtureBrands.map((brand) => brand.name),
+        ["Kestrel Fixture", "Lumen Fixture", "Sketch Fixture"],
+      );
       assert.match(html, /1 brand, 2 models, and 1 applicability record in this catalogue/);
       assert.match(html, /id="published-brands"[\s\S]*Harbor Probe/);
       assert.match(html, /id="fixture-brands"[\s\S]*Kestrel Fixture/);
@@ -222,6 +227,8 @@ describe(
     });
   },
 );
+
+const personalScenario = /\b(?:income|debt|deposit|take-home|emi)\b|market=|year=|variant=/;
 
 async function renderHome(runtime: Context, registration?: string) {
   const home = await loadCatalogueHomeForContext(runtime, { registration });
@@ -268,7 +275,7 @@ insert into catalogue_model (id, brand_id, name, slug) values
   ('model_bypass', 'brand_bypass', 'Unreviewed Sedan', 'unreviewed-sedan');
 insert into catalogue_generation (id, model_id, name, slug, publication_status, synthetic, source_policy_id) values
   ('gen_mark_one', 'model_plain_sedan', 'Mark One', 'mark-one', 'published', false, 'policy_publishing_probe'),
-  ('gen_open_sheet', 'model_margin_note', 'Open Sheet', 'open-sheet', 'published', false, 'policy_publishing_probe'),
+  ('gen_margin_open', 'model_margin_note', 'Open Sheet', 'open-sheet', 'published', false, 'policy_publishing_probe'),
   ('gen_bypass', 'model_bypass', 'Mark', 'mark', 'published', false, 'policy_publishing_probe');
 insert into catalogue_model_year (id, label, convention) values ('year_probe_2024', '2024', 'Manufacturer model-year label. Not the calendar build year.');
 insert into catalogue_market_variant (id, generation_id, sales_market_id, name) values
@@ -335,7 +342,7 @@ insert into publishing_published_assertion (
     'applicability', '[]'::jsonb
   ),
   (
-    'assertion_open_sheet', 'generation_probe', 'probe', 'open-sheet', 'gen_open_sheet',
+    'assertion_open_sheet', 'generation_probe', 'probe', 'open-sheet', 'gen_margin_open',
     'Margin Note', '[]'::jsonb, 'IN', null,
     '[]'::jsonb, '[]'::jsonb, 'Reviewed public probe attribution.', 'policy_publishing_probe',
     'fact-reviewer', 'rights-reviewer', '2026-10-23T00:00:00.000Z', null, '2026-10-23T00:00:00.000Z',
