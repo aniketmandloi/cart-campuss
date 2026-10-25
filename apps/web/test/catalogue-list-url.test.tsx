@@ -1,16 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { renderToStaticMarkup } from "react-dom/server";
 
 import type { CatalogueSearchResult } from "@cart-campuss/api/catalogue";
-import {
-  catalogueControlFocusable,
-  catalogueListHref,
-  nextCatalogueSheetControl,
-  parseCatalogueListQuery,
-  readCatalogueScroll,
-  writeCatalogueScroll,
-} from "@cart-campuss/api/catalogue-filters";
+import { catalogueListHref, parseCatalogueListQuery, readCatalogueScroll, writeCatalogueScroll } from "@cart-campuss/api/catalogue-filters";
 
 import { CatalogueSearchView } from "../src/catalogue/views";
 
@@ -76,19 +68,56 @@ describe("shareable catalogue URL", () => {
     assert.equal(readCatalogueScroll(memory, "/cars?q=north"), null);
   });
 
-  test("the open filter sheet tabs past the hidden query to the visible controls", () => {
-    const html = renderToStaticMarkup(
-      <CatalogueSearchView state={{ kind: "results", query: "north", privatePreview: false, result: sheetResult }} />,
-    );
-    const controls = controlsInSheet(html);
-    const query = controls.find((control) => control.name === "q");
-    const body = controls.find((control) => control.name === "body");
-    assert.equal(query?.type, "hidden");
-    assert.equal(query && catalogueControlFocusable(query), false);
-    assert.equal(body?.focusable, true);
-    assert.equal(nextCatalogueSheetControl(controls, body?.id ?? "", true), "catalogue-filter-summary");
-    assert.equal(nextCatalogueSheetControl(controls, body?.id ?? "", false), "catalogue-filter-apply");
-    assert.equal(nextCatalogueSheetControl(controls, "catalogue-filter-summary", true), "catalogue-filter-reset");
+  test("the open filter sheet moves focus past the hidden query and restores it on close", async () => {
+    const { Window } = await import("happy-dom");
+    const dom = new Window({ url: "http://catalogue.local/cars?q=north" });
+    const restore = useDom(dom);
+    const reactGlobals = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    const previousAct = reactGlobals.IS_REACT_ACT_ENVIRONMENT;
+    reactGlobals.IS_REACT_ACT_ENVIRONMENT = true;
+    try {
+      const [{ createRoot }, { act }] = await Promise.all([import("react-dom/client"), import("react")]);
+      const host = document.createElement("div");
+      document.body.append(host);
+      const root = createRoot(host);
+      await act(async () => {
+        root.render(
+          <CatalogueSearchView state={{ kind: "results", query: "north", privatePreview: false, result: sheetResult }} />,
+        );
+      });
+
+      const summary = mustElement("catalogue-filter-summary");
+      const details = mustElement("catalogue-filters") as HTMLDetailsElement;
+      summary.focus();
+      await act(async () => {
+        details.open = true;
+      });
+      assert.equal(document.activeElement?.id, "catalogue-filter-body");
+
+      tab(details, false);
+      assert.equal(document.activeElement?.id, "catalogue-filter-apply");
+      tab(details, false);
+      assert.equal(document.activeElement?.id, "catalogue-filter-reset");
+      tab(details, false);
+      assert.equal(document.activeElement?.id, "catalogue-filter-summary");
+
+      mustElement("catalogue-filter-body").focus();
+      tab(details, true);
+      assert.equal(document.activeElement?.id, "catalogue-filter-summary");
+      assert.notEqual(document.activeElement?.id, hiddenQueryId());
+
+      await act(async () => {
+        details.open = false;
+      });
+      assert.equal(document.activeElement?.id, "catalogue-filter-summary");
+
+      await act(async () => {
+        root.unmount();
+      });
+    } finally {
+      reactGlobals.IS_REACT_ACT_ENVIRONMENT = previousAct;
+      restore();
+    }
   });
 });
 
@@ -116,26 +145,43 @@ const sheetResult: CatalogueSearchResult = {
   ],
 };
 
-function controlsInSheet(html: string): Array<{
-  id: string;
-  name: string;
-  type: string | null;
-  hidden: boolean;
-  disabled: boolean;
-  focusable: boolean;
-}> {
-  const start = html.indexOf('id="catalogue-filters"');
-  const sheet = html.slice(start, html.indexOf("</details>", start));
-  return [...sheet.matchAll(/<(summary|a|button|input|select|textarea)\b([^>]*)>/gi)].map((match) => {
-    const attrs = match[2] ?? "";
-    const type = /(?:^|\s)type="([^"]*)"/i.exec(attrs)?.[1] ?? null;
-    const control = {
-      id: /(?:^|\s)id="([^"]*)"/i.exec(attrs)?.[1] ?? "",
-      name: /(?:^|\s)name="([^"]*)"/i.exec(attrs)?.[1] ?? "",
-      type,
-      hidden: type === "hidden",
-      disabled: /(?:^|\s)disabled(?:\s|=|$)/i.test(attrs),
-    };
-    return { ...control, focusable: catalogueControlFocusable(control) };
-  });
+function mustElement(id: string): HTMLElement {
+  const element = document.getElementById(id);
+  if (!(element instanceof HTMLElement)) throw new Error(`Missing #${id}`);
+  return element;
+}
+
+function hiddenQueryId(): string | undefined {
+  const query = document.querySelector<HTMLInputElement>('input[name="q"]');
+  return query?.id;
+}
+
+function tab(details: HTMLElement, shift: boolean): void {
+  details.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: shift, bubbles: true, cancelable: true }));
+}
+
+function useDom(dom: import("happy-dom").Window): () => void {
+  const target = globalThis as unknown as Record<string, unknown>;
+  const previous = {
+    window: target.window,
+    document: target.document,
+    HTMLElement: target.HTMLElement,
+    Element: target.Element,
+    KeyboardEvent: target.KeyboardEvent,
+    HTMLInputElement: target.HTMLInputElement,
+  };
+  target.window = dom;
+  target.document = dom.document;
+  target.HTMLElement = dom.HTMLElement;
+  target.Element = dom.Element;
+  target.KeyboardEvent = dom.KeyboardEvent;
+  target.HTMLInputElement = dom.HTMLInputElement;
+  return () => {
+    target.window = previous.window;
+    target.document = previous.document;
+    target.HTMLElement = previous.HTMLElement;
+    target.Element = previous.Element;
+    target.KeyboardEvent = previous.KeyboardEvent;
+    target.HTMLInputElement = previous.HTMLInputElement;
+  };
 }
