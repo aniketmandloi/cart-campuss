@@ -1,7 +1,9 @@
 import { z } from "zod";
 
+import { listCatalogue } from "../catalogue-list";
+import { catalogueListInput } from "../catalogue-filters";
 import { readCatalogueBrand, readCatalogueHome } from "../browse";
-import { catalogueStatus, readCatalogueCar, readCatalogueModel, searchCatalogue } from "../catalogue";
+import { catalogueStatus, readCatalogueCar, readCatalogueModel } from "../catalogue";
 import { DOSSIER_SECTIONS } from "../dossier";
 import { publicProcedure, router } from "../index";
 
@@ -20,11 +22,9 @@ const canonicalId = z
 
 export const catalogueRouter = router({
   status: publicProcedure.query(({ ctx }) => catalogueStatus(ctx.access)),
-  search: publicProcedure
-    .input(z.object({ q: z.string().trim().min(1).max(80) }))
-    .query(({ ctx, input }) =>
-      searchCatalogue(ctx.db, ctx.access, input.q, ctx.now ?? (() => new Date())),
-    ),
+  search: publicProcedure.input(catalogueListInput).query(({ ctx, input }) =>
+    listCatalogue(ctx.db, ctx.access, input, ctx.now ?? (() => new Date())),
+  ),
   read: publicProcedure
     .input(
       z.object({
