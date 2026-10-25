@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { catalogueSearchStatement } from "@cart-campuss/api/catalogue";
 import { createCatalogueContextFromClient } from "@cart-campuss/api/catalogue-runtime";
 import type { Context } from "@cart-campuss/api/context";
 import { openIsolatedCatalogueDatabase, runPsql } from "@cart-campuss/api/psql-client";
@@ -80,20 +79,28 @@ describe(
         true,
       );
       assert.equal(aliasCount(schema), before);
-
-      const statement = catalogueSearchStatement(context.db, context.access, "harbor' or '1'='1");
-      assert.equal(statement.sql.includes("harbor"), false);
+      const injected = await caller.catalogue.search({ q: "harbor' or '1'='1" });
+      assert.equal(injected.hits.length, 0);
+      assert.equal(injected.suggestions.every((hit) => hit.match === "suggestion"), true);
       assert.equal(
-        statement.params.some((value) => String(value).includes("harbor")),
+        injected.suggestions.some((hit) => `${hit.brandName} ${hit.modelName}`.includes("'")),
+        false,
+      );
+
+      const ranked = await caller.catalogue.search({ q: "open sheet" });
+      assert.equal(ranked.hits[0]?.scope, "generation");
+      assert.equal(ranked.hits[0]?.match, "exact");
+      assert.equal(
+        ranked.hits.some((hit) => hit.scope === "applicability" && hit.match === "prefix"),
         true,
       );
-      const index = runPsql({
-        databaseUrl,
-        psql,
-        schema,
-        sql: `select indexdef from pg_indexes where schemaname = '${schema}' and indexname = 'catalogue_alias_trgm_idx'`,
-      });
-      assert.match(index, /gin_trgm_ops/);
+
+      const crowded = await caller.catalogue.search({ q: "padded name", brand: "harbro-probe" });
+      assert.deepEqual(
+        crowded.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])),
+        ["app_b_harbro"],
+      );
+      assert.equal(crowded.total, 1);
     });
 
     test("ambiguity names generation, sales market, and model year, and a miss suggests published models", async () => {
@@ -212,6 +219,7 @@ function fact(property: string, value: string): string {
 
 const sedanFacts = `'[${fact("Body", "sedan")},${fact("Powertrain", "petrol")},${fact("Transmission", "automatic")}]'`;
 const wagonFacts = `'[${fact("Body", "wagon")},${fact("Powertrain", "diesel")},${fact("Transmission", "manual")}]'`;
+const openFacts = `'[${fact("Body", "note")}]'`;
 
 const listProbeSql = `
 insert into catalogue_source_policy (id, name, audience, permits_public_catalogue, rights_review, attribution, internal_note)
@@ -244,8 +252,15 @@ insert into catalogue_applicability (
 insert into catalogue_alias (id, applicability_id, kind, normalized_name) values
   ('alias_a_brand', 'app_a_harbor', 'brand', 'harbor probe'),
   ('alias_a_north', 'app_a_harbor', 'alias', 'north coupe'),
+  ('alias_a_open', 'app_a_harbor', 'alias', 'open sheet base'),
   ('alias_b_brand', 'app_b_harbro', 'brand', 'harbro probe'),
-  ('alias_b_north', 'app_b_harbro', 'alias', 'north wagon');
+  ('alias_b_north', 'app_b_harbro', 'alias', 'north wagon'),
+  ('alias_b_padded', 'app_b_harbro', 'alias', 'padded name wagon');
+insert into catalogue_alias (id, applicability_id, kind, normalized_name)
+select 'alias_pad_' || g, 'app_a_harbor', 'alias', 'padded name ' || g
+from generate_series(1, 120) as g;
+insert into catalogue_generation_alias (id, generation_id, normalized_name)
+values ('gen_alias_open_sheet', 'gen_open_sheet', 'open sheet');
 insert into publishing_source_policy (
   id, provider_key, fact_permission, image_permission, permitted_fields, permitted_geographies,
   attribution, retention_seconds, derivative_restriction, aggregation_restriction,
@@ -277,7 +292,7 @@ insert into publishing_published_assertion (
 ) values
   (
     'assertion_a', 'generation_list', 'list-probe', 'harbor', 'app_a_harbor',
-    'Harbor Probe', '["north coupe"]'::jsonb, 'IN', '2024',
+    'Harbor Probe', '["north coupe","open sheet base"]'::jsonb, 'IN', '2024',
     ${sedanFacts}::jsonb,
     '[]'::jsonb, 'Reviewed list attribution.', 'policy_list_probe',
     'fact-reviewer', 'rights-reviewer', '2026-10-23T00:00:00.000Z', '2026-10-22T00:00:00.000Z', '2026-10-23T00:00:00.000Z',
@@ -287,7 +302,7 @@ insert into publishing_published_assertion (
   ),
   (
     'assertion_b', 'generation_list', 'list-probe', 'harbro', 'app_b_harbro',
-    'Harbro Probe', '["north wagon"]'::jsonb, 'JP', '2025',
+    'Harbro Probe', '["north wagon","padded name wagon"]'::jsonb, 'JP', '2025',
     ${wagonFacts}::jsonb,
     '[]'::jsonb, 'Reviewed list attribution.', 'policy_list_probe',
     'fact-reviewer', 'rights-reviewer', '2026-10-23T00:00:00.000Z', null, '2026-10-23T00:00:00.000Z',
@@ -298,7 +313,7 @@ insert into publishing_published_assertion (
   (
     'assertion_open', 'generation_list', 'list-probe', 'open-sheet', 'gen_open_sheet',
     'Margin Note', '[]'::jsonb, 'IN', null,
-    '[]'::jsonb, '[]'::jsonb, 'Reviewed list attribution.', 'policy_list_probe',
+    ${openFacts}::jsonb, '[]'::jsonb, 'Reviewed list attribution.', 'policy_list_probe',
     'fact-reviewer', 'rights-reviewer', '2026-10-23T00:00:00.000Z', null, '2026-10-23T00:00:00.000Z',
     null,
     'generation',

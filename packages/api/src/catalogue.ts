@@ -1294,8 +1294,7 @@ async function searchBareGenerations(
       eq(catalogueGeneration.sourcePolicyId, catalogueSourcePolicy.id),
     )
     .where(and(aliasNamePredicate(catalogueGenerationAlias.normalizedName, normalized, mode), selfVisibleGenerationSql(access, now)))
-    .orderBy(...aliasNameOrder(catalogueGenerationAlias.normalizedName, catalogueGeneration.id, normalized, mode))
-    .limit(20);
+    .orderBy(...aliasNameOrder(catalogueGenerationAlias.normalizedName, catalogueGeneration.id, normalized, mode));
   if (rows.length === 0) return [];
   const occupied = await db
     .select({ generationId: catalogueMarketVariant.generationId })
@@ -1386,8 +1385,7 @@ async function searchBareModels(
         currentScopedProjectionCovers(catalogueModel.id, "model", now),
       ),
     )
-    .orderBy(...aliasNameOrder(catalogueModelAlias.normalizedName, catalogueModel.id, normalized, mode))
-    .limit(20);
+    .orderBy(...aliasNameOrder(catalogueModelAlias.normalizedName, catalogueModel.id, normalized, mode));
   if (rows.length === 0) return [];
   const ids = rows.map((row) => row.modelId);
   const generationRows = await db
@@ -1554,8 +1552,7 @@ function buildCatalogueSearch(
     .orderBy(
       ...aliasNameOrder(catalogueAlias.normalizedName, catalogueApplicability.id, normalized, mode),
       asc(catalogueAlias.id),
-    )
-    .limit(100);
+    );
 }
 
 function aliasNamePredicate(column: AnyColumn, normalized: string, mode: "prefix" | "fuzzy"): SQL {
@@ -1593,6 +1590,64 @@ function nameMatch(
   return normalizedName === normalized ? "exact" : "prefix";
 }
 
+function matchRank(match: CatalogueSearchHit["match"]): number {
+  if (match === "exact") return 0;
+  if (match === "prefix" || match === "listed") return 1;
+  return 2;
+}
+
+function applicabilityCandidate(
+  row: {
+    applicabilityId: string;
+    generationId: string;
+    modelId: string;
+    brandName: string;
+    brandSlug: string;
+    modelName: string;
+    modelSlug: string;
+    generationName: string;
+    generationSlug: string;
+    salesMarketName: string;
+    salesMarketId: string;
+    modelYearLabel: string;
+    modelYearId: string;
+    variantName: string;
+    variantId: string;
+    synthetic: boolean;
+  },
+  match: CatalogueSearchHit["match"],
+  attributes: ReturnType<typeof emptyAttributes>,
+): CatalogueCandidate {
+  return {
+    hit: {
+      scope: "applicability",
+      applicabilityId: row.applicabilityId,
+      generationId: row.generationId,
+      modelId: row.modelId,
+      brandName: row.brandName,
+      modelName: row.modelName,
+      generationName: row.generationName,
+      modelSlug: row.modelSlug,
+      generationSlug: row.generationSlug,
+      salesMarketName: row.salesMarketName,
+      salesMarketId: row.salesMarketId,
+      modelYearLabel: row.modelYearLabel,
+      modelYearId: row.modelYearId,
+      variantName: row.variantName,
+      variantId: row.variantId,
+      match,
+      synthetic: row.synthetic,
+      href: catalogueCarHref(row),
+    },
+    brandSlug: row.brandSlug,
+    modelSlug: row.modelSlug,
+    generationSlug: row.generationSlug,
+    yearId: row.modelYearId,
+    marketId: row.salesMarketId,
+    ...attributes,
+  };
+}
+
 async function gatherNamedCandidates(
   db: Database,
   access: CatalogueAccess,
@@ -1608,7 +1663,7 @@ async function gatherNamedCandidates(
     seenModels.add(candidate.hit.modelId);
     candidates.push(candidate);
   }
-  return candidates;
+  return candidates.sort((left, right) => matchRank(left.hit.match) - matchRank(right.hit.match));
 }
 
 async function gatherSuggestions(
@@ -1663,34 +1718,7 @@ async function approveApplicabilityRows(
       attributes = attributesFromFacts(projection.facts);
     }
     seen.add(row.applicabilityId);
-    candidates.push({
-      hit: {
-        scope: "applicability",
-        applicabilityId: row.applicabilityId,
-        generationId: row.generationId,
-        modelId: row.modelId,
-        brandName: row.brandName,
-        modelName: row.modelName,
-        generationName: row.generationName,
-        modelSlug: row.modelSlug,
-        generationSlug: row.generationSlug,
-        salesMarketName: row.salesMarketName,
-        salesMarketId: row.salesMarketId,
-        modelYearLabel: row.modelYearLabel,
-        modelYearId: row.modelYearId,
-        variantName: row.variantName,
-        variantId: row.variantId,
-        match: nameMatch(mode, row.normalizedName, normalized),
-        synthetic: row.synthetic,
-        href: catalogueCarHref(row),
-      },
-      brandSlug: row.brandSlug,
-      modelSlug: row.modelSlug,
-      generationSlug: row.generationSlug,
-      yearId: row.modelYearId,
-      marketId: row.salesMarketId,
-      ...attributes,
-    });
+    candidates.push(applicabilityCandidate(row, nameMatch(mode, row.normalizedName, normalized), attributes));
   }
   return candidates;
 }
@@ -1729,8 +1757,7 @@ async function gatherBrowseCandidates(
     .innerJoin(catalogueSalesMarket, eq(catalogueApplicability.salesMarketId, catalogueSalesMarket.id))
     .innerJoin(catalogueModelYear, eq(catalogueApplicability.modelYearId, catalogueModelYear.id))
     .where(visibleRecord(access, now))
-    .orderBy(asc(catalogueApplicability.id))
-    .limit(500);
+    .orderBy(asc(catalogueApplicability.id));
   const candidates: CatalogueCandidate[] = [];
   for (const row of rows) {
     if (!row.synthetic && !publicMetadataEligible(stringValues(row))) continue;
@@ -1740,34 +1767,7 @@ async function gatherBrowseCandidates(
       if (!projection || !projectionMatchesIdentity(row, projection)) continue;
       attributes = attributesFromFacts(projection.facts);
     }
-    candidates.push({
-      hit: {
-        scope: "applicability",
-        applicabilityId: row.applicabilityId,
-        generationId: row.generationId,
-        modelId: row.modelId,
-        brandName: row.brandName,
-        modelName: row.modelName,
-        generationName: row.generationName,
-        modelSlug: row.modelSlug,
-        generationSlug: row.generationSlug,
-        salesMarketName: row.salesMarketName,
-        salesMarketId: row.salesMarketId,
-        modelYearLabel: row.modelYearLabel,
-        modelYearId: row.modelYearId,
-        variantName: row.variantName,
-        variantId: row.variantId,
-        match: "listed",
-        synthetic: row.synthetic,
-        href: catalogueCarHref(row),
-      },
-      brandSlug: row.brandSlug,
-      modelSlug: row.modelSlug,
-      generationSlug: row.generationSlug,
-      yearId: row.modelYearId,
-      marketId: row.salesMarketId,
-      ...attributes,
-    });
+    candidates.push(applicabilityCandidate(row, "listed", attributes));
   }
   const occupied = new Set(candidates.map((candidate) => candidate.hit.generationId).filter((id): id is string => id !== null));
   const generations = await db
@@ -1787,8 +1787,7 @@ async function gatherBrowseCandidates(
     .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
     .leftJoin(catalogueSourcePolicy, eq(catalogueGeneration.sourcePolicyId, catalogueSourcePolicy.id))
     .where(selfVisibleGenerationSql(access, now))
-    .orderBy(asc(catalogueGeneration.id))
-    .limit(500);
+    .orderBy(asc(catalogueGeneration.id));
   for (const row of generations) {
     if (occupied.has(row.generationId) || !publicMetadataEligible(stringValues(row))) continue;
     occupied.add(row.generationId);
@@ -1827,8 +1826,7 @@ async function gatherBrowseCandidates(
     .from(catalogueModel)
     .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
     .where(currentScopedProjectionCovers(catalogueModel.id, "model", now))
-    .orderBy(asc(catalogueModel.id))
-    .limit(500);
+    .orderBy(asc(catalogueModel.id));
   for (const row of models) {
     if (occupiedModels.has(row.modelId) || !publicMetadataEligible(stringValues(row))) continue;
     occupiedModels.add(row.modelId);
