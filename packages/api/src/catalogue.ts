@@ -1436,6 +1436,14 @@ async function currentScopedNameApproved(
     projection.aliases.some((alias) => normalizeCatalogueQuery(alias) === normalizedName);
 }
 
+export function applicabilityIsVisible(access: CatalogueAccess, now: Date): SQL {
+  return visibleRecord(access, now);
+}
+
+export function generationIsVisible(access: CatalogueAccess, now: Date): SQL {
+  return selfVisibleGenerationSql(access, now);
+}
+
 function selfVisibleGenerationSql(access: CatalogueAccess, now: Date): SQL {
   const published = currentScopedProjectionCovers(catalogueGeneration.id, "generation", now);
   if (!access.allowFixtures) return published;

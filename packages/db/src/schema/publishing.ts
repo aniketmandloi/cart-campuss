@@ -214,7 +214,7 @@ export const publishingPublishedAssertion = pgTable(
     index("publishing_published_subject").on(table.canonicalSubjectId),
     check(
       "publishing_published_assertion_identity_scope",
-      sql`${table.identityScope} in ('applicability', 'generation', 'model')`,
+      sql`${table.identityScope} in ('applicability', 'generation', 'model', 'collection')`,
     ),
   ],
 );

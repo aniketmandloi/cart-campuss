@@ -408,6 +408,54 @@ export const catalogueModelAlias = pgTable(
   ],
 );
 
+export const catalogueCollection = pgTable(
+  "catalogue_collection",
+  {
+    id: text("id").primaryKey(),
+    slug: text("slug").notNull().unique(),
+    name: text("name").notNull(),
+    summary: text("summary").notNull(),
+    sourcePolicyId: text("source_policy_id").references(() => catalogueSourcePolicy.id),
+    publicationStatus: text("publication_status"),
+    synthetic: boolean("synthetic").notNull().default(false),
+  },
+  (table) => [
+    check(
+      "catalogue_collection_publication",
+      sql`${table.publicationStatus} is null or ${table.publicationStatus} in ('published', 'fixture', 'withheld')`,
+    ),
+    check(
+      "catalogue_collection_fixture_is_synthetic",
+      sql`${table.publicationStatus} is null or (${table.publicationStatus} = 'fixture' and ${table.synthetic} = true) or (${table.publicationStatus} = 'published' and ${table.synthetic} = false) or ${table.publicationStatus} = 'withheld'`,
+    ),
+    check(
+      "catalogue_collection_policy",
+      sql`${table.publicationStatus} is null or ${table.publicationStatus} = 'withheld' or ${table.sourcePolicyId} is not null`,
+    ),
+  ],
+);
+
+export const catalogueCollectionMember = pgTable(
+  "catalogue_collection_member",
+  {
+    id: text("id").primaryKey(),
+    collectionId: text("collection_id")
+      .notNull()
+      .references(() => catalogueCollection.id),
+    modelId: text("model_id").references(() => catalogueModel.id),
+    generationId: text("generation_id").references(() => catalogueGeneration.id),
+    sortOrder: integer("sort_order").notNull(),
+  },
+  (table) => [
+    uniqueIndex("catalogue_collection_member_order").on(table.collectionId, table.sortOrder),
+    index("catalogue_collection_member_collection_idx").on(table.collectionId),
+    check(
+      "catalogue_collection_member_target",
+      sql`(${table.modelId} is not null and ${table.generationId} is null) or (${table.modelId} is null and ${table.generationId} is not null)`,
+    ),
+  ],
+);
+
 export const catalogueGenerationAlias = pgTable(
   "catalogue_generation_alias",
   {

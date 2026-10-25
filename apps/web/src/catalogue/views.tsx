@@ -11,7 +11,9 @@ import type {
 } from "@cart-campuss/api/catalogue";
 import type { DossierLink, DossierRecordLink } from "@cart-campuss/api/dossier";
 
+import { CatalogueBrowseSections } from "./browse-view";
 import { groupFacts, quickFactSlots, separateCounts } from "./facts";
+import type { CatalogueBrowseState } from "./load-state";
 import { DossierMark } from "./mark";
 
 export type CatalogueSearchState = {
@@ -33,7 +35,15 @@ export type CatalogueDetailState =
 
 type DossierPage = Extract<CatalogueCarPage, { availability: "visible" | "overview" | "incompatible" | "scoped" }>;
 
-export function CatalogueSearchView({ state }: { state: CatalogueSearchState }) {
+export function CatalogueSearchView({
+  state,
+  registrationId = null,
+  browse,
+}: {
+  state: CatalogueSearchState;
+  registrationId?: string | null;
+  browse?: CatalogueBrowseState;
+}) {
   return (
     <main id="catalogue" className="mx-auto flex w-full max-w-[1120px] flex-col gap-12 px-4 pt-12 pb-16 sm:pt-20">
       <div className="flex max-w-3xl flex-col gap-5">
@@ -53,9 +63,10 @@ export function CatalogueSearchView({ state }: { state: CatalogueSearchState }) 
       </div>
       {state.privatePreview ? <PreviewNotice /> : null}
       <div className="flex max-w-3xl flex-col gap-6">
-        <SearchForm query={state.query} />
-        <SearchStatus state={state} />
+        <SearchForm query={state.query} registrationId={registrationId} />
+        <SearchStatus state={state} registrationId={registrationId} />
       </div>
+      {browse ? <CatalogueBrowseSections state={browse} query={state.query} /> : null}
     </main>
   );
 }
@@ -171,7 +182,6 @@ function DossierPageView({ page }: { page: DossierPage }) {
             </a>
           ) : null}
           <ApplicabilitySelector page={page} />
-          <SectionNav page={page} />
           {page.context.registration ? (
             <p>
               Registration jurisdiction: {page.context.registration}. Not a tax calculation.
@@ -180,6 +190,7 @@ function DossierPageView({ page }: { page: DossierPage }) {
         </div>
         <CostSection page={page} />
         <div className="flex min-w-0 flex-col gap-14 lg:col-start-1 lg:row-start-2">
+          <SectionNav page={page} />
           <SpecsSection page={page} />
           <MarketSection page={page} />
           <SourcesSection page={page} />
@@ -338,7 +349,7 @@ function CostSection({ page }: { page: DossierPage }) {
   return (
     <section
       id="cost"
-      className="rise-on-scroll flex min-w-0 scroll-mt-28 flex-col gap-6 border border-border bg-card p-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
+      className="@container rise-on-scroll flex min-w-0 scroll-mt-28 flex-col gap-6 border border-border bg-card p-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
       aria-labelledby="india-cost"
     >
       <h2 id="india-cost" className="text-2xl font-semibold tracking-tight">
@@ -353,7 +364,7 @@ function CostSection({ page }: { page: DossierPage }) {
           </h3>
           {price ? (
             <>
-              <p className="text-5xl leading-none font-semibold tracking-tight text-data tabular-nums">
+              <p className="max-w-full min-w-0 text-[clamp(1.75rem,14cqi,3rem)] leading-tight font-semibold tracking-tight break-words text-data tabular-nums">
                 {price.displayAmount}
               </p>
               <div className="flex flex-col gap-2 border-t border-border pt-5 text-sm text-muted-foreground">
@@ -725,7 +736,7 @@ function Photograph({ image }: { image: CatalogueImage | null }) {
   );
 }
 
-function SearchForm({ query }: { query: string }) {
+function SearchForm({ query, registrationId }: { query: string; registrationId?: string | null }) {
   return (
     <form method="get" action="/" role="search" className="rise flex flex-col gap-3" style={stagger(3)}>
       <label htmlFor="catalogue-query" className="text-sm text-muted-foreground">
@@ -748,11 +759,18 @@ function SearchForm({ query }: { query: string }) {
           Search
         </button>
       </div>
+      {registrationId ? <input type="hidden" name="registration" value={registrationId} /> : null}
     </form>
   );
 }
 
-function SearchStatus({ state }: { state: CatalogueSearchState }) {
+function SearchStatus({
+  state,
+  registrationId,
+}: {
+  state: CatalogueSearchState;
+  registrationId?: string | null;
+}) {
   if (state.kind === "unconfigured") {
     return <p id="catalogue-results" className="text-muted-foreground">The catalogue database is not configured.</p>;
   }
@@ -775,7 +793,7 @@ function SearchStatus({ state }: { state: CatalogueSearchState }) {
           style={stagger(index + 4)}
         >
           <a
-            href={hit.href}
+            href={withRegistration(hit.href, registrationId)}
             className="group grid gap-3 py-5 transition-colors duration-300 hover:bg-card sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:gap-6 sm:px-4"
           >
             <span className="flex min-w-0 flex-col gap-1">
@@ -814,6 +832,14 @@ function SearchStatus({ state }: { state: CatalogueSearchState }) {
       ))}
     </ul>
   );
+}
+
+function withRegistration(href: string, registrationId: string | null | undefined): string {
+  if (!registrationId) return href;
+  const url = new URL(href, "http://catalogue.local");
+  if (url.searchParams.has("registration")) return `${url.pathname}${url.search}`;
+  url.searchParams.set("registration", registrationId);
+  return `${url.pathname}${url.search}`;
 }
 
 function PreviewNotice() {

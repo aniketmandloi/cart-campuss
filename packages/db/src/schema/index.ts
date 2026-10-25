@@ -2,6 +2,8 @@ export {
   catalogueAlias,
   catalogueApplicability,
   catalogueBrand,
+  catalogueCollection,
+  catalogueCollectionMember,
   catalogueGeneration,
   catalogueGenerationAlias,
   catalogueImage,

@@ -199,7 +199,7 @@ export type PublicDetail = PublicSearchHit & {
   priceReference: PublishingPriceReference | null;
   marketAccess: PublishingMarketAccess | null;
   rechecks: PublicRecheck[];
-  identityScope: "applicability" | "generation" | "model";
+  identityScope: "applicability" | "generation" | "model" | "collection";
 };
 
 export type PublicRecheck = {
@@ -779,7 +779,10 @@ export async function readPublishedCatalogueDetail(
     priceReference: row.permittedFields.includes("priceReference") ? asPublicPrice(row.priceReference) : null,
     marketAccess,
     rechecks,
-    identityScope: row.identityScope === "generation" || row.identityScope === "model" ? row.identityScope : "applicability",
+    identityScope:
+      row.identityScope === "generation" || row.identityScope === "model" || row.identityScope === "collection"
+        ? row.identityScope
+        : "applicability",
   };
 }
 
@@ -1183,6 +1186,13 @@ export function publicPolicyAllows(capturedAt: SQLWrapper, now: Date | SQLWrappe
         and jsonb_array_length(${publishingPublishedAssertion.rightsGeographies}) > 0
         and ${publishingSourcePolicy.permittedGeographies} @> ${publishingPublishedAssertion.rightsGeographies}
       )
+      or (
+        ${publishingPublishedAssertion.identityScope} = 'collection'
+        and ${publishingSourcePolicy.permittedFields} @> '["displayName", "collection"]'::jsonb
+        and jsonb_typeof(${publishingPublishedAssertion.rightsGeographies}) = 'array'
+        and jsonb_array_length(${publishingPublishedAssertion.rightsGeographies}) > 0
+        and ${publishingSourcePolicy.permittedGeographies} @> ${publishingPublishedAssertion.rightsGeographies}
+      )
     )
   )`;
 }
@@ -1198,8 +1208,26 @@ export function currentProjectionCovers(subjectId: SQLWrapper, now: Date): SQL {
     inner join ${publishingSourcePolicy}
       on ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
     where ${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}
+      and ${publishingPublishedAssertion.identityScope} = 'applicability'
       and ${publicPolicyAllows(assertionCapturedAt(), now)}
       and ${publishingSourcePolicy.permittedFields} @> cast(${JSON.stringify(CATALOGUE_IDENTITY_FIELDS)} as jsonb)
+  )`;
+}
+
+/** A curated collection is public only while its own reviewed projection still permits it. */
+export function currentCollectionProjectionCovers(subjectId: SQLWrapper, now: Date): SQL {
+  return sql`exists (
+    select 1
+    from ${publishingPublishedAssertion}
+    inner join ${publishingProjectionPointer}
+      on ${publishingPublishedAssertion.generationId} = ${publishingProjectionPointer.generationId}
+      and ${publishingProjectionPointer.id} = 1
+    inner join ${publishingSourcePolicy}
+      on ${publishingSourcePolicy.id} = ${publishingPublishedAssertion.sourcePolicyId}
+    where ${publishingPublishedAssertion.canonicalSubjectId} = ${subjectId}
+      and ${publishingPublishedAssertion.identityScope} = 'collection'
+      and ${publicPolicyAllows(assertionCapturedAt(), now)}
+      and ${publishingSourcePolicy.permittedFields} @> '["displayName", "collection"]'::jsonb
   )`;
 }
 
