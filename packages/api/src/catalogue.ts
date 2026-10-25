@@ -21,6 +21,18 @@ import { and, asc, eq, inArray, or, sql, type AnyColumn, type SQL } from "drizzl
 
 import { normalizeCatalogueQuery } from "./catalogue-name";
 import { CATALOGUE_PAGE_SIZE, catalogueListHref, type CatalogueListSelection } from "./catalogue-filters";
+import {
+  DIRECTORY_CATALOGUE_ACCESS,
+  curatedMeasurements,
+  listPerformanceControls,
+  matchesAttribute,
+  parseAttributeValue,
+  priceWindowMatches,
+  type CatalogueMarketAccess,
+  type CataloguePerformanceControl,
+  type ScopedMeasurement,
+  type ScopedPrice,
+} from "./catalogue-scope";
 import type { CatalogueAccess } from "./context";
 import {
   buildApplicabilitySelector,
@@ -112,6 +124,8 @@ export type CatalogueSearchResult = {
   miss: CatalogueMiss | null;
   chips: CatalogueChip[];
   href: string;
+  marketAccess: CatalogueMarketAccess;
+  performanceControls: CataloguePerformanceControl[];
 };
 
 export type CatalogueAssertion = {
@@ -180,6 +194,8 @@ export type CataloguePriceReference = {
   displayAmount: string;
   basis: string;
   taxInclusivity: string;
+  includedCharges: string[];
+  excludedCharges: string[];
   salesMarketName: string;
   observedOn: string;
   retrievedOn: string;
@@ -380,10 +396,45 @@ type CatalogueCandidate = {
   body: string | null;
   powertrain: string | null;
   transmission: string | null;
+  priceReferences: ScopedPrice[];
+  measurements: ScopedMeasurement[];
 };
 
 function emptyAttributes(): Pick<CatalogueCandidate, "body" | "powertrain" | "transmission"> {
   return { body: null, powertrain: null, transmission: null };
+}
+
+function emptyScope(): Pick<CatalogueCandidate, "priceReferences" | "measurements"> {
+  return { priceReferences: [], measurements: [] };
+}
+
+function scopeFromProjection(
+  facts: PublicDetail["facts"],
+  price: PublicDetail["priceReference"],
+  salesMarketId: string | null,
+): Pick<CatalogueCandidate, "priceReferences" | "measurements"> {
+  return {
+    measurements: curatedMeasurements(
+      facts.map((fact) => ({
+        property: fact.property,
+        state: fact.state,
+        normalizedValue: fact.normalizedValue,
+        standard: fact.standard,
+        curated: true,
+      })),
+    ),
+    priceReferences:
+      price && salesMarketId
+        ? [
+            {
+              amountMinor: price.amountMinor,
+              currency: price.currency,
+              basis: price.basis,
+              salesMarketId,
+            },
+          ]
+        : [],
+  };
 }
 
 function attributesFromFacts(
@@ -461,6 +512,8 @@ export async function searchCatalogue(
     miss: null,
     chips: chipsFor(candidates, request),
     href: catalogueListHref({ ...request, q: request.q ?? "", page }),
+    marketAccess: DIRECTORY_CATALOGUE_ACCESS,
+    performanceControls: listPerformanceControls(candidates, request.attr ?? []),
   };
 }
 
@@ -1355,6 +1408,7 @@ async function searchBareGenerations(
       yearId: null,
       marketId: null,
       ...emptyAttributes(),
+      ...emptyScope(),
     });
   }
   return candidates;
@@ -1447,6 +1501,7 @@ async function searchBareModels(
       yearId: null,
       marketId: null,
       ...emptyAttributes(),
+      ...emptyScope(),
     });
   }
   return candidates;
@@ -1617,6 +1672,7 @@ function applicabilityCandidate(
   },
   match: CatalogueSearchHit["match"],
   attributes: ReturnType<typeof emptyAttributes>,
+  scope: ReturnType<typeof emptyScope> = emptyScope(),
 ): CatalogueCandidate {
   return {
     hit: {
@@ -1645,6 +1701,7 @@ function applicabilityCandidate(
     yearId: row.modelYearId,
     marketId: row.salesMarketId,
     ...attributes,
+    ...scope,
   };
 }
 
@@ -1703,6 +1760,7 @@ async function approveApplicabilityRows(
     if (seen.has(row.applicabilityId)) continue;
     if (!row.synthetic && !publicMetadataEligible(stringValues(row))) continue;
     let attributes = emptyAttributes();
+    let scope = emptyScope();
     if (!row.synthetic) {
       const projection = await readPublishedCatalogueDetail(db, row.applicabilityId, () => now);
       if (!projection || !projectionMatchesIdentity(row, projection)) continue;
@@ -1716,9 +1774,10 @@ async function approveApplicabilityRows(
         projection.aliases.some((alias) => normalizeCatalogueQuery(alias) === row.normalizedName);
       if (!canonicalName && !approvedAlias) continue;
       attributes = attributesFromFacts(projection.facts);
+      scope = scopeFromProjection(projection.facts, projection.priceReference, row.salesMarketId);
     }
     seen.add(row.applicabilityId);
-    candidates.push(applicabilityCandidate(row, nameMatch(mode, row.normalizedName, normalized), attributes));
+    candidates.push(applicabilityCandidate(row, nameMatch(mode, row.normalizedName, normalized), attributes, scope));
   }
   return candidates;
 }
@@ -1762,12 +1821,14 @@ async function gatherBrowseCandidates(
   for (const row of rows) {
     if (!row.synthetic && !publicMetadataEligible(stringValues(row))) continue;
     let attributes = emptyAttributes();
+    let scope = emptyScope();
     if (!row.synthetic) {
       const projection = await readPublishedCatalogueDetail(db, row.applicabilityId, () => now);
       if (!projection || !projectionMatchesIdentity(row, projection)) continue;
       attributes = attributesFromFacts(projection.facts);
+      scope = scopeFromProjection(projection.facts, projection.priceReference, row.salesMarketId);
     }
-    candidates.push(applicabilityCandidate(row, "listed", attributes));
+    candidates.push(applicabilityCandidate(row, "listed", attributes, scope));
   }
   const occupied = new Set(candidates.map((candidate) => candidate.hit.generationId).filter((id): id is string => id !== null));
   const generations = await db
@@ -1812,6 +1873,7 @@ async function gatherBrowseCandidates(
       yearId: null,
       marketId: null,
       ...emptyAttributes(),
+      ...emptyScope(),
     });
   }
   const occupiedModels = new Set(candidates.map((candidate) => candidate.hit.modelId));
@@ -1849,6 +1911,7 @@ async function gatherBrowseCandidates(
       yearId: null,
       marketId: null,
       ...emptyAttributes(),
+      ...emptyScope(),
     });
   }
   return candidates;
@@ -1880,11 +1943,67 @@ async function fillSyntheticAttributes(db: Database, candidates: CatalogueCandid
     list.push(row);
     grouped.set(row.applicabilityId, list);
   }
+  const measured = await db
+    .select({
+      applicabilityId: catalogueSourcedFact.applicabilityId,
+      property: catalogueSourcedFact.property,
+      normalizedValue: catalogueSourcedFact.normalizedValue,
+      state: catalogueSourcedFact.state,
+      measurementStandard: catalogueSourcedFact.measurementStandard,
+    })
+    .from(catalogueSourcedFact)
+    .where(
+      and(
+        inArray(catalogueSourcedFact.applicabilityId, ids),
+        eq(catalogueSourcedFact.curated, true),
+        eq(catalogueSourcedFact.state, "known"),
+        eq(catalogueSourcedFact.reviewStatus, "reviewed"),
+        inArray(catalogueSourcedFact.publicationStatus, ["published", "fixture"]),
+      ),
+    );
+  const measurements = new Map<string, typeof measured>();
+  for (const row of measured) {
+    const list = measurements.get(row.applicabilityId) ?? [];
+    list.push(row);
+    measurements.set(row.applicabilityId, list);
+  }
+  const prices = await db
+    .select({
+      applicabilityId: cataloguePriceReference.applicabilityId,
+      amountMinor: cataloguePriceReference.amountMinor,
+      currency: cataloguePriceReference.currency,
+      basis: cataloguePriceReference.basis,
+      salesMarketId: cataloguePriceReference.salesMarketId,
+    })
+    .from(cataloguePriceReference)
+    .where(
+      and(
+        inArray(cataloguePriceReference.applicabilityId, ids),
+        eq(cataloguePriceReference.reviewStatus, "reviewed"),
+        inArray(cataloguePriceReference.publicationStatus, ["published", "fixture"]),
+      ),
+    );
+  const pricesByApplicability = new Map<string, ScopedPrice[]>();
+  for (const row of prices) {
+    const amountMinor = typeof row.amountMinor === "number" ? row.amountMinor : Number(row.amountMinor);
+    if (!Number.isSafeInteger(amountMinor)) continue;
+    const list = pricesByApplicability.get(row.applicabilityId) ?? [];
+    list.push({
+      amountMinor,
+      currency: row.currency,
+      basis: row.basis,
+      salesMarketId: row.salesMarketId,
+    });
+    pricesByApplicability.set(row.applicabilityId, list);
+  }
   for (const candidate of candidates) {
     if (candidate.hit.scope !== "applicability" || !candidate.hit.synthetic) continue;
     const facts = grouped.get(candidate.hit.applicabilityId);
-    if (!facts) continue;
-    Object.assign(candidate, attributesFromFacts(facts));
+    if (facts) Object.assign(candidate, attributesFromFacts(facts));
+    candidate.measurements = curatedMeasurements(
+      (measurements.get(candidate.hit.applicabilityId) ?? []).map((fact) => ({ ...fact, curated: true })),
+    );
+    candidate.priceReferences = pricesByApplicability.get(candidate.hit.applicabilityId) ?? [];
   }
 }
 
@@ -1898,6 +2017,28 @@ function candidateMatches(candidate: CatalogueCandidate, request: CatalogueListS
   if (request.body && candidate.body !== normalizeCatalogueQuery(request.body)) return false;
   if (request.powertrain && candidate.powertrain !== normalizeCatalogueQuery(request.powertrain)) return false;
   if (request.transmission && candidate.transmission !== normalizeCatalogueQuery(request.transmission)) return false;
+  if (
+    request.priceMin !== undefined &&
+    request.priceMax !== undefined &&
+    request.priceCurrency &&
+    request.priceMarket &&
+    request.priceBasis &&
+    request.priceUnknown &&
+    !priceWindowMatches(candidate.priceReferences, {
+      priceMin: request.priceMin,
+      priceMax: request.priceMax,
+      priceCurrency: request.priceCurrency,
+      priceMarket: request.priceMarket,
+      priceBasis: request.priceBasis,
+      priceUnknown: request.priceUnknown,
+    })
+  ) {
+    return false;
+  }
+  for (const value of request.attr ?? []) {
+    const attribute = parseAttributeValue(value);
+    if (!attribute || !matchesAttribute(candidate.measurements, attribute)) return false;
+  }
   return true;
 }
 
@@ -2104,6 +2245,11 @@ function projectionFacts(projection: PublicDetail, policy: CataloguePolicy): Cat
   });
 }
 
+function chargeList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => (typeof item === "string" && item.trim().length > 0 ? [item.trim()] : []));
+}
+
 function projectionPrices(
   projection: PublicDetail,
   policy: CataloguePolicy,
@@ -2123,6 +2269,8 @@ function projectionPrices(
       displayAmount,
       basis: price.basis,
       taxInclusivity: price.taxInclusivity,
+      includedCharges: chargeList(price.includedCharges),
+      excludedCharges: chargeList(price.excludedCharges),
       salesMarketName,
       observedOn: price.observedOn,
       retrievedOn: price.retrievedOn,
@@ -2325,6 +2473,8 @@ async function readPrices(
       minorUnitExponent: cataloguePriceReference.minorUnitExponent,
       basis: cataloguePriceReference.basis,
       taxInclusivity: cataloguePriceReference.taxInclusivity,
+      includedCharges: cataloguePriceReference.includedCharges,
+      excludedCharges: cataloguePriceReference.excludedCharges,
       observedOn: cataloguePriceReference.observedOn,
       retrievedOn: cataloguePriceReference.retrievedOn,
       reviewedOn: cataloguePriceReference.reviewedOn,
@@ -2363,6 +2513,8 @@ async function readPrices(
         displayAmount,
         basis: row.basis,
         taxInclusivity: row.taxInclusivity,
+        includedCharges: chargeList(row.includedCharges),
+        excludedCharges: chargeList(row.excludedCharges),
         salesMarketName: row.salesMarketName,
         observedOn: row.observedOn,
         retrievedOn: row.retrievedOn,

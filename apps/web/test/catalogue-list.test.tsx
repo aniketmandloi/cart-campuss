@@ -8,7 +8,7 @@ import { openIsolatedCatalogueDatabase, runPsql } from "@cart-campuss/api/psql-c
 import { appRouter } from "@cart-campuss/api/routers/index";
 
 import { loadCatalogueListForContext } from "../src/catalogue/load-state";
-import { CatalogueSearchView } from "../src/catalogue/views";
+import { CatalogueDetailView, CatalogueSearchView } from "../src/catalogue/views";
 import { acquireCataloguePublicLock } from "./catalogue-public-lock";
 
 const databaseUrl = process.env.CATALOGUE_TEST_DATABASE_URL ?? "";
@@ -197,6 +197,120 @@ describe(
       assert.match(shared.result.href, /body=sedan/);
       await assert.rejects(() => caller.catalogue.search({ brand: "Harbor Probe" }));
     });
+
+    test("scopes price and performance filters and does not claim stock in directory mode", async () => {
+      const priced = await caller.catalogue.search({
+        coverage: "applicability",
+        priceMin: 0,
+        priceMax: 9_007_199_254_740_991,
+        priceCurrency: "INR",
+        priceMarket: "mkt_probe",
+        priceBasis: "official price reference",
+        priceUnknown: "exclude",
+      });
+      assert.deepEqual(
+        priced.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])),
+        ["app_a_harbor"],
+      );
+      assert.equal(priced.href.includes("priceCurrency=INR"), true);
+      assert.equal(priced.marketAccess.mode, "directory");
+      assert.equal(priced.marketAccess.providerCoverage, null);
+
+      const kept = await caller.catalogue.search({
+        coverage: "applicability",
+        priceMin: 0,
+        priceMax: 9_007_199_254_740_991,
+        priceCurrency: "INR",
+        priceMarket: "mkt_probe",
+        priceBasis: "official price reference",
+        priceUnknown: "include",
+      });
+      assert.deepEqual(
+        kept.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])).sort(),
+        ["app_a_harbor", "app_b_harbro"],
+      );
+
+      const foreign = await caller.catalogue.search({
+        coverage: "applicability",
+        priceMin: 0,
+        priceMax: 9_007_199_254_740_991,
+        priceCurrency: "USD",
+        priceMarket: "mkt_probe",
+        priceBasis: "official price reference",
+        priceUnknown: "exclude",
+      });
+      assert.equal(foreign.hits.length, 0);
+
+      const ps = await caller.catalogue.search({ coverage: "applicability", attr: ["power:ps"] });
+      assert.deepEqual(
+        ps.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])),
+        ["app_a_harbor"],
+      );
+      const kw = await caller.catalogue.search({ coverage: "applicability", attr: ["power:kw"] });
+      assert.deepEqual(
+        kw.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])),
+        ["app_b_harbro"],
+      );
+      assert.equal(
+        ps.performanceControls.some((control) => control.value === "power:ps" && control.current),
+        true,
+      );
+      assert.equal(ps.performanceControls.some((control) => control.value === "power:kw"), true);
+      assert.equal(ps.performanceControls.some((control) => control.value === "power"), false);
+
+      const page = await caller.catalogue.read({
+        modelSlug: "plain-sedan",
+        generationSlug: "mark-one",
+        market: "mkt_probe",
+        year: "year_probe_2024",
+        variant: "var_a",
+      });
+      assert.equal(page.availability, "visible");
+      if (page.availability !== "visible") return;
+      assert.equal(page.priceReference?.amountMinor, 100000);
+      assert.equal(page.priceReference?.currency, "INR");
+      assert.deepEqual(page.priceReference?.includedCharges, ["ex-showroom figure"]);
+      assert.deepEqual(page.priceReference?.excludedCharges, ["registration", "insurance"]);
+      const conflict = page.facts.find((fact) => fact.property === "Power");
+      assert.equal(conflict?.measurementStandard, "ps");
+      assert.equal(conflict?.conflict?.measurementStandard, "kw");
+      const detail = renderToStaticMarkup(<CatalogueDetailView state={{ kind: "page", page }} />);
+      assert.match(detail, /Included charges: ex-showroom figure/);
+      assert.match(detail, /Excluded charges: registration, insurance/);
+      assert.match(detail, /Not a listing/);
+      assert.doesNotMatch(detail, /India on-road/);
+
+      const listed = await loadCatalogueListForContext(context, {
+        q: "north",
+        condition: "new",
+        sellerCountry: "IN",
+        mileageMax: "1",
+        auctionStatus: "active",
+      });
+      assert.equal(listed.kind, "results");
+      if (listed.kind !== "results") return;
+      assert.equal(listed.result.href.includes("condition"), false);
+      assert.equal(listed.result.href.includes("sellerCountry"), false);
+      assert.equal(listed.result.href.includes("mileageMax"), false);
+      assert.equal(listed.result.href.includes("auctionStatus"), false);
+      const plain = await caller.catalogue.search({ q: "north" });
+      assert.deepEqual(
+        listed.result.hits.map((hit) => (hit.scope === "applicability" ? hit.applicabilityId : hit.generationId)),
+        plain.hits.map((hit) => (hit.scope === "applicability" ? hit.applicabilityId : hit.generationId)),
+      );
+      const html = renderToStaticMarkup(
+        <CatalogueSearchView state={{ kind: "results", query: "north", privatePreview: false, result: listed.result }} />,
+      );
+      assert.match(html, /does not claim dealer stock/);
+      assert.doesNotMatch(html, /Available now/);
+      assert.equal(html.includes('name="condition"'), false);
+      assert.equal(html.includes('name="auctionStatus"'), false);
+
+      const invalid = await loadCatalogueListForContext(context, { priceMin: "100000" });
+      assert.equal(invalid.kind, "invalid");
+      if (invalid.kind !== "invalid") return;
+      assert.equal(invalid.reason, "price");
+    });
   },
 );
 
@@ -217,8 +331,15 @@ function fact(property: string, value: string): string {
   return `{"property":"${property}","rawValue":"${value}","normalizedValue":"${value}","state":"known","unknownReason":null,"unit":null,"standard":"list-${property.toLowerCase()}","sourceUrl":null,"sourceTitle":"Reviewed list dossier","providerKey":"list-probe","observedAt":"2026-10-22T00:00:00.000Z","retrievedAt":"2026-10-23T00:00:00.000Z","sourcePolicyId":"policy_list_probe","factualReviewerRef":"fact-reviewer","rightsReviewerRef":"rights-reviewer"}`;
 }
 
-const sedanFacts = `'[${fact("Body", "sedan")},${fact("Powertrain", "petrol")},${fact("Transmission", "automatic")}]'`;
-const wagonFacts = `'[${fact("Body", "wagon")},${fact("Powertrain", "diesel")},${fact("Transmission", "manual")}]'`;
+function measuredFact(property: string, value: string, standard: string, conflictStandard?: string): string {
+  const conflict = conflictStandard
+    ? `,"curatedReason":"The reviewed brochure states ${standard}.","conflict":{"rawValue":"80 kW","normalizedValue":"80","unit":"kW","standard":"${conflictStandard}","sourceUrl":null,"sourceTitle":"Conflicting power note","observedAt":"2026-10-22T00:00:00.000Z","retrievedAt":"2026-10-23T00:00:00.000Z","factualReviewerRef":"fact-reviewer","rightsReviewerRef":"rights-reviewer"}`
+    : `,"curatedReason":null,"conflict":null`;
+  return `{"property":"${property}","rawValue":"${value} ${standard}","normalizedValue":"${value}","state":"known","unknownReason":null,"unit":"${standard}","standard":"${standard}","freshness":"current"${conflict},"sourceUrl":null,"sourceTitle":"Reviewed list dossier","providerKey":"list-probe","observedAt":"2026-10-22T00:00:00.000Z","retrievedAt":"2026-10-23T00:00:00.000Z","sourcePolicyId":"policy_list_probe","factualReviewerRef":"fact-reviewer","rightsReviewerRef":"rights-reviewer"}`;
+}
+
+const sedanFacts = `'[${fact("Body", "sedan")},${fact("Powertrain", "petrol")},${fact("Transmission", "automatic")},${measuredFact("Power", "110", "ps", "kw")}]'`;
+const wagonFacts = `'[${fact("Body", "wagon")},${fact("Powertrain", "diesel")},${fact("Transmission", "manual")},${measuredFact("Power", "90", "kw")}]'`;
 const openFacts = `'[${fact("Body", "note")}]'`;
 
 const listProbeSql = `
@@ -268,7 +389,7 @@ insert into publishing_source_policy (
   contract_text, suspended, reviewer_ref, reviewed_at, created_at
 ) values (
   'policy_list_probe', 'list-probe', 'permitted', 'denied',
-  '["displayName","alias","salesMarket","modelYearLabel","Body","Powertrain","Transmission","brand","model","generation","marketVariant"]'::jsonb,
+  '["displayName","alias","salesMarket","modelYearLabel","Body","Powertrain","Transmission","Power","priceReference","brand","model","generation","marketVariant"]'::jsonb,
   '["IN","JP"]'::jsonb,
   'Reviewed list attribution.',
   315360000, 'no derivatives', 'no aggregation', 86400,
@@ -296,7 +417,7 @@ insert into publishing_published_assertion (
     ${sedanFacts}::jsonb,
     '[]'::jsonb, 'Reviewed list attribution.', 'policy_list_probe',
     'fact-reviewer', 'rights-reviewer', '2026-10-23T00:00:00.000Z', '2026-10-22T00:00:00.000Z', '2026-10-23T00:00:00.000Z',
-    '{"amountMinor":100000,"currency":"INR","minorUnitExponent":2,"basis":"official price reference","taxInclusivity":"unspecified","observedOn":"2026-10-22","retrievedOn":"2026-10-23","reviewedOn":"2026-10-23","sourceTitle":"List price sheet","sourceUrl":null,"sourceIdentifier":null}'::jsonb,
+    '{"amountMinor":100000,"currency":"INR","minorUnitExponent":2,"basis":"official price reference","taxInclusivity":"unspecified","includedCharges":["ex-showroom figure"],"excludedCharges":["registration","insurance"],"observedOn":"2026-10-22","retrievedOn":"2026-10-23","reviewedOn":"2026-10-23","sourceTitle":"List price sheet","sourceUrl":null,"sourceIdentifier":"list-price-harbor"}'::jsonb,
     'applicability',
     '[]'::jsonb
   ),

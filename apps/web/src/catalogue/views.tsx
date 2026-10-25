@@ -11,7 +11,8 @@ import type {
   CatalogueSearchHit,
   CatalogueSearchResult,
 } from "@cart-campuss/api/catalogue";
-import { catalogueListHref } from "@cart-campuss/api/catalogue-filters";
+import { catalogueListHref, catalogueListRecord, parseCatalogueListQuery } from "@cart-campuss/api/catalogue-filters";
+import { priceReferenceCaption } from "@cart-campuss/api/catalogue-scope";
 import type { DossierLink, DossierRecordLink } from "@cart-campuss/api/dossier";
 
 import { CatalogueBrowseSections } from "./browse-view";
@@ -26,7 +27,7 @@ export type CatalogueSearchState = {
 } & (
   | { kind: "unconfigured" }
   | { kind: "unavailable" }
-  | { kind: "invalid" }
+  | { kind: "invalid"; reason?: "price" }
   | { kind: "idle" }
   | { kind: "results"; result: CatalogueSearchResult }
 );
@@ -375,8 +376,11 @@ function CostSection({ page }: { page: DossierPage }) {
                 <p>
                   {price.amountMinor} {price.currency} minor units, exponent {price.minorUnitExponent}
                 </p>
+                <p>{priceReferenceCaption(price)}</p>
                 <p>{price.basis}</p>
                 <p>Tax inclusivity: {price.taxInclusivity}</p>
+                <p>Included charges: {price.includedCharges.length > 0 ? price.includedCharges.join(", ") : "not stated"}</p>
+                <p>Excluded charges: {price.excludedCharges.length > 0 ? price.excludedCharges.join(", ") : "not stated"}</p>
                 <p>Source: {sourceText(price.sourceTitle, price.sourceUrl)}</p>
                 {price.sourceIdentifier ? <p>Source identifier: {price.sourceIdentifier}</p> : null}
                 <p>Observed {price.observedOn}</p>
@@ -782,7 +786,13 @@ function SearchStatus({
     return <p id="catalogue-results" className="text-muted-foreground">The catalogue could not be read.</p>;
   }
   if (state.kind === "invalid") {
-    return <p id="catalogue-results" className="text-muted-foreground">This catalogue link is not valid.</p>;
+    return (
+      <p id="catalogue-results" className="text-muted-foreground">
+        {state.reason === "price"
+          ? "This price filter needs a minimum, a maximum, a currency, a sales market, a price basis, and whether records without that price stay included."
+          : "This catalogue link is not valid."}
+      </p>
+    );
   }
   if (state.kind === "idle") return null;
   return (
@@ -964,6 +974,30 @@ const FILTER_LABELS: Record<CatalogueChip["dimension"], string> = {
   coverage: "Coverage",
 };
 
+function PriceField({
+  id,
+  name,
+  label,
+  defaultValue,
+}: {
+  id: string;
+  name: string;
+  label: string;
+  defaultValue?: string | number;
+}) {
+  return (
+    <label className="flex flex-col gap-2 text-sm" htmlFor={id}>
+      {label}
+      <input
+        id={id}
+        name={name}
+        defaultValue={defaultValue ?? ""}
+        className="min-h-11 border border-border bg-card px-3 text-foreground"
+      />
+    </label>
+  );
+}
+
 function FilterControls({
   state,
 }: {
@@ -976,6 +1010,11 @@ function FilterControls({
     groups.set(chip.dimension, list);
   }
   const resetHref = catalogueListHref({ q: state.query });
+  const current = parseCatalogueListQuery(catalogueListRecord(state.result.href));
+  const query = current.ok ? current.query : null;
+  const approvedFeed =
+    state.result.marketAccess.mode === "approved-feed" &&
+    Boolean(state.result.marketAccess.providerCoverage?.trim());
   return (
     <CatalogueFilterSheet>
       <summary id="catalogue-filter-summary" className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-medium">
@@ -1011,6 +1050,60 @@ function FilterControls({
             </select>
           </label>
         ))}
+        <fieldset className="flex flex-col gap-3 border border-border p-3">
+          <legend className="px-1 text-sm">Reference price</legend>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <PriceField id="catalogue-filter-price-min" name="priceMin" label="Minimum, minor units" defaultValue={query?.priceMin} />
+            <PriceField id="catalogue-filter-price-max" name="priceMax" label="Maximum, minor units" defaultValue={query?.priceMax} />
+            <PriceField id="catalogue-filter-price-currency" name="priceCurrency" label="Currency" defaultValue={query?.priceCurrency} />
+            <PriceField id="catalogue-filter-price-market" name="priceMarket" label="Sales market" defaultValue={query?.priceMarket} />
+          </div>
+          <PriceField id="catalogue-filter-price-basis" name="priceBasis" label="Price basis" defaultValue={query?.priceBasis} />
+          <label className="flex flex-col gap-2 text-sm" htmlFor="catalogue-filter-price-unknown">
+            Records without this price
+            <select
+              id="catalogue-filter-price-unknown"
+              name="priceUnknown"
+              defaultValue={query?.priceUnknown ?? ""}
+              className="min-h-11 border border-border bg-card px-3 text-foreground"
+            >
+              <option value="">No price filter</option>
+              <option value="include">Keep records with no price</option>
+              <option value="exclude">Only records with a price in this range</option>
+            </select>
+          </label>
+        </fieldset>
+        {state.result.performanceControls.length > 0 ? (
+          <fieldset className="flex flex-col gap-2 border border-border p-3">
+            <legend className="px-1 text-sm">Performance</legend>
+            {state.result.performanceControls.map((control) => (
+              <label key={control.value} className="flex min-h-11 items-center gap-3 text-sm">
+                <input
+                  id={`catalogue-filter-attr-${control.value}`}
+                  type="checkbox"
+                  name="attr"
+                  value={control.value}
+                  defaultChecked={control.current}
+                />
+                {control.label} ({control.count})
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
+        {approvedFeed ? (
+          <fieldset className="flex flex-col gap-3 border border-border p-3">
+            <legend className="px-1 text-sm">Approved feed</legend>
+            <p>Approved feed coverage: {state.result.marketAccess.providerCoverage}</p>
+            <PriceField id="catalogue-filter-condition" name="condition" label="Condition" />
+            <PriceField id="catalogue-filter-seller-country" name="sellerCountry" label="Seller country" />
+            <PriceField id="catalogue-filter-mileage-max" name="mileageMax" label="Maximum mileage" />
+            <PriceField id="catalogue-filter-auction-status" name="auctionStatus" label="Auction status" />
+          </fieldset>
+        ) : (
+          <p id="catalogue-market-mode">
+            This list is not an inventory feed. It has no available-now control and does not claim dealer stock.
+          </p>
+        )}
         <p>
           {state.result.total} published {state.result.total === 1 ? "record" : "records"} in this
           catalogue

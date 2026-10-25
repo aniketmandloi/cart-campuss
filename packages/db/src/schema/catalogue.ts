@@ -5,6 +5,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgTable,
   text,
   uniqueIndex,
@@ -251,6 +252,8 @@ export const cataloguePriceReference = pgTable(
     minorUnitExponent: integer("minor_unit_exponent").notNull(),
     basis: text("basis").notNull(),
     taxInclusivity: text("tax_inclusivity").notNull(),
+    includedCharges: jsonb("included_charges").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    excludedCharges: jsonb("excluded_charges").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
     observedOn: text("observed_on").notNull(),
     reviewStatus: text("review_status").notNull(),
     publicationStatus: text("publication_status").notNull(),
@@ -272,6 +275,10 @@ export const cataloguePriceReference = pgTable(
     check(
       "catalogue_price_reference_publication",
       sql`${table.publicationStatus} in ('published', 'fixture', 'withheld')`,
+    ),
+    check(
+      "catalogue_price_reference_charges",
+      sql`jsonb_typeof(${table.includedCharges}) = 'array' and jsonb_typeof(${table.excludedCharges}) = 'array'`,
     ),
     check(
       "catalogue_price_reference_exponent",

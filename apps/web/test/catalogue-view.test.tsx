@@ -141,6 +141,8 @@ test("a sourced page shows the source, an explicit unknown, a conflict, and a pr
       displayAmount: "₹1,000.00",
       basis: "official price reference",
       taxInclusivity: "unspecified",
+      includedCharges: ["road tax"],
+      excludedCharges: ["insurance"],
       salesMarketName: "Probe market",
       observedOn: "2026-10-22",
       retrievedOn: "2026-10-23",
@@ -175,6 +177,10 @@ test("a sourced page shows the source, an explicit unknown, a conflict, and a pr
   assert.match(html, /Source policy: Reviewed public policy/);
   assert.doesNotMatch(html, /Source: Reviewed public policy/);
   assert.match(html, /Not a listing/);
+  assert.match(html, /Included charges: road tax/);
+  assert.match(html, /Excluded charges: insurance/);
+  assert.match(html, /₹1,000\.00, official price reference, Probe market/);
+  assert.doesNotMatch(html, /India on-road/);
   assert.match(html, /No market data/);
   assert.match(html, /Not the calendar build year/);
   assert.match(html, /No catalogue photograph/);
