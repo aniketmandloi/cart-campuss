@@ -9,6 +9,7 @@ import {
   loadCatalogueBrandForContext,
   loadCatalogueCarForContext,
   loadCatalogueHomeForContext,
+  loadCatalogueListForContext,
   loadCatalogueModelForContext,
   loadCatalogueSearchForContext,
 } from "./load-state";
@@ -19,6 +20,7 @@ export {
   loadCatalogueBrandForContext,
   loadCatalogueCarForContext,
   loadCatalogueHomeForContext,
+  loadCatalogueListForContext,
   loadCatalogueModelForContext,
   loadCatalogueSearchForContext,
 } from "./load-state";
@@ -59,6 +61,15 @@ export const loadCatalogueSearch = cache(async (query: string): Promise<Catalogu
   if (!runtime) return { kind: "unconfigured", query: trimmed, privatePreview };
   return loadCatalogueSearchForContext(runtime, trimmed);
 });
+
+export const loadCatalogueList = cache(
+  async (raw: Record<string, string | string[] | undefined>): Promise<CatalogueSearchState> => {
+    const privatePreview = catalogueAllowsFixtures();
+    const runtime = catalogueRuntime();
+    if (!runtime) return { kind: "unconfigured", query: "", privatePreview };
+    return loadCatalogueListForContext(runtime, raw);
+  },
+);
 
 export const loadCatalogueModel = cache(
   async (input: { modelSlug: string; section?: string; registration?: string }): Promise<CatalogueDetailState> => {
