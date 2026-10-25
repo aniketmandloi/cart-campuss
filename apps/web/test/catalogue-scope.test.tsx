@@ -5,7 +5,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { CatalogueSearchResult } from "@cart-campuss/api/catalogue";
 import {
   curatedMeasurements,
-  feedInventoryHonored,
   listPerformanceControls,
   matchesAttribute,
   priceReferenceCaption,
@@ -65,88 +64,66 @@ describe("scoped price and performance filters", () => {
     assert.equal(caption.toLowerCase().includes("on-road"), false);
   });
 
-  test("filters a curated measurement only inside its own standard", () => {
+  test("keeps multiword weights and refuses a sales figure as a performance filter", () => {
     const facts = [
       { property: "Power", state: "known", normalizedValue: "110", standard: "PS", curated: true },
       { property: "Power", state: "known", normalizedValue: "80", standard: "kW", curated: false },
       { property: "Power", state: "known", normalizedValue: "90", measurementStandard: null, curated: true },
-      { property: "Weight", state: "known", normalizedValue: "1400", standard: "kerb", curated: true },
-      { property: "Weight", state: "known", normalizedValue: "1300", standard: "dry", curated: true },
+      { property: "Kerb weight", state: "known", normalizedValue: "1400", standard: "kerb", curated: true },
+      { property: "Dry weight", state: "known", normalizedValue: "1280", standard: "dry", curated: true },
+      { property: "Efficiency", state: "known", normalizedValue: "8.4", standard: "WLTP", curated: true },
+      { property: "Efficiency", state: "known", normalizedValue: "7.1", standard: "NEDC", curated: true },
+      { property: "Sales", state: "known", normalizedValue: "88001", standard: "fixture-sales", curated: true },
       { property: "Body", state: "known", normalizedValue: "sedan", standard: "iso", curated: true },
       { property: "Range", state: "known", normalizedValue: "long", standard: "wltp", curated: true },
     ];
     const measurements = curatedMeasurements(facts);
     assert.deepEqual(
-      measurements.map((item) => item.standard),
-      ["ps", "kerb", "dry"],
+      measurements.map((item) => item.property + ":" + item.standard),
+      ["power:ps", "kerb-weight:kerb", "dry-weight:dry", "efficiency:wltp", "efficiency:nedc"],
     );
+    assert.equal(measurements.find((item) => item.property === "kerb-weight")?.label, "Kerb weight (kerb)");
     assert.equal(matchesAttribute(measurements, { property: "power", standard: "ps" }), true);
     assert.equal(matchesAttribute(measurements, { property: "power", standard: "kw" }), false);
-    const controls = listPerformanceControls(
-      [{ measurements }, { measurements: [{ property: "weight", standard: "kerb", normalizedValue: "1500" }] }],
-      ["power:ps"],
-    );
-    assert.deepEqual(
-      controls.map((control) => control.value),
-      ["power:ps", "weight:dry", "weight:kerb"],
-    );
-    assert.equal(controls.find((control) => control.value === "weight:kerb")?.count, 2);
+    assert.equal(matchesAttribute(measurements, { property: "kerb-weight", standard: "kerb" }), true);
+    const again = curatedMeasurements([
+      { property: "Kerb weight", state: "known", normalizedValue: "1500", standard: "kerb", curated: true },
+    ]);
+    const controls = listPerformanceControls([{ measurements }, { measurements: again }], ["power:ps"]);
+    assert.equal(controls.find((control) => control.value === "kerb-weight:kerb")?.count, 2);
     assert.equal(controls.find((control) => control.value === "power:ps")?.current, true);
-    assert.equal(controls.some((control) => control.value === "power"), false);
+    assert.equal(controls.some((control) => control.value.includes("sales")), false);
+    assert.equal(controls.some((control) => control.label === "Kerb weight (kerb)"), true);
   });
 
-  test("honors feed filters only when an approved feed states its coverage", () => {
-    const raw = { condition: "used", sellerCountry: "IN", mileageMax: "12000", auctionStatus: "active" };
-    assert.equal(feedInventoryHonored({ mode: "directory", providerCoverage: null }, raw), null);
-    assert.equal(feedInventoryHonored({ mode: "no-data", providerCoverage: null }, raw), null);
-    assert.equal(feedInventoryHonored({ mode: "approved-feed", providerCoverage: "  " }, raw), null);
-    assert.deepEqual(
-      feedInventoryHonored(
-        { mode: "approved-feed", providerCoverage: "Example Auctions, observed weekly." },
-        raw,
-      ),
-      { ...raw, providerCoverage: "Example Auctions, observed weekly." },
-    );
-  });
-
-  test("directory mode has no inventory controls, and an approved feed states coverage", () => {
+  test("directory mode has no inventory controls", () => {
     const directory = renderToStaticMarkup(
-      <CatalogueSearchView state={{ kind: "results", query: "", privatePreview: false, result: result("directory") }} />,
+      <CatalogueSearchView state={{ kind: "results", query: "", privatePreview: false, result: result() }} />,
     );
     assert.match(directory, /does not claim dealer stock/);
     assert.doesNotMatch(directory, /Available now/);
     assert.equal(directory.includes('name="condition"'), false);
     assert.equal(directory.includes("power (ps)"), false);
 
-    const measured: ScopedMeasurement = { property: "power", standard: "ps", normalizedValue: "110" };
-    const withControl = result("directory");
+    const measured: ScopedMeasurement = {
+      property: "power",
+      standard: "ps",
+      label: "Power (PS)",
+      normalizedValue: "110",
+    };
+    const withControl = result();
     withControl.performanceControls = listPerformanceControls([{ measurements: [measured] }], []);
     const filtered = renderToStaticMarkup(
       <CatalogueSearchView state={{ kind: "results", query: "", privatePreview: false, result: withControl }} />,
     );
-    assert.match(filtered, /power \(ps\)/);
+    assert.match(filtered, /Power \(PS\)/);
     assert.equal(filtered.includes("power (kw)"), false);
-
-    const feed = renderToStaticMarkup(
-      <CatalogueSearchView
-        state={{
-          kind: "results",
-          query: "",
-          privatePreview: false,
-          result: {
-            ...result("approved-feed"),
-            marketAccess: { mode: "approved-feed", providerCoverage: "Example Auctions, observed weekly." },
-          },
-        }}
-      />,
-    );
-    assert.match(feed, /Approved feed coverage: Example Auctions, observed weekly/);
-    assert.match(feed, /name="condition"/);
-    assert.doesNotMatch(feed, /does not claim dealer stock/);
+    assert.equal(filtered.includes('name="condition"'), false);
+    assert.equal(filtered.includes("Approved feed"), false);
   });
 });
 
-function result(mode: "directory" | "approved-feed"): CatalogueSearchResult {
+function result(): CatalogueSearchResult {
   return {
     query: "",
     privatePreview: false,
@@ -160,7 +137,7 @@ function result(mode: "directory" | "approved-feed"): CatalogueSearchResult {
     miss: null,
     href: "/cars",
     chips: [],
-    marketAccess: { mode, providerCoverage: mode === "approved-feed" ? "Example Auctions, observed weekly." : null },
+    marketAccess: { mode: "directory" },
     performanceControls: [],
   };
 }

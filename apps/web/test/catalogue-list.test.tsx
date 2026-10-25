@@ -205,7 +205,7 @@ describe(
         priceMax: 9_007_199_254_740_991,
         priceCurrency: "INR",
         priceMarket: "mkt_probe",
-        priceBasis: "official price reference",
+        priceBasis: "ex-showroom (tax inclusive)",
         priceUnknown: "exclude",
       });
       assert.deepEqual(
@@ -213,8 +213,8 @@ describe(
         ["app_a_harbor"],
       );
       assert.equal(priced.href.includes("priceCurrency=INR"), true);
+      assert.equal(priced.href.includes("ex-showroom+%28tax+inclusive%29") || priced.href.includes("ex-showroom+(tax+inclusive)"), true);
       assert.equal(priced.marketAccess.mode, "directory");
-      assert.equal(priced.marketAccess.providerCoverage, null);
 
       const kept = await caller.catalogue.search({
         coverage: "applicability",
@@ -222,7 +222,7 @@ describe(
         priceMax: 9_007_199_254_740_991,
         priceCurrency: "INR",
         priceMarket: "mkt_probe",
-        priceBasis: "official price reference",
+        priceBasis: "ex-showroom (tax inclusive)",
         priceUnknown: "include",
       });
       assert.deepEqual(
@@ -236,7 +236,7 @@ describe(
         priceMax: 9_007_199_254_740_991,
         priceCurrency: "USD",
         priceMarket: "mkt_probe",
-        priceBasis: "official price reference",
+        priceBasis: "ex-showroom (tax inclusive)",
         priceUnknown: "exclude",
       });
       assert.equal(foreign.hits.length, 0);
@@ -257,6 +257,17 @@ describe(
       );
       assert.equal(ps.performanceControls.some((control) => control.value === "power:kw"), true);
       assert.equal(ps.performanceControls.some((control) => control.value === "power"), false);
+      assert.equal(
+        ps.performanceControls.some((control) => control.value === "kerb-weight:kerb" && control.label === "Kerb weight (kerb)"),
+        true,
+      );
+      assert.equal(ps.performanceControls.some((control) => control.value.includes("sales")), false);
+      const kerb = await caller.catalogue.search({ coverage: "applicability", attr: ["kerb-weight:kerb"] });
+      assert.deepEqual(
+        kerb.hits.flatMap((hit) => (hit.scope === "applicability" ? [hit.applicabilityId] : [])),
+        ["app_a_harbor"],
+      );
+      await assert.rejects(() => caller.catalogue.search({ attr: ["sales:fixture-sales"] }));
 
       const page = await caller.catalogue.read({
         modelSlug: "plain-sedan",
@@ -338,7 +349,7 @@ function measuredFact(property: string, value: string, standard: string, conflic
   return `{"property":"${property}","rawValue":"${value} ${standard}","normalizedValue":"${value}","state":"known","unknownReason":null,"unit":"${standard}","standard":"${standard}","freshness":"current"${conflict},"sourceUrl":null,"sourceTitle":"Reviewed list dossier","providerKey":"list-probe","observedAt":"2026-10-22T00:00:00.000Z","retrievedAt":"2026-10-23T00:00:00.000Z","sourcePolicyId":"policy_list_probe","factualReviewerRef":"fact-reviewer","rightsReviewerRef":"rights-reviewer"}`;
 }
 
-const sedanFacts = `'[${fact("Body", "sedan")},${fact("Powertrain", "petrol")},${fact("Transmission", "automatic")},${measuredFact("Power", "110", "ps", "kw")}]'`;
+const sedanFacts = `'[${fact("Body", "sedan")},${fact("Powertrain", "petrol")},${fact("Transmission", "automatic")},${measuredFact("Power", "110", "ps", "kw")},${measuredFact("Kerb weight", "1400", "kerb")},${measuredFact("Sales", "88001", "fixture-sales")}]'`;
 const wagonFacts = `'[${fact("Body", "wagon")},${fact("Powertrain", "diesel")},${fact("Transmission", "manual")},${measuredFact("Power", "90", "kw")}]'`;
 const openFacts = `'[${fact("Body", "note")}]'`;
 
@@ -389,7 +400,7 @@ insert into publishing_source_policy (
   contract_text, suspended, reviewer_ref, reviewed_at, created_at
 ) values (
   'policy_list_probe', 'list-probe', 'permitted', 'denied',
-  '["displayName","alias","salesMarket","modelYearLabel","Body","Powertrain","Transmission","Power","priceReference","brand","model","generation","marketVariant"]'::jsonb,
+  '["displayName","alias","salesMarket","modelYearLabel","Body","Powertrain","Transmission","Power","Kerb weight","Sales","priceReference","brand","model","generation","marketVariant"]'::jsonb,
   '["IN","JP"]'::jsonb,
   'Reviewed list attribution.',
   315360000, 'no derivatives', 'no aggregation', 86400,
@@ -417,7 +428,7 @@ insert into publishing_published_assertion (
     ${sedanFacts}::jsonb,
     '[]'::jsonb, 'Reviewed list attribution.', 'policy_list_probe',
     'fact-reviewer', 'rights-reviewer', '2026-10-23T00:00:00.000Z', '2026-10-22T00:00:00.000Z', '2026-10-23T00:00:00.000Z',
-    '{"amountMinor":100000,"currency":"INR","minorUnitExponent":2,"basis":"official price reference","taxInclusivity":"unspecified","includedCharges":["ex-showroom figure"],"excludedCharges":["registration","insurance"],"observedOn":"2026-10-22","retrievedOn":"2026-10-23","reviewedOn":"2026-10-23","sourceTitle":"List price sheet","sourceUrl":null,"sourceIdentifier":"list-price-harbor"}'::jsonb,
+    '{"amountMinor":100000,"currency":"INR","minorUnitExponent":2,"basis":"ex-showroom (tax inclusive)","taxInclusivity":"unspecified","includedCharges":["ex-showroom figure"],"excludedCharges":["registration","insurance"],"observedOn":"2026-10-22","retrievedOn":"2026-10-23","reviewedOn":"2026-10-23","sourceTitle":"List price sheet","sourceUrl":null,"sourceIdentifier":"list-price-harbor"}'::jsonb,
     'applicability',
     '[]'::jsonb
   ),

@@ -53,7 +53,7 @@ describe("shareable catalogue URL", () => {
       priceMax: "250000",
       priceCurrency: "inr",
       priceMarket: "mkt_probe",
-      priceBasis: "official price reference",
+      priceBasis: "ex-showroom (tax inclusive)",
       priceUnknown: "include",
       attr: ["power:ps", "weight:kerb"],
       condition: "new",
@@ -96,6 +96,26 @@ describe("shareable catalogue URL", () => {
       }).ok,
       false,
     );
+    assert.equal(
+      parseCatalogueListQuery({
+        priceMin: "0",
+        priceMax: "1",
+        priceCurrency: "INR",
+        priceMarket: "mkt_probe",
+        priceBasis: "x".repeat(201),
+        priceUnknown: "include",
+      }).ok,
+      false,
+    );
+    const publishedBasis = parseCatalogueListQuery({
+      priceMin: "0",
+      priceMax: "1",
+      priceCurrency: "INR",
+      priceMarket: "mkt_probe",
+      priceBasis: "ex-showroom (tax inclusive)",
+      priceUnknown: "exclude",
+    });
+    assert.equal(publishedBasis.ok, true);
     const html = renderToStaticMarkup(
       <CatalogueSearchView state={{ kind: "invalid", query: "", privatePreview: false, reason: "price" }} />,
     );
@@ -202,7 +222,7 @@ const sheetResult: CatalogueSearchResult = {
   ambiguous: false,
   miss: null,
   href: "/cars?q=north",
-  marketAccess: { mode: "directory", providerCoverage: null },
+  marketAccess: { mode: "directory" },
   performanceControls: [],
   chips: [
     {

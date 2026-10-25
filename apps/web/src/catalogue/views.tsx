@@ -1012,9 +1012,6 @@ function FilterControls({
   const resetHref = catalogueListHref({ q: state.query });
   const current = parseCatalogueListQuery(catalogueListRecord(state.result.href));
   const query = current.ok ? current.query : null;
-  const approvedFeed =
-    state.result.marketAccess.mode === "approved-feed" &&
-    Boolean(state.result.marketAccess.providerCoverage?.trim());
   return (
     <CatalogueFilterSheet>
       <summary id="catalogue-filter-summary" className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-medium">
@@ -1090,20 +1087,9 @@ function FilterControls({
             ))}
           </fieldset>
         ) : null}
-        {approvedFeed ? (
-          <fieldset className="flex flex-col gap-3 border border-border p-3">
-            <legend className="px-1 text-sm">Approved feed</legend>
-            <p>Approved feed coverage: {state.result.marketAccess.providerCoverage}</p>
-            <PriceField id="catalogue-filter-condition" name="condition" label="Condition" />
-            <PriceField id="catalogue-filter-seller-country" name="sellerCountry" label="Seller country" />
-            <PriceField id="catalogue-filter-mileage-max" name="mileageMax" label="Maximum mileage" />
-            <PriceField id="catalogue-filter-auction-status" name="auctionStatus" label="Auction status" />
-          </fieldset>
-        ) : (
-          <p id="catalogue-market-mode">
-            This list is not an inventory feed. It has no available-now control and does not claim dealer stock.
-          </p>
-        )}
+        <p id="catalogue-market-mode">
+          This list is not an inventory feed. It has no available-now control and does not claim dealer stock.
+        </p>
         <p>
           {state.result.total} published {state.result.total === 1 ? "record" : "records"} in this
           catalogue

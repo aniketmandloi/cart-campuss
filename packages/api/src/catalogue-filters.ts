@@ -40,13 +40,8 @@ const attribute = z
   .min(1)
   .max(80)
   .regex(/^[a-z0-9][a-z0-9 -]*$/);
-const priceBasis = z
-  .string()
-  .trim()
-  .min(1)
-  .max(121)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9 ._-]*$/);
-const sourcedAttribute = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,40}:[a-z0-9][a-z0-9_-]{0,40}$/);
+const priceBasis = z.string().trim().min(1).max(200);
+const sourcedAttribute = z.string().refine((value) => parseAttributeValue(value) !== null);
 
 const PRICE_FIELDS = ["priceMin", "priceMax", "priceCurrency", "priceMarket", "priceBasis", "priceUnknown"] as const;
 
