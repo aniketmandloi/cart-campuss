@@ -15,8 +15,9 @@ import {
 import type { Database } from "@cart-campuss/db";
 import { and, asc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
 
-import { applicabilityIsVisible, generationIsVisible } from "./catalogue";
+import { applicabilityIsVisible, generationIsVisible, type CatalogueMiss } from "./catalogue";
 import type { CatalogueAccess } from "./context";
+import { catalogueModelHref } from "./dossier";
 import { currentCollectionProjectionCovers, currentScopedProjectionCovers, publicMetadataEligible } from "./publishing";
 import {
   REGISTRATION_JURISDICTIONS,
@@ -323,6 +324,33 @@ async function loadSights(db: Database, access: CatalogueAccess, now: Date): Pro
   );
 
   return { applicability, generations, models };
+}
+
+export async function listPublishedModels(
+  db: Database,
+  access: CatalogueAccess,
+  now: () => Date = () => new Date(),
+): Promise<CatalogueMiss> {
+  const clock = now();
+  const sights = await loadSights(db, access, clock);
+  const coverage = coverageOf(sights, await projectionPublishedOn(db));
+  const models = publicModels(sights).sort(
+    (left, right) =>
+      left.brandName.localeCompare(right.brandName) ||
+      left.modelName.localeCompare(right.modelName) ||
+      left.modelSlug.localeCompare(right.modelSlug),
+  );
+  return {
+    publishedOn: coverage.publishedOn,
+    brands: coverage.brands,
+    models: coverage.models,
+    applicabilityRecords: coverage.applicabilityRecords,
+    publishedModels: models.slice(0, 12).map((model) => ({
+      brandName: model.brandName,
+      modelName: model.modelName,
+      href: catalogueModelHref({ modelSlug: model.modelSlug }),
+    })),
+  };
 }
 
 function keep(access: CatalogueAccess, synthetic: boolean, values: string[]): boolean {

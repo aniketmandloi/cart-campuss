@@ -3,17 +3,21 @@ import type { CSSProperties, ReactNode } from "react";
 import type {
   CatalogueAssertion,
   CatalogueCarPage,
+  CatalogueChip,
   CatalogueFact,
   CatalogueImage,
   CataloguePolicy,
   CatalogueProductionClaim,
+  CatalogueSearchHit,
   CatalogueSearchResult,
 } from "@cart-campuss/api/catalogue";
+import { catalogueListHref } from "@cart-campuss/api/catalogue-filters";
 import type { DossierLink, DossierRecordLink } from "@cart-campuss/api/dossier";
 
 import { CatalogueBrowseSections } from "./browse-view";
 import { groupFacts, quickFactSlots, separateCounts } from "./facts";
 import type { CatalogueBrowseState } from "./load-state";
+import { CatalogueFilterSheet, CatalogueListMemory } from "./list-client";
 import { DossierMark } from "./mark";
 
 export type CatalogueSearchState = {
@@ -738,7 +742,7 @@ function Photograph({ image }: { image: CatalogueImage | null }) {
 
 function SearchForm({ query, registrationId }: { query: string; registrationId?: string | null }) {
   return (
-    <form method="get" action="/" role="search" className="rise flex flex-col gap-3" style={stagger(3)}>
+    <form method="get" action="/cars" role="search" className="rise flex flex-col gap-3" style={stagger(3)}>
       <label htmlFor="catalogue-query" className="text-sm text-muted-foreground">
         Car name
       </label>
@@ -778,15 +782,99 @@ function SearchStatus({
     return <p id="catalogue-results" className="text-muted-foreground">The catalogue could not be read.</p>;
   }
   if (state.kind === "invalid") {
-    return <p id="catalogue-results" className="text-muted-foreground">Use 80 characters or fewer.</p>;
+    return <p id="catalogue-results" className="text-muted-foreground">This catalogue link is not valid.</p>;
   }
   if (state.kind === "idle") return null;
-  if (state.result.hits.length === 0) {
-    return <p id="catalogue-results" className="text-muted-foreground">No published record matches this search.</p>;
-  }
   return (
-    <ul id="catalogue-results" className="flex flex-col border-t border-border">
-      {state.result.hits.map((hit, index) => (
+    <div className="flex flex-col gap-8">
+      <CatalogueListMemory href={state.result.href} />
+      <FilterControls state={state} />
+      <ChipList chips={state.result.chips} />
+      {state.result.ambiguous ? (
+        <p>
+          More than one published record matches. Each line names its generation, sales market, and
+          model year.
+        </p>
+      ) : null}
+      {state.result.total === 0 ? (
+        <MissState result={state.result} />
+      ) : state.result.hits.length === 0 ? (
+        <p id="catalogue-results" className="text-muted-foreground">No records on this page.</p>
+      ) : (
+        <HitList id="catalogue-results" hits={state.result.hits} registrationId={registrationId} />
+      )}
+      <SuggestionList hits={state.result.suggestions} registrationId={registrationId} />
+      <Pagination result={state.result} />
+    </div>
+  );
+}
+
+function MissState({ result }: { result: CatalogueSearchResult }) {
+  const miss = result.miss;
+  return (
+    <div id="catalogue-results" className="flex flex-col gap-4">
+      <p className="text-muted-foreground">No published record matches this search.</p>
+      {miss ? (
+        <>
+          <p>
+            {miss.publishedOn
+              ? `This catalogue, published on ${miss.publishedOn}, has ${countPhrase(miss.brands, "brand", "brands")}, ${countPhrase(miss.models, "model", "models")}, and ${countPhrase(miss.applicabilityRecords, "applicability record", "applicability records")}.`
+              : "No public projection is published."}{" "}
+            These counts describe this catalogue only. No record was added for this search.
+          </p>
+          {miss.publishedModels.length > 0 ? (
+            <>
+              <p>Published models in this catalogue</p>
+              <ul className="flex flex-col gap-2">
+                {miss.publishedModels.map((model) => (
+                  <li key={model.href}>
+                    <TextLink href={model.href}>
+                      {model.brandName} {model.modelName}
+                    </TextLink>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p>No published model is in this catalogue.</p>
+          )}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function SuggestionList({
+  hits,
+  registrationId,
+}: {
+  hits: CatalogueSearchHit[];
+  registrationId?: string | null;
+}) {
+  if (hits.length === 0) return null;
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-lg font-medium">Spelling suggestions</h2>
+      <p className="text-sm text-muted-foreground">
+        A suggestion does not establish that the names are the same record.
+      </p>
+      <HitList hits={hits} registrationId={registrationId} />
+    </section>
+  );
+}
+
+function HitList({
+  hits,
+  registrationId,
+  id,
+}: {
+  hits: CatalogueSearchHit[];
+  registrationId?: string | null;
+  id?: string;
+}) {
+  return (
+    <ul id={id} className="flex flex-col border-t border-border">
+      {hits.map((hit, index) => (
         <li
           key={`${hit.scope}-${hit.scope === "applicability" ? hit.applicabilityId : hit.scope === "generation" ? hit.generationId : hit.modelId}`}
           className="rise border-b border-border"
@@ -820,9 +908,7 @@ function SearchStatus({
               )}
             </span>
             <span className="flex flex-wrap gap-2 text-xs">
-              <span className="border border-border px-2 py-1 text-muted-foreground">
-                {hit.match === "exact" ? "Exact name" : "Name begins with the query"}
-              </span>
+              <MatchBadge match={hit.match} />
               {hit.synthetic ? (
                 <span className="border border-stale px-2 py-1 text-stale">Synthetic fixture</span>
               ) : null}
@@ -832,6 +918,152 @@ function SearchStatus({
       ))}
     </ul>
   );
+}
+
+function MatchBadge({ match }: { match: CatalogueSearchHit["match"] }) {
+  const label =
+    match === "exact"
+      ? "Exact name"
+      : match === "prefix"
+        ? "Name begins with the query"
+        : match === "suggestion"
+          ? "Spelling suggestion"
+          : null;
+  if (!label) return null;
+  return <span className="border border-border px-2 py-1 text-muted-foreground">{label}</span>;
+}
+
+function ChipList({ chips }: { chips: CatalogueChip[] }) {
+  if (chips.length === 0) return null;
+  return (
+    <ul className="flex flex-wrap gap-2" aria-label="Filters in this catalogue">
+      {chips.map((chip) => (
+        <li key={`${chip.dimension}-${chip.value}`}>
+          <a
+            href={chip.href}
+            aria-current={chip.current ? "true" : undefined}
+            className="inline-flex min-h-11 items-center border border-border px-3 text-sm"
+          >
+            {chip.label} ({chip.count})
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const FILTER_LABELS: Record<CatalogueChip["dimension"], string> = {
+  brand: "Brand",
+  model: "Model",
+  generation: "Generation",
+  year: "Model year",
+  market: "Sales market",
+  body: "Body",
+  powertrain: "Powertrain",
+  transmission: "Transmission",
+  coverage: "Coverage",
+};
+
+function FilterControls({
+  state,
+}: {
+  state: Extract<CatalogueSearchState, { kind: "results" }>;
+}) {
+  const groups = new Map<CatalogueChip["dimension"], CatalogueChip[]>();
+  for (const chip of state.result.chips) {
+    const list = groups.get(chip.dimension) ?? [];
+    list.push(chip);
+    groups.set(chip.dimension, list);
+  }
+  const resetHref = catalogueListHref({ q: state.query });
+  return (
+    <CatalogueFilterSheet>
+      <summary id="catalogue-filter-summary" className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-medium">
+        Filters
+      </summary>
+      <form
+        method="get"
+        action="/cars"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="catalogue-filter-title"
+        className="flex flex-col gap-4 border-t border-border p-4"
+      >
+        <h2 id="catalogue-filter-title" className="text-lg font-medium">
+          Filter this catalogue
+        </h2>
+        {state.query ? <input type="hidden" name="q" value={state.query} /> : null}
+        {[...groups.entries()].map(([dimension, chips]) => (
+          <label key={dimension} className="flex flex-col gap-2 text-sm">
+            {FILTER_LABELS[dimension]}
+            <select
+              id={`catalogue-filter-${dimension}`}
+              name={dimension}
+              defaultValue={chips.find((chip) => chip.current)?.value ?? ""}
+              className="min-h-11 border border-border bg-card px-3 text-foreground"
+            >
+              <option value="">Any</option>
+              {chips.map((chip) => (
+                <option key={chip.value} value={chip.value}>
+                  {chip.label} ({chip.count})
+                </option>
+              ))}
+            </select>
+          </label>
+        ))}
+        <p>
+          {state.result.total} published {state.result.total === 1 ? "record" : "records"} in this
+          catalogue
+        </p>
+        <div className="flex flex-wrap gap-3">
+          <button
+            id="catalogue-filter-apply"
+            type="submit"
+            className="inline-flex min-h-11 items-center bg-primary px-5 text-sm font-medium text-primary-foreground"
+          >
+            Apply
+          </button>
+          <a id="catalogue-filter-reset" href={resetHref} className="inline-flex min-h-11 items-center border border-border px-5 text-sm">
+            Reset
+          </a>
+        </div>
+      </form>
+    </CatalogueFilterSheet>
+  );
+}
+
+function Pagination({ result }: { result: CatalogueSearchResult }) {
+  if (result.pageCount <= 1) return null;
+  const previous = result.page > 1 ? pageHref(result.href, result.page - 1) : null;
+  const next = result.page < result.pageCount ? pageHref(result.href, result.page + 1) : null;
+  return (
+    <nav aria-label="Pages" className="flex flex-wrap items-center gap-4 text-sm">
+      {previous ? (
+        <a href={previous} className="inline-flex min-h-11 items-center">
+          Previous page
+        </a>
+      ) : null}
+      <p>
+        Page {result.page} of {result.pageCount}
+      </p>
+      {next ? (
+        <a href={next} className="inline-flex min-h-11 items-center">
+          Next page
+        </a>
+      ) : null}
+    </nav>
+  );
+}
+
+function pageHref(href: string, page: number): string {
+  const url = new URL(href, "http://catalogue.local");
+  if (page > 1) url.searchParams.set("page", String(page));
+  else url.searchParams.delete("page");
+  return `${url.pathname}${url.search}`;
+}
+
+function countPhrase(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function withRegistration(href: string, registrationId: string | null | undefined): string {

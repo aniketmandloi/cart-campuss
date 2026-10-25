@@ -17,9 +17,10 @@ import {
   catalogueSourcedFact,
 } from "@cart-campuss/db/schema/catalogue";
 import type { Database } from "@cart-campuss/db";
-import { and, asc, eq, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, eq, inArray, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 
 import { normalizeCatalogueQuery } from "./catalogue-name";
+import { CATALOGUE_PAGE_SIZE, catalogueListHref, type CatalogueListSelection } from "./catalogue-filters";
 import type { CatalogueAccess } from "./context";
 import {
   buildApplicabilitySelector,
@@ -40,7 +41,7 @@ type CatalogueSearchIdentity = {
   modelName: string;
   modelId: string;
   modelSlug: string;
-  match: "exact" | "prefix";
+  match: "exact" | "prefix" | "suggestion" | "listed";
   synthetic: boolean;
   href: string;
 };
@@ -72,10 +73,45 @@ export type CatalogueSearchHit =
       generationId: null;
     });
 
+export type CatalogueChip = {
+  dimension:
+    | "brand"
+    | "model"
+    | "generation"
+    | "year"
+    | "market"
+    | "body"
+    | "powertrain"
+    | "transmission"
+    | "coverage";
+  label: string;
+  value: string;
+  count: number;
+  href: string;
+  current: boolean;
+};
+
+export type CatalogueMiss = {
+  publishedOn: string | null;
+  brands: number;
+  models: number;
+  applicabilityRecords: number;
+  publishedModels: Array<{ brandName: string; modelName: string; href: string }>;
+};
+
 export type CatalogueSearchResult = {
   query: string;
   privatePreview: boolean;
   hits: CatalogueSearchHit[];
+  suggestions: CatalogueSearchHit[];
+  page: number;
+  pageSize: number;
+  total: number;
+  pageCount: number;
+  ambiguous: boolean;
+  miss: CatalogueMiss | null;
+  chips: CatalogueChip[];
+  href: string;
 };
 
 export type CatalogueAssertion = {
@@ -334,6 +370,34 @@ export function catalogueStatus(access: CatalogueAccess) {
   return { privatePreview: access.allowFixtures };
 }
 
+type CatalogueCandidate = {
+  hit: CatalogueSearchHit;
+  brandSlug: string;
+  modelSlug: string;
+  generationSlug: string | null;
+  yearId: string | null;
+  marketId: string | null;
+  body: string | null;
+  powertrain: string | null;
+  transmission: string | null;
+};
+
+function emptyAttributes(): Pick<CatalogueCandidate, "body" | "powertrain" | "transmission"> {
+  return { body: null, powertrain: null, transmission: null };
+}
+
+function attributesFromFacts(
+  facts: ReadonlyArray<{ property: string; state: string; normalizedValue: string | null }>,
+): Pick<CatalogueCandidate, "body" | "powertrain" | "transmission"> {
+  const read = (property: string) => {
+    const fact = facts.find(
+      (item) => item.property.toLowerCase() === property && item.state === "known" && item.normalizedValue,
+    );
+    return fact?.normalizedValue ? normalizeCatalogueQuery(fact.normalizedValue) : null;
+  };
+  return { body: read("body"), powertrain: read("powertrain"), transmission: read("transmission") };
+}
+
 function prefixUpperBound(prefix: string): string {
   const chars = [...prefix];
   for (let index = chars.length - 1; index >= 0; index -= 1) {
@@ -359,77 +423,44 @@ export function catalogueSearchStatement(
 export async function searchCatalogue(
   db: Database,
   access: CatalogueAccess,
-  query: string,
+  query: string | CatalogueListSelection,
   now: () => Date = () => new Date(),
 ): Promise<CatalogueSearchResult> {
-  const normalized = normalizeCatalogueQuery(query);
-  if (!normalized) {
-    return { query, privatePreview: access.allowFixtures, hits: [] };
-  }
-  const rows = await buildCatalogueSearch(db, access, normalized, now());
-
-  const seen = new Set<string>();
-  const hits: CatalogueSearchHit[] = [];
-  for (const row of rows) {
-    if (seen.has(row.applicabilityId)) continue;
-    if (!row.synthetic && !publicMetadataEligible(Object.values(row).filter((value) => typeof value === "string"))) continue;
-    if (!row.synthetic) {
-      const projection = await readPublishedCatalogueDetail(db, row.applicabilityId, now);
-      if (!projection || !projectionMatchesIdentity(row, projection)) continue;
-      const canonicalName = [
-        { kind: "brand", name: row.brandName },
-        { kind: "model", name: row.modelName },
-        { kind: "generation", name: row.generationName },
-      ].some((item) => item.kind === row.aliasKind && normalizeCatalogueQuery(item.name) === row.normalizedName);
-      const approvedAlias = projection.permittedFields.includes("alias") &&
-        projection.aliases.some((alias) => normalizeCatalogueQuery(alias) === row.normalizedName);
-      if (!canonicalName && !approvedAlias) continue;
-    }
-    seen.add(row.applicabilityId);
-    hits.push({
-      scope: "applicability",
-      applicabilityId: row.applicabilityId,
-      generationId: row.generationId,
-      modelId: row.modelId,
-      brandName: row.brandName,
-      modelName: row.modelName,
-      generationName: row.generationName,
-      modelSlug: row.modelSlug,
-      generationSlug: row.generationSlug,
-      salesMarketName: row.salesMarketName,
-      salesMarketId: row.salesMarketId,
-      modelYearLabel: row.modelYearLabel,
-      modelYearId: row.modelYearId,
-      variantName: row.variantName,
-      variantId: row.variantId,
-      match: row.normalizedName === normalized ? "exact" : "prefix",
-      synthetic: row.synthetic,
-      href: catalogueCarHref(row),
-    });
-    if (hits.length === 20) break;
-  }
-
-  if (hits.length < 20) {
-    const generations = await searchBareGenerations(db, access, normalized, now());
-    for (const hit of generations) {
-      if (hits.length === 20) break;
-      hits.push(hit);
-    }
-  }
-  if (hits.length < 20) {
-    const seenModels = new Set(hits.map((hit) => hit.modelId));
-    const models = await searchBareModels(db, access, normalized, now());
-    for (const hit of models) {
-      if (hits.length === 20 || seenModels.has(hit.modelId)) continue;
-      seenModels.add(hit.modelId);
-      hits.push(hit);
-    }
-  }
-
+  const request: CatalogueListSelection = typeof query === "string" ? { q: query } : query;
+  const normalized = normalizeCatalogueQuery(request.q ?? "");
+  const clock = now();
+  const candidates = normalized
+    ? await gatherNamedCandidates(db, access, normalized, clock)
+    : await gatherBrowseCandidates(db, access, clock);
+  const suggestions = normalized.length >= 3
+    ? await gatherSuggestions(db, access, normalized, clock, candidates)
+    : [];
+  await fillSyntheticAttributes(db, [...candidates, ...suggestions]);
+  const filtered = candidates.filter((candidate) => candidateMatches(candidate, request));
+  const suggested = suggestions.filter((candidate) => candidateMatches(candidate, request));
+  const page = request.page ?? 1;
+  const start = (page - 1) * CATALOGUE_PAGE_SIZE;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / CATALOGUE_PAGE_SIZE));
+  const contexts = new Set(
+    filtered.flatMap((candidate) =>
+      candidate.hit.scope === "applicability"
+        ? [`${candidate.hit.generationId}|${candidate.hit.salesMarketId}|${candidate.hit.modelYearId}`]
+        : [],
+    ),
+  );
   return {
-    query,
+    query: request.q ?? "",
     privatePreview: access.allowFixtures,
-    hits,
+    hits: filtered.slice(start, start + CATALOGUE_PAGE_SIZE).map((candidate) => candidate.hit),
+    suggestions: suggested.map((candidate) => candidate.hit),
+    page,
+    pageSize: CATALOGUE_PAGE_SIZE,
+    total: filtered.length,
+    pageCount,
+    ambiguous: normalized.length > 0 && contexts.size > 1,
+    miss: null,
+    chips: chipsFor(candidates, request),
+    href: catalogueListHref({ ...request, q: request.q ?? "", page }),
   };
 }
 
@@ -1239,8 +1270,8 @@ async function searchBareGenerations(
   access: CatalogueAccess,
   normalized: string,
   now: Date,
-): Promise<CatalogueSearchHit[]> {
-  const upper = prefixUpperBound(normalized);
+  mode: "prefix" | "fuzzy" = "prefix",
+): Promise<CatalogueCandidate[]> {
   const rows = await db
     .select({
       generationId: catalogueGeneration.id,
@@ -1250,6 +1281,7 @@ async function searchBareGenerations(
       modelName: catalogueModel.name,
       modelSlug: catalogueModel.slug,
       brandName: catalogueBrand.name,
+      brandSlug: catalogueBrand.slug,
       normalizedName: catalogueGenerationAlias.normalizedName,
       synthetic: catalogueGeneration.synthetic,
     })
@@ -1261,18 +1293,8 @@ async function searchBareGenerations(
       catalogueSourcePolicy,
       eq(catalogueGeneration.sourcePolicyId, catalogueSourcePolicy.id),
     )
-    .where(
-      and(
-        sql`${catalogueGenerationAlias.normalizedName} ~>=~ ${normalized}`,
-        sql`${catalogueGenerationAlias.normalizedName} ~<~ ${upper}`,
-        selfVisibleGenerationSql(access, now),
-      ),
-    )
-    .orderBy(
-      sql`case when ${catalogueGenerationAlias.normalizedName} = ${normalized} then 0 else 1 end`,
-      asc(catalogueGeneration.id),
-    )
-    .limit(20);
+    .where(and(aliasNamePredicate(catalogueGenerationAlias.normalizedName, normalized, mode), selfVisibleGenerationSql(access, now)))
+    .orderBy(...aliasNameOrder(catalogueGenerationAlias.normalizedName, catalogueGeneration.id, normalized, mode));
   if (rows.length === 0) return [];
   const occupied = await db
     .select({ generationId: catalogueMarketVariant.generationId })
@@ -1297,7 +1319,7 @@ async function searchBareGenerations(
   const occupiedIds = new Set(occupied.map((row) => row.generationId));
   const seen = new Set<string>();
   const approvedNames = new Map<string, PublicDetail | null>();
-  const hits: CatalogueSearchHit[] = [];
+  const candidates: CatalogueCandidate[] = [];
   for (const row of rows) {
     if (occupiedIds.has(row.generationId) || seen.has(row.generationId)) continue;
     if (!row.synthetic && !await currentScopedNameApproved(
@@ -1309,25 +1331,33 @@ async function searchBareGenerations(
       approvedNames,
     )) continue;
     seen.add(row.generationId);
-    hits.push({
-      scope: "generation",
-      applicabilityId: null,
-      generationId: row.generationId,
-      modelId: row.modelId,
-      brandName: row.brandName,
-      modelName: row.modelName,
-      generationName: row.generationName,
-      modelSlug: row.modelSlug,
-      generationSlug: row.generationSlug,
-      match: row.normalizedName === normalized ? "exact" : "prefix",
-      synthetic: row.synthetic,
-      href: catalogueContextHref({
+    candidates.push({
+      hit: {
+        scope: "generation",
+        applicabilityId: null,
+        generationId: row.generationId,
+        modelId: row.modelId,
+        brandName: row.brandName,
+        modelName: row.modelName,
+        generationName: row.generationName,
         modelSlug: row.modelSlug,
         generationSlug: row.generationSlug,
-      }),
+        match: nameMatch(mode, row.normalizedName, normalized),
+        synthetic: row.synthetic,
+        href: catalogueContextHref({
+          modelSlug: row.modelSlug,
+          generationSlug: row.generationSlug,
+        }),
+      },
+      brandSlug: row.brandSlug,
+      modelSlug: row.modelSlug,
+      generationSlug: row.generationSlug,
+      yearId: null,
+      marketId: null,
+      ...emptyAttributes(),
     });
   }
-  return hits;
+  return candidates;
 }
 
 async function searchBareModels(
@@ -1335,14 +1365,15 @@ async function searchBareModels(
   access: CatalogueAccess,
   normalized: string,
   now: Date,
-): Promise<CatalogueSearchHit[]> {
-  const upper = prefixUpperBound(normalized);
+  mode: "prefix" | "fuzzy" = "prefix",
+): Promise<CatalogueCandidate[]> {
   const rows = await db
     .select({
       modelId: catalogueModel.id,
       modelName: catalogueModel.name,
       modelSlug: catalogueModel.slug,
       brandName: catalogueBrand.name,
+      brandSlug: catalogueBrand.slug,
       normalizedName: catalogueModelAlias.normalizedName,
     })
     .from(catalogueModelAlias)
@@ -1350,16 +1381,11 @@ async function searchBareModels(
     .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
     .where(
       and(
-        sql`${catalogueModelAlias.normalizedName} ~>=~ ${normalized}`,
-        sql`${catalogueModelAlias.normalizedName} ~<~ ${upper}`,
+        aliasNamePredicate(catalogueModelAlias.normalizedName, normalized, mode),
         currentScopedProjectionCovers(catalogueModel.id, "model", now),
       ),
     )
-    .orderBy(
-      sql`case when ${catalogueModelAlias.normalizedName} = ${normalized} then 0 else 1 end`,
-      asc(catalogueModel.id),
-    )
-    .limit(20);
+    .orderBy(...aliasNameOrder(catalogueModelAlias.normalizedName, catalogueModel.id, normalized, mode));
   if (rows.length === 0) return [];
   const ids = rows.map((row) => row.modelId);
   const generationRows = await db
@@ -1390,7 +1416,7 @@ async function searchBareModels(
   ]);
   const seen = new Set<string>();
   const approvedNames = new Map<string, PublicDetail | null>();
-  const hits: CatalogueSearchHit[] = [];
+  const candidates: CatalogueCandidate[] = [];
   for (const row of rows) {
     if (occupied.has(row.modelId) || seen.has(row.modelId)) continue;
     if (!await currentScopedNameApproved(
@@ -1402,20 +1428,28 @@ async function searchBareModels(
       approvedNames,
     )) continue;
     seen.add(row.modelId);
-    hits.push({
-      scope: "model",
-      applicabilityId: null,
-      generationId: null,
-      modelId: row.modelId,
-      brandName: row.brandName,
-      modelName: row.modelName,
+    candidates.push({
+      hit: {
+        scope: "model",
+        applicabilityId: null,
+        generationId: null,
+        modelId: row.modelId,
+        brandName: row.brandName,
+        modelName: row.modelName,
+        modelSlug: row.modelSlug,
+        match: nameMatch(mode, row.normalizedName, normalized),
+        synthetic: false,
+        href: catalogueModelHref({ modelSlug: row.modelSlug }),
+      },
+      brandSlug: row.brandSlug,
       modelSlug: row.modelSlug,
-      match: row.normalizedName === normalized ? "exact" : "prefix",
-      synthetic: false,
-      href: catalogueModelHref({ modelSlug: row.modelSlug }),
+      generationSlug: null,
+      yearId: null,
+      marketId: null,
+      ...emptyAttributes(),
     });
   }
-  return hits;
+  return candidates;
 }
 
 async function currentScopedNameApproved(
@@ -1461,8 +1495,13 @@ function selfVisibleGenerationSql(access: CatalogueAccess, now: Date): SQL {
   );
 }
 
-function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized: string, now: Date) {
-  const upper = prefixUpperBound(normalized);
+function buildCatalogueSearch(
+  db: Database,
+  access: CatalogueAccess,
+  normalized: string,
+  now: Date,
+  mode: "prefix" | "fuzzy" = "prefix",
+) {
   return db
     .select({
       applicabilityId: catalogueApplicability.id,
@@ -1483,6 +1522,7 @@ function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized:
       modelYearId: catalogueModelYear.id,
       variantName: catalogueMarketVariant.name,
       variantId: catalogueMarketVariant.id,
+      brandSlug: catalogueBrand.slug,
       synthetic: catalogueApplicability.synthetic,
       policyName: catalogueSourcePolicy.name,
       policyAttribution: catalogueSourcePolicy.attribution,
@@ -1508,20 +1548,470 @@ function buildCatalogueSearch(db: Database, access: CatalogueAccess, normalized:
       eq(catalogueApplicability.salesMarketId, catalogueSalesMarket.id),
     )
     .innerJoin(catalogueModelYear, eq(catalogueApplicability.modelYearId, catalogueModelYear.id))
-    .where(
+    .where(and(aliasNamePredicate(catalogueAlias.normalizedName, normalized, mode), visibleRecord(access, now)))
+    .orderBy(
+      ...aliasNameOrder(catalogueAlias.normalizedName, catalogueApplicability.id, normalized, mode),
+      asc(catalogueAlias.id),
+    );
+}
+
+function aliasNamePredicate(column: AnyColumn, normalized: string, mode: "prefix" | "fuzzy"): SQL {
+  const upper = prefixUpperBound(normalized);
+  if (mode === "prefix") {
+    return mustSql(
       and(
         // Range operators belong to text_pattern_ops, so a parameterized prefix can use the name index.
-        sql`${catalogueAlias.normalizedName} ~>=~ ${normalized}`,
-        sql`${catalogueAlias.normalizedName} ~<~ ${upper}`,
-        visibleRecord(access, now),
+        sql`${column} ~>=~ ${normalized}`,
+        sql`${column} ~<~ ${upper}`,
       ),
+    );
+  }
+  return mustSql(
+    and(
+      sql`${column} operator(public.%) ${normalized}`,
+      sql`not (${column} ~>=~ ${normalized} and ${column} ~<~ ${upper})`,
+    ),
+  );
+}
+
+function aliasNameOrder(column: AnyColumn, idColumn: AnyColumn, normalized: string, mode: "prefix" | "fuzzy") {
+  if (mode === "fuzzy") {
+    return [sql`public.similarity(${column}, ${normalized}) desc`, asc(idColumn)] as const;
+  }
+  return [sql`case when ${column} = ${normalized} then 0 else 1 end`, asc(idColumn)] as const;
+}
+
+function nameMatch(
+  mode: "prefix" | "fuzzy",
+  normalizedName: string,
+  normalized: string,
+): CatalogueSearchHit["match"] {
+  if (mode === "fuzzy") return "suggestion";
+  return normalizedName === normalized ? "exact" : "prefix";
+}
+
+function matchRank(match: CatalogueSearchHit["match"]): number {
+  if (match === "exact") return 0;
+  if (match === "prefix" || match === "listed") return 1;
+  return 2;
+}
+
+function applicabilityCandidate(
+  row: {
+    applicabilityId: string;
+    generationId: string;
+    modelId: string;
+    brandName: string;
+    brandSlug: string;
+    modelName: string;
+    modelSlug: string;
+    generationName: string;
+    generationSlug: string;
+    salesMarketName: string;
+    salesMarketId: string;
+    modelYearLabel: string;
+    modelYearId: string;
+    variantName: string;
+    variantId: string;
+    synthetic: boolean;
+  },
+  match: CatalogueSearchHit["match"],
+  attributes: ReturnType<typeof emptyAttributes>,
+): CatalogueCandidate {
+  return {
+    hit: {
+      scope: "applicability",
+      applicabilityId: row.applicabilityId,
+      generationId: row.generationId,
+      modelId: row.modelId,
+      brandName: row.brandName,
+      modelName: row.modelName,
+      generationName: row.generationName,
+      modelSlug: row.modelSlug,
+      generationSlug: row.generationSlug,
+      salesMarketName: row.salesMarketName,
+      salesMarketId: row.salesMarketId,
+      modelYearLabel: row.modelYearLabel,
+      modelYearId: row.modelYearId,
+      variantName: row.variantName,
+      variantId: row.variantId,
+      match,
+      synthetic: row.synthetic,
+      href: catalogueCarHref(row),
+    },
+    brandSlug: row.brandSlug,
+    modelSlug: row.modelSlug,
+    generationSlug: row.generationSlug,
+    yearId: row.modelYearId,
+    marketId: row.salesMarketId,
+    ...attributes,
+  };
+}
+
+async function gatherNamedCandidates(
+  db: Database,
+  access: CatalogueAccess,
+  normalized: string,
+  now: Date,
+): Promise<CatalogueCandidate[]> {
+  const rows = await buildCatalogueSearch(db, access, normalized, now, "prefix");
+  const candidates = await approveApplicabilityRows(db, rows, now, normalized, "prefix");
+  candidates.push(...(await searchBareGenerations(db, access, normalized, now, "prefix")));
+  const seenModels = new Set(candidates.map((candidate) => candidate.hit.modelId));
+  for (const candidate of await searchBareModels(db, access, normalized, now, "prefix")) {
+    if (seenModels.has(candidate.hit.modelId)) continue;
+    seenModels.add(candidate.hit.modelId);
+    candidates.push(candidate);
+  }
+  return candidates.sort((left, right) => matchRank(left.hit.match) - matchRank(right.hit.match));
+}
+
+async function gatherSuggestions(
+  db: Database,
+  access: CatalogueAccess,
+  normalized: string,
+  now: Date,
+  existing: CatalogueCandidate[],
+): Promise<CatalogueCandidate[]> {
+  const seen = new Set(existing.map(identityKey));
+  const rows = await buildCatalogueSearch(db, access, normalized, now, "fuzzy");
+  const found = [
+    ...(await approveApplicabilityRows(db, rows, now, normalized, "fuzzy")),
+    ...(await searchBareGenerations(db, access, normalized, now, "fuzzy")),
+    ...(await searchBareModels(db, access, normalized, now, "fuzzy")),
+  ];
+  const suggestions: CatalogueCandidate[] = [];
+  for (const candidate of found) {
+    const key = identityKey(candidate);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    suggestions.push(candidate);
+  }
+  return suggestions;
+}
+
+async function approveApplicabilityRows(
+  db: Database,
+  rows: Awaited<ReturnType<typeof buildCatalogueSearch>>,
+  now: Date,
+  normalized: string,
+  mode: "prefix" | "fuzzy",
+): Promise<CatalogueCandidate[]> {
+  const seen = new Set<string>();
+  const candidates: CatalogueCandidate[] = [];
+  for (const row of rows) {
+    if (seen.has(row.applicabilityId)) continue;
+    if (!row.synthetic && !publicMetadataEligible(stringValues(row))) continue;
+    let attributes = emptyAttributes();
+    if (!row.synthetic) {
+      const projection = await readPublishedCatalogueDetail(db, row.applicabilityId, () => now);
+      if (!projection || !projectionMatchesIdentity(row, projection)) continue;
+      const canonicalName = [
+        { kind: "brand", name: row.brandName },
+        { kind: "model", name: row.modelName },
+        { kind: "generation", name: row.generationName },
+      ].some((item) => item.kind === row.aliasKind && normalizeCatalogueQuery(item.name) === row.normalizedName);
+      const approvedAlias =
+        projection.permittedFields.includes("alias") &&
+        projection.aliases.some((alias) => normalizeCatalogueQuery(alias) === row.normalizedName);
+      if (!canonicalName && !approvedAlias) continue;
+      attributes = attributesFromFacts(projection.facts);
+    }
+    seen.add(row.applicabilityId);
+    candidates.push(applicabilityCandidate(row, nameMatch(mode, row.normalizedName, normalized), attributes));
+  }
+  return candidates;
+}
+
+async function gatherBrowseCandidates(
+  db: Database,
+  access: CatalogueAccess,
+  now: Date,
+): Promise<CatalogueCandidate[]> {
+  const rows = await db
+    .select({
+      applicabilityId: catalogueApplicability.id,
+      generationId: catalogueGeneration.id,
+      modelId: catalogueModel.id,
+      brandName: catalogueBrand.name,
+      brandSlug: catalogueBrand.slug,
+      modelName: catalogueModel.name,
+      modelSlug: catalogueModel.slug,
+      generationName: catalogueGeneration.name,
+      generationSlug: catalogueGeneration.slug,
+      salesMarketName: catalogueSalesMarket.name,
+      salesMarketId: catalogueSalesMarket.id,
+      countryCode: catalogueSalesMarket.countryCode,
+      modelYearLabel: catalogueModelYear.label,
+      modelYearId: catalogueModelYear.id,
+      variantName: catalogueMarketVariant.name,
+      variantId: catalogueMarketVariant.id,
+      synthetic: catalogueApplicability.synthetic,
+    })
+    .from(catalogueApplicability)
+    .innerJoin(catalogueSourcePolicy, eq(catalogueApplicability.sourcePolicyId, catalogueSourcePolicy.id))
+    .innerJoin(catalogueMarketVariant, eq(catalogueApplicability.marketVariantId, catalogueMarketVariant.id))
+    .innerJoin(catalogueGeneration, eq(catalogueMarketVariant.generationId, catalogueGeneration.id))
+    .innerJoin(catalogueModel, eq(catalogueGeneration.modelId, catalogueModel.id))
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .innerJoin(catalogueSalesMarket, eq(catalogueApplicability.salesMarketId, catalogueSalesMarket.id))
+    .innerJoin(catalogueModelYear, eq(catalogueApplicability.modelYearId, catalogueModelYear.id))
+    .where(visibleRecord(access, now))
+    .orderBy(asc(catalogueApplicability.id));
+  const candidates: CatalogueCandidate[] = [];
+  for (const row of rows) {
+    if (!row.synthetic && !publicMetadataEligible(stringValues(row))) continue;
+    let attributes = emptyAttributes();
+    if (!row.synthetic) {
+      const projection = await readPublishedCatalogueDetail(db, row.applicabilityId, () => now);
+      if (!projection || !projectionMatchesIdentity(row, projection)) continue;
+      attributes = attributesFromFacts(projection.facts);
+    }
+    candidates.push(applicabilityCandidate(row, "listed", attributes));
+  }
+  const occupied = new Set(candidates.map((candidate) => candidate.hit.generationId).filter((id): id is string => id !== null));
+  const generations = await db
+    .select({
+      generationId: catalogueGeneration.id,
+      generationName: catalogueGeneration.name,
+      generationSlug: catalogueGeneration.slug,
+      modelId: catalogueModel.id,
+      modelName: catalogueModel.name,
+      modelSlug: catalogueModel.slug,
+      brandName: catalogueBrand.name,
+      brandSlug: catalogueBrand.slug,
+      synthetic: catalogueGeneration.synthetic,
+    })
+    .from(catalogueGeneration)
+    .innerJoin(catalogueModel, eq(catalogueGeneration.modelId, catalogueModel.id))
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .leftJoin(catalogueSourcePolicy, eq(catalogueGeneration.sourcePolicyId, catalogueSourcePolicy.id))
+    .where(selfVisibleGenerationSql(access, now))
+    .orderBy(asc(catalogueGeneration.id));
+  for (const row of generations) {
+    if (occupied.has(row.generationId) || !publicMetadataEligible(stringValues(row))) continue;
+    occupied.add(row.generationId);
+    candidates.push({
+      hit: {
+        scope: "generation",
+        applicabilityId: null,
+        generationId: row.generationId,
+        modelId: row.modelId,
+        brandName: row.brandName,
+        modelName: row.modelName,
+        generationName: row.generationName,
+        modelSlug: row.modelSlug,
+        generationSlug: row.generationSlug,
+        match: "listed",
+        synthetic: row.synthetic,
+        href: catalogueContextHref({ modelSlug: row.modelSlug, generationSlug: row.generationSlug }),
+      },
+      brandSlug: row.brandSlug,
+      modelSlug: row.modelSlug,
+      generationSlug: row.generationSlug,
+      yearId: null,
+      marketId: null,
+      ...emptyAttributes(),
+    });
+  }
+  const occupiedModels = new Set(candidates.map((candidate) => candidate.hit.modelId));
+  const models = await db
+    .select({
+      modelId: catalogueModel.id,
+      modelName: catalogueModel.name,
+      modelSlug: catalogueModel.slug,
+      brandName: catalogueBrand.name,
+      brandSlug: catalogueBrand.slug,
+    })
+    .from(catalogueModel)
+    .innerJoin(catalogueBrand, eq(catalogueModel.brandId, catalogueBrand.id))
+    .where(currentScopedProjectionCovers(catalogueModel.id, "model", now))
+    .orderBy(asc(catalogueModel.id));
+  for (const row of models) {
+    if (occupiedModels.has(row.modelId) || !publicMetadataEligible(stringValues(row))) continue;
+    occupiedModels.add(row.modelId);
+    candidates.push({
+      hit: {
+        scope: "model",
+        applicabilityId: null,
+        generationId: null,
+        modelId: row.modelId,
+        brandName: row.brandName,
+        modelName: row.modelName,
+        modelSlug: row.modelSlug,
+        match: "listed",
+        synthetic: false,
+        href: catalogueModelHref({ modelSlug: row.modelSlug }),
+      },
+      brandSlug: row.brandSlug,
+      modelSlug: row.modelSlug,
+      generationSlug: null,
+      yearId: null,
+      marketId: null,
+      ...emptyAttributes(),
+    });
+  }
+  return candidates;
+}
+
+async function fillSyntheticAttributes(db: Database, candidates: CatalogueCandidate[]): Promise<void> {
+  const ids = candidates.flatMap((candidate) =>
+    candidate.hit.scope === "applicability" && candidate.hit.synthetic ? [candidate.hit.applicabilityId] : [],
+  );
+  if (ids.length === 0) return;
+  const rows = await db
+    .select({
+      applicabilityId: catalogueSourcedFact.applicabilityId,
+      property: catalogueSourcedFact.property,
+      normalizedValue: catalogueSourcedFact.normalizedValue,
+      state: catalogueSourcedFact.state,
+    })
+    .from(catalogueSourcedFact)
+    .where(
+      and(
+        inArray(catalogueSourcedFact.applicabilityId, ids),
+        eq(catalogueSourcedFact.curated, true),
+        eq(catalogueSourcedFact.state, "known"),
+      ),
+    );
+  const grouped = new Map<string, { property: string; state: string; normalizedValue: string | null }[]>();
+  for (const row of rows) {
+    const list = grouped.get(row.applicabilityId) ?? [];
+    list.push(row);
+    grouped.set(row.applicabilityId, list);
+  }
+  for (const candidate of candidates) {
+    if (candidate.hit.scope !== "applicability" || !candidate.hit.synthetic) continue;
+    const facts = grouped.get(candidate.hit.applicabilityId);
+    if (!facts) continue;
+    Object.assign(candidate, attributesFromFacts(facts));
+  }
+}
+
+function candidateMatches(candidate: CatalogueCandidate, request: CatalogueListSelection): boolean {
+  if (request.brand && candidate.brandSlug !== request.brand) return false;
+  if (request.model && candidate.modelSlug !== request.model) return false;
+  if (request.generation && candidate.generationSlug !== request.generation) return false;
+  if (request.year && candidate.yearId !== request.year) return false;
+  if (request.market && candidate.marketId !== request.market) return false;
+  if (request.coverage && candidate.hit.scope !== request.coverage) return false;
+  if (request.body && candidate.body !== normalizeCatalogueQuery(request.body)) return false;
+  if (request.powertrain && candidate.powertrain !== normalizeCatalogueQuery(request.powertrain)) return false;
+  if (request.transmission && candidate.transmission !== normalizeCatalogueQuery(request.transmission)) return false;
+  return true;
+}
+
+function chipSelection(
+  request: CatalogueListSelection,
+  chip: { dimension: CatalogueChip["dimension"]; value: string },
+  current: boolean,
+): CatalogueListSelection {
+  const next: CatalogueListSelection = { ...request, page: undefined };
+  if (current) {
+    delete next[chip.dimension];
+    return next;
+  }
+  switch (chip.dimension) {
+    case "coverage":
+      if (chip.value === "applicability" || chip.value === "generation" || chip.value === "model") {
+        return { ...next, coverage: chip.value };
+      }
+      return next;
+    case "brand":
+      return { ...next, brand: chip.value };
+    case "model":
+      return { ...next, model: chip.value };
+    case "generation":
+      return { ...next, generation: chip.value };
+    case "year":
+      return { ...next, year: chip.value };
+    case "market":
+      return { ...next, market: chip.value };
+    case "body":
+      return { ...next, body: chip.value };
+    case "powertrain":
+      return { ...next, powertrain: chip.value };
+    case "transmission":
+      return { ...next, transmission: chip.value };
+  }
+}
+
+function chipsFor(candidates: CatalogueCandidate[], request: CatalogueListSelection): CatalogueChip[] {
+  const grouped = new Map<string, { dimension: CatalogueChip["dimension"]; value: string; label: string; count: number }>();
+  for (const candidate of candidates) {
+    for (const chip of chipValues(candidate)) {
+      const key = `${chip.dimension}:${chip.value}`;
+      const existing = grouped.get(key);
+      if (existing) existing.count += 1;
+      else grouped.set(key, { ...chip, count: 1 });
+    }
+  }
+  return [...grouped.values()]
+    .sort(
+      (left, right) =>
+        CHIP_ORDER.indexOf(left.dimension) - CHIP_ORDER.indexOf(right.dimension) ||
+        left.label.localeCompare(right.label) ||
+        left.value.localeCompare(right.value),
     )
-    .orderBy(
-      sql`case when ${catalogueAlias.normalizedName} = ${normalized} then 0 else 1 end`,
-      asc(catalogueApplicability.id),
-      asc(catalogueAlias.id),
-    )
-    .limit(100);
+    .map((chip) => {
+      const current = request[chip.dimension] === chip.value;
+      return { ...chip, current, href: catalogueListHref(chipSelection(request, chip, current)) };
+    });
+}
+
+const CHIP_ORDER = [
+  "brand",
+  "model",
+  "generation",
+  "year",
+  "market",
+  "body",
+  "powertrain",
+  "transmission",
+  "coverage",
+] as const;
+
+function chipValues(
+  candidate: CatalogueCandidate,
+): Array<{ dimension: CatalogueChip["dimension"]; value: string; label: string }> {
+  const chips: Array<{ dimension: CatalogueChip["dimension"]; value: string; label: string }> = [
+    { dimension: "brand", value: candidate.brandSlug, label: candidate.hit.brandName },
+    { dimension: "model", value: candidate.modelSlug, label: candidate.hit.modelName },
+    {
+      dimension: "coverage",
+      value: candidate.hit.scope,
+      label:
+        candidate.hit.scope === "applicability"
+          ? "Applicability record"
+          : candidate.hit.scope === "generation"
+            ? "Generation record"
+            : "Model record",
+    },
+  ];
+  if (candidate.hit.scope !== "model" && candidate.generationSlug) {
+    chips.push({ dimension: "generation", value: candidate.generationSlug, label: candidate.hit.generationName });
+  }
+  if (candidate.hit.scope === "applicability" && candidate.yearId && candidate.marketId) {
+    chips.push({ dimension: "year", value: candidate.yearId, label: candidate.hit.modelYearLabel });
+    chips.push({ dimension: "market", value: candidate.marketId, label: candidate.hit.salesMarketName });
+  }
+  if (candidate.body) chips.push({ dimension: "body", value: candidate.body, label: candidate.body });
+  if (candidate.powertrain) chips.push({ dimension: "powertrain", value: candidate.powertrain, label: candidate.powertrain });
+  if (candidate.transmission) {
+    chips.push({ dimension: "transmission", value: candidate.transmission, label: candidate.transmission });
+  }
+  return chips;
+}
+
+function identityKey(candidate: CatalogueCandidate): string {
+  const hit = candidate.hit;
+  if (hit.scope === "applicability") return `applicability:${hit.applicabilityId}`;
+  if (hit.scope === "generation") return `generation:${hit.generationId}`;
+  return `model:${hit.modelId}`;
+}
+
+function stringValues(row: object): string[] {
+  return Object.values(row).filter((value) => typeof value === "string");
 }
 
 function mustSql(condition: SQL | undefined): SQL {

@@ -1,3 +1,4 @@
+import { parseCatalogueListQuery } from "@cart-campuss/api/catalogue-filters";
 import type { CatalogueBrandPage, CatalogueHome } from "@cart-campuss/api/browse";
 import type { Context } from "@cart-campuss/api/context";
 import { catalogueContextHref } from "@cart-campuss/api/dossier";
@@ -80,6 +81,35 @@ export async function loadCatalogueSearchForContext(
     return { kind: "results", query: trimmed, privatePreview, result };
   } catch {
     return { kind: "unavailable", query: trimmed, privatePreview };
+  }
+}
+
+export async function loadCatalogueListForContext(
+  runtime: Context,
+  raw: Record<string, string | string[] | undefined>,
+): Promise<CatalogueSearchState> {
+  const privatePreview = runtime.access.allowFixtures;
+  const parsed = parseCatalogueListQuery(raw);
+  if (!parsed.ok) return { kind: "invalid", query: "", privatePreview };
+  const query = parsed.query;
+  const input = {
+    ...(query.q ? { q: query.q } : {}),
+    ...(query.brand ? { brand: query.brand } : {}),
+    ...(query.model ? { model: query.model } : {}),
+    ...(query.generation ? { generation: query.generation } : {}),
+    ...(query.year ? { year: query.year } : {}),
+    ...(query.market ? { market: query.market } : {}),
+    ...(query.body ? { body: query.body } : {}),
+    ...(query.powertrain ? { powertrain: query.powertrain } : {}),
+    ...(query.transmission ? { transmission: query.transmission } : {}),
+    ...(query.coverage ? { coverage: query.coverage } : {}),
+    ...(query.page > 1 ? { page: query.page } : {}),
+  };
+  try {
+    const result = await appRouter.createCaller(runtime).catalogue.search(input);
+    return { kind: "results", query: query.q, privatePreview, result };
+  } catch {
+    return { kind: "unavailable", query: query.q, privatePreview };
   }
 }
 

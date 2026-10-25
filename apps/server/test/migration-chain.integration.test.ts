@@ -36,6 +36,7 @@ describe("catalogue and publishing migrations", { concurrency: 1, timeout: 120_0
         "20261024160000_model_shell",
         "20261024170000_recheck_audit",
         "20261025104100_home_browse",
+        "20261025120000_name_trgm",
       ],
     );
     assert.equal(await relation(started, "catalogue_applicability"), "catalogue_applicability");

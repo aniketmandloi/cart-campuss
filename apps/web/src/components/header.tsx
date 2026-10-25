@@ -12,10 +12,13 @@ export default function Header() {
           </span>
           Cart Campuss
         </Link>
-        <nav aria-label="Catalogue">
+        <nav aria-label="Catalogue" className="flex items-center gap-4">
           <Link href="/" className="link-draw inline-flex min-h-11 items-center text-sm text-muted-foreground hover:text-foreground">
             Search
           </Link>
+          <a href="/cars" className="link-draw inline-flex min-h-11 items-center text-sm text-muted-foreground hover:text-foreground">
+            Catalogue
+          </a>
         </nav>
       </div>
     </header>
