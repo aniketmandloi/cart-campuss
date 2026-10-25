@@ -56,17 +56,17 @@ const POWER_STANDARDS = ["ps", "bhp", "kw"] as const;
 const CYCLE_STANDARDS = ["nedc", "wltp", "arai"] as const;
 const WEIGHT_STANDARDS = ["dry", "kerb", "gross"] as const;
 
-/** A performance filter exists only for these sourced attributes and standards. */
-const PERFORMANCE_STANDARDS: Record<string, readonly string[]> = {
-  power: POWER_STANDARDS,
-  efficiency: CYCLE_STANDARDS,
-  consumption: CYCLE_STANDARDS,
-  range: CYCLE_STANDARDS,
-  weight: WEIGHT_STANDARDS,
-  "dry-weight": ["dry"],
-  "kerb-weight": ["kerb"],
-  "gross-weight": ["gross"],
-};
+/** A performance filter exists only for these sourced attributes and standards. A Map ignores inherited names such as constructor. */
+const PERFORMANCE_STANDARDS = new Map<string, readonly string[]>([
+  ["power", POWER_STANDARDS],
+  ["efficiency", CYCLE_STANDARDS],
+  ["consumption", CYCLE_STANDARDS],
+  ["range", CYCLE_STANDARDS],
+  ["weight", WEIGHT_STANDARDS],
+  ["dry-weight", ["dry"]],
+  ["kerb-weight", ["kerb"]],
+  ["gross-weight", ["gross"]],
+]);
 
 export function priceReferenceCaption(price: {
   displayAmount: string;
@@ -150,7 +150,7 @@ export function parseAttributeValue(value: string): { property: string; standard
   const propertyId = catalogueAttributeId(property);
   const standardId = catalogueAttributeId(standard);
   if (!propertyId || !standardId) return null;
-  if (!PERFORMANCE_STANDARDS[propertyId]?.includes(standardId)) return null;
+  if (!PERFORMANCE_STANDARDS.get(propertyId)?.includes(standardId)) return null;
   return { property: propertyId, standard: standardId };
 }
 

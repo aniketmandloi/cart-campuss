@@ -85,6 +85,9 @@ describe("shareable catalogue URL", () => {
     if (price.ok) return;
     assert.equal(price.reason, "price");
     assert.equal(parseCatalogueListQuery({ attr: "power" }).ok, false);
+    assert.equal(parseCatalogueListQuery({ attr: "constructor:ps" }).ok, false);
+    assert.equal(parseCatalogueListQuery({ attr: "tostring:ps" }).ok, false);
+    assert.equal(parseCatalogueListQuery({ attr: "power:ps" }).ok, true);
     assert.equal(
       parseCatalogueListQuery({
         priceMin: "20",
