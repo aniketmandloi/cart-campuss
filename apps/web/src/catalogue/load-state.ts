@@ -90,7 +90,7 @@ export async function loadCatalogueListForContext(
 ): Promise<CatalogueSearchState> {
   const privatePreview = runtime.access.allowFixtures;
   const parsed = parseCatalogueListQuery(raw);
-  if (!parsed.ok) return { kind: "invalid", query: "", privatePreview };
+  if (!parsed.ok) return { kind: "invalid", query: "", privatePreview, ...(parsed.reason === "price" ? { reason: "price" as const } : {}) };
   const query = parsed.query;
   const input = {
     ...(query.q ? { q: query.q } : {}),
@@ -103,6 +103,22 @@ export async function loadCatalogueListForContext(
     ...(query.powertrain ? { powertrain: query.powertrain } : {}),
     ...(query.transmission ? { transmission: query.transmission } : {}),
     ...(query.coverage ? { coverage: query.coverage } : {}),
+    ...(query.priceMin !== undefined &&
+    query.priceMax !== undefined &&
+    query.priceCurrency &&
+    query.priceMarket &&
+    query.priceBasis &&
+    query.priceUnknown
+      ? {
+          priceMin: query.priceMin,
+          priceMax: query.priceMax,
+          priceCurrency: query.priceCurrency,
+          priceMarket: query.priceMarket,
+          priceBasis: query.priceBasis,
+          priceUnknown: query.priceUnknown,
+        }
+      : {}),
+    ...(query.attr && query.attr.length > 0 ? { attr: query.attr } : {}),
     ...(query.page > 1 ? { page: query.page } : {}),
   };
   try {

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import type { CatalogueSearchResult } from "@cart-campuss/api/catalogue";
-import { catalogueListHref, parseCatalogueListQuery, readCatalogueScroll, writeCatalogueScroll } from "@cart-campuss/api/catalogue-filters";
+import { catalogueListHref, catalogueListRecord, parseCatalogueListQuery, readCatalogueScroll, writeCatalogueScroll } from "@cart-campuss/api/catalogue-filters";
 
 import { CatalogueSearchView } from "../src/catalogue/views";
 
@@ -38,11 +39,90 @@ describe("shareable catalogue URL", () => {
     assert.equal(parsed.href.includes("deposit"), false);
     assert.equal(parsed.href.includes("running-cost"), false);
     assert.equal(parsed.href.includes("page=2"), true);
-    const again = parseCatalogueListQuery(Object.fromEntries(new URL(parsed.href, "http://catalogue.local").searchParams));
+    const again = parseCatalogueListQuery(catalogueListRecord(parsed.href));
     assert.equal(again.ok, true);
     if (!again.ok) return;
     assert.equal(again.href, parsed.href);
     assert.equal(catalogueListHref({ q: "Harbor Probe" }), "/cars?q=Harbor+Probe");
+  });
+
+  test("round-trips a scoped price filter and repeated measurement attributes", () => {
+    const parsed = parseCatalogueListQuery({
+      q: "north",
+      priceMin: "100000",
+      priceMax: "250000",
+      priceCurrency: "inr",
+      priceMarket: "mkt_probe",
+      priceBasis: "ex-showroom (tax inclusive)",
+      priceUnknown: "include",
+      attr: ["power:ps", "weight:kerb"],
+      condition: "new",
+      sellerCountry: "IN",
+      mileageMax: "1000",
+      auctionStatus: "active",
+      loan: "10",
+    });
+    assert.equal(parsed.ok, true);
+    if (!parsed.ok) return;
+    assert.equal(parsed.query.priceCurrency, "INR");
+    assert.equal(parsed.query.priceUnknown, "include");
+    assert.deepEqual(parsed.query.attr, ["power:ps", "weight:kerb"]);
+    assert.equal(parsed.href.includes("condition"), false);
+    assert.equal(parsed.href.includes("sellerCountry"), false);
+    assert.equal(parsed.href.includes("mileageMax"), false);
+    assert.equal(parsed.href.includes("auctionStatus"), false);
+    assert.equal(parsed.href.includes("loan"), false);
+    const again = parseCatalogueListQuery(catalogueListRecord(parsed.href));
+    assert.equal(again.ok, true);
+    if (!again.ok) return;
+    assert.equal(again.href, parsed.href);
+    assert.deepEqual(again.query.attr, ["power:ps", "weight:kerb"]);
+  });
+
+  test("rejects an incomplete price filter and an attribute without a standard", () => {
+    const price = parseCatalogueListQuery({ priceMin: "100", priceCurrency: "INR" });
+    assert.equal(price.ok, false);
+    if (price.ok) return;
+    assert.equal(price.reason, "price");
+    assert.equal(parseCatalogueListQuery({ attr: "power" }).ok, false);
+    assert.equal(parseCatalogueListQuery({ attr: "constructor:ps" }).ok, false);
+    assert.equal(parseCatalogueListQuery({ attr: "tostring:ps" }).ok, false);
+    assert.equal(parseCatalogueListQuery({ attr: "power:ps" }).ok, true);
+    assert.equal(
+      parseCatalogueListQuery({
+        priceMin: "20",
+        priceMax: "10",
+        priceCurrency: "INR",
+        priceMarket: "mkt_probe",
+        priceBasis: "ex-showroom",
+        priceUnknown: "include",
+      }).ok,
+      false,
+    );
+    assert.equal(
+      parseCatalogueListQuery({
+        priceMin: "0",
+        priceMax: "1",
+        priceCurrency: "INR",
+        priceMarket: "mkt_probe",
+        priceBasis: "x".repeat(201),
+        priceUnknown: "include",
+      }).ok,
+      false,
+    );
+    const publishedBasis = parseCatalogueListQuery({
+      priceMin: "0",
+      priceMax: "1",
+      priceCurrency: "INR",
+      priceMarket: "mkt_probe",
+      priceBasis: "ex-showroom (tax inclusive)",
+      priceUnknown: "exclude",
+    });
+    assert.equal(publishedBasis.ok, true);
+    const html = renderToStaticMarkup(
+      <CatalogueSearchView state={{ kind: "invalid", query: "", privatePreview: false, reason: "price" }} />,
+    );
+    assert.match(html, /whether records without that price stay included/);
   });
 
   test("rejects an unknown filter value and a non-canonical page", () => {
@@ -95,6 +175,18 @@ describe("shareable catalogue URL", () => {
       assert.equal(document.activeElement?.id, "catalogue-filter-body");
 
       tab(details, false);
+      assert.equal(document.activeElement?.id, "catalogue-filter-price-min");
+      tab(details, false);
+      assert.equal(document.activeElement?.id, "catalogue-filter-price-max");
+      tab(details, false);
+      assert.equal(document.activeElement?.id, "catalogue-filter-price-currency");
+      tab(details, false);
+      assert.equal(document.activeElement?.id, "catalogue-filter-price-market");
+      tab(details, false);
+      assert.equal(document.activeElement?.id, "catalogue-filter-price-basis");
+      tab(details, false);
+      assert.equal(document.activeElement?.id, "catalogue-filter-price-unknown");
+      tab(details, false);
       assert.equal(document.activeElement?.id, "catalogue-filter-apply");
       tab(details, false);
       assert.equal(document.activeElement?.id, "catalogue-filter-reset");
@@ -133,6 +225,8 @@ const sheetResult: CatalogueSearchResult = {
   ambiguous: false,
   miss: null,
   href: "/cars?q=north",
+  marketAccess: { mode: "directory" },
+  performanceControls: [],
   chips: [
     {
       dimension: "body",

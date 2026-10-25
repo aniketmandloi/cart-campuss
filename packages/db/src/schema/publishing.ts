@@ -17,6 +17,8 @@ export type PublishingPriceReference = {
   minorUnitExponent: number;
   basis: string;
   taxInclusivity: "unspecified" | "tax-inclusive" | "tax-exclusive";
+  includedCharges: string[];
+  excludedCharges: string[];
   observedOn: string;
   retrievedOn: string;
   reviewedOn: string;
