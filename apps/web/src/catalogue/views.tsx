@@ -349,7 +349,7 @@ function CostSection({ page }: { page: DossierPage }) {
   return (
     <section
       id="cost"
-      className="rise-on-scroll flex min-w-0 scroll-mt-28 flex-col gap-6 border border-border bg-card p-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
+      className="@container rise-on-scroll flex min-w-0 scroll-mt-28 flex-col gap-6 border border-border bg-card p-6 lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start"
       aria-labelledby="india-cost"
     >
       <h2 id="india-cost" className="text-2xl font-semibold tracking-tight">
@@ -364,7 +364,7 @@ function CostSection({ page }: { page: DossierPage }) {
           </h3>
           {price ? (
             <>
-              <p className="text-5xl leading-none font-semibold tracking-tight text-data tabular-nums">
+              <p className="max-w-full min-w-0 text-[clamp(1.75rem,14cqi,3rem)] leading-tight font-semibold tracking-tight break-words text-data tabular-nums">
                 {price.displayAmount}
               </p>
               <div className="flex flex-col gap-2 border-t border-border pt-5 text-sm text-muted-foreground">
