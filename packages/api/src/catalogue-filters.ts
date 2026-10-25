@@ -140,6 +140,28 @@ export function writeCatalogueScroll(
   storage.setItem(catalogueScrollKey(href), String(Math.floor(scrollY)));
 }
 
+/** A hidden or disabled control cannot take part in the filter sheet's focus trap. */
+export function catalogueControlFocusable(control: {
+  type?: string | null;
+  hidden?: boolean;
+  disabled?: boolean;
+}): boolean {
+  if (control.disabled || control.hidden) return false;
+  return control.type !== "hidden";
+}
+
+export function nextCatalogueSheetControl(
+  controls: readonly { id: string; focusable: boolean }[],
+  currentId: string | null,
+  shift: boolean,
+): string | null {
+  return nextCatalogueFocus(
+    controls.filter((control) => control.focusable).map((control) => control.id),
+    currentId,
+    shift,
+  );
+}
+
 /** Moves keyboard focus inside an open filter sheet, wrapping at either end. */
 export function nextCatalogueFocus(
   ids: readonly string[],

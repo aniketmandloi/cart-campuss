@@ -978,7 +978,7 @@ function FilterControls({
   const resetHref = catalogueListHref({ q: state.query });
   return (
     <CatalogueFilterSheet>
-      <summary className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-medium">
+      <summary id="catalogue-filter-summary" className="flex min-h-11 cursor-pointer items-center px-4 text-sm font-medium">
         Filters
       </summary>
       <form
@@ -997,6 +997,7 @@ function FilterControls({
           <label key={dimension} className="flex flex-col gap-2 text-sm">
             {FILTER_LABELS[dimension]}
             <select
+              id={`catalogue-filter-${dimension}`}
               name={dimension}
               defaultValue={chips.find((chip) => chip.current)?.value ?? ""}
               className="min-h-11 border border-border bg-card px-3 text-foreground"
@@ -1016,12 +1017,13 @@ function FilterControls({
         </p>
         <div className="flex flex-wrap gap-3">
           <button
+            id="catalogue-filter-apply"
             type="submit"
             className="inline-flex min-h-11 items-center bg-primary px-5 text-sm font-medium text-primary-foreground"
           >
             Apply
           </button>
-          <a href={resetHref} className="inline-flex min-h-11 items-center border border-border px-5 text-sm">
+          <a id="catalogue-filter-reset" href={resetHref} className="inline-flex min-h-11 items-center border border-border px-5 text-sm">
             Reset
           </a>
         </div>

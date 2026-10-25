@@ -2,7 +2,12 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { nextCatalogueFocus, readCatalogueScroll, writeCatalogueScroll } from "@cart-campuss/api/catalogue-filters";
+import {
+  catalogueControlFocusable,
+  nextCatalogueSheetControl,
+  readCatalogueScroll,
+  writeCatalogueScroll,
+} from "@cart-campuss/api/catalogue-filters";
 
 export function CatalogueListMemory({ href }: { href: string }) {
   useEffect(() => {
@@ -38,22 +43,16 @@ export function CatalogueFilterSheet({ children }: { children: ReactNode }) {
     const onToggle = () => {
       if (details.open) {
         opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        details.querySelector<HTMLElement>("select, button, a")?.focus();
+        sheetControls(details).find((control) => control.element.matches("select, button, a"))?.element.focus();
         return;
       }
       opener.current?.focus();
     };
     const onKey = (event: KeyboardEvent) => {
       if (!details.open || event.key !== "Tab") return;
-      const items = [...details.querySelectorAll<HTMLElement>("summary, a, button, input, select, textarea")].filter(
-        (element) => !element.hasAttribute("disabled"),
-      );
-      const ids = items.map((element, index) => {
-        if (!element.id) element.id = `catalogue-filter-focus-${index}`;
-        return element.id;
-      });
+      const controls = sheetControls(details);
       const current = document.activeElement instanceof HTMLElement ? document.activeElement.id : null;
-      const next = nextCatalogueFocus(ids, current, event.shiftKey);
+      const next = nextCatalogueSheetControl(controls, current, event.shiftKey);
       if (!next) return;
       event.preventDefault();
       document.getElementById(next)?.focus();
@@ -69,5 +68,22 @@ export function CatalogueFilterSheet({ children }: { children: ReactNode }) {
     <details ref={detailsRef} id="catalogue-filters" className="border border-border">
       {children}
     </details>
+  );
+}
+
+function sheetControls(details: HTMLElement): Array<{ id: string; focusable: boolean; element: HTMLElement }> {
+  return [...details.querySelectorAll<HTMLElement>("summary, a, button, input, select, textarea")].map(
+    (element, index) => {
+      if (!element.id) element.id = `catalogue-filter-focus-${index}`;
+      return {
+        id: element.id,
+        element,
+        focusable: catalogueControlFocusable({
+          type: element.getAttribute("type"),
+          hidden: Boolean(element.hidden),
+          disabled: element.hasAttribute("disabled"),
+        }),
+      };
+    },
   );
 }
