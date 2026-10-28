@@ -509,6 +509,11 @@ function MarketSection({ page }: { page: DossierPage }) {
       <h3 id="market-data" className="text-lg font-medium">
         {label}
       </h3>
+      {directory.length > 0 ? (
+        <p className="text-sm text-muted-foreground">
+          A directory of reviewed links. It is not inventory and shows no stock, prices, or availability.
+        </p>
+      ) : null}
       {directory.length === 0 && listings.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           This record has no directory or feed of market listings.
