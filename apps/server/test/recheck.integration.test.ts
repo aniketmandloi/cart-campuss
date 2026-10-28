@@ -110,6 +110,7 @@ describe("recheck, expiry, and withdrawal", { timeout: 120_000 }, () => {
     assert.match(html, /Next recheck 2026-11-21T00:00:00.000Z/);
     assert.match(html, /Last provider sync 2026-10-22T00:00:00.000Z/);
     assert.match(html, /Search official and marketplace sources/);
+    assert.match(html, /A directory of reviewed links\. It is not inventory/);
     assert.match(html, /Harbor maker page/);
     assert.match(html, /Active as last observed 2026-10-22T00:00:00.000Z/);
     assert.match(html, /100 PS/);
